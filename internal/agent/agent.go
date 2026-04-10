@@ -4,6 +4,7 @@ package agent
 import (
 	"fmt"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,7 +14,42 @@ import (
 const (
 	agentUIDBase = 60000 // agent uids start here to avoid collisions
 	agentUIDMax  = 61000
+	nftChain     = "agent-os-output" // dedicated chain so we can flush without touching host rules
 )
+
+// BootstrapNftables ensures the inet filter table, base output chain, and
+// our dedicated agent-os-output chain exist. Idempotent — safe to call on
+// every startup. Per-agent rules go in agent-os-output so we can flush it
+// without disturbing the host's existing nft state.
+func BootstrapNftables() error {
+	script := strings.Join([]string{
+		"add table inet filter",
+		"add chain inet filter output { type filter hook output priority 0 ; policy accept ; }",
+		"add chain inet filter " + nftChain,
+		"flush chain inet filter " + nftChain,
+	}, "\n") + "\n"
+
+	cmd := exec.Command("nft", "-f", "-")
+	cmd.Stdin = strings.NewReader(script)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("nft bootstrap: %s: %w", string(out), err)
+	}
+
+	// Add jump from output → agent-os-output, unless it already exists.
+	out, err := exec.Command("nft", "list", "chain", "inet", "filter", "output").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("nft list output: %s: %w", string(out), err)
+	}
+	if !strings.Contains(string(out), "jump "+nftChain) {
+		if out, err := exec.Command("nft", "add", "rule", "inet", "filter", "output",
+			"jump", nftChain,
+		).CombinedOutput(); err != nil {
+			return fmt.Errorf("nft add jump: %s: %w", string(out), err)
+		}
+	}
+
+	return nil
+}
 
 type Manager struct {
 	mu      sync.Mutex
@@ -201,14 +237,14 @@ func (m *Manager) applyNetRules(uid uint32, policy schema.NetPolicy) error {
 		return nil // no rules needed
 	case schema.NetLocalOnly:
 		// Allow loopback only — drop everything else for this uid
-		return exec.Command("nft", "add", "rule", "inet", "filter", "output",
+		return exec.Command("nft", "add", "rule", "inet", "filter", nftChain,
 			"meta", "skuid", fmt.Sprintf("%d", uid),
 			"oif", "!=", "lo",
 			"drop",
 		).Run()
 	case schema.NetDeny:
 		// Drop all outbound for this uid
-		return exec.Command("nft", "add", "rule", "inet", "filter", "output",
+		return exec.Command("nft", "add", "rule", "inet", "filter", nftChain,
 			"meta", "skuid", fmt.Sprintf("%d", uid),
 			"drop",
 		).Run()
