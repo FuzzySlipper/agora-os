@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/patch/agora-os/internal/peercred"
 	"github.com/patch/agora-os/internal/schema"
 )
 
@@ -90,6 +91,13 @@ func main() {
 func (a *AdminAgent) handleConn(conn net.Conn) {
 	defer conn.Close()
 
+	// Identity comes from the kernel, not from the request.
+	peerUID, err := peercred.PeerUID(conn)
+	if err != nil {
+		log.Printf("peer credentials: %v", err)
+		return
+	}
+
 	var req schema.Request
 	if err := json.NewDecoder(conn).Decode(&req); err != nil {
 		return
@@ -105,6 +113,12 @@ func (a *AdminAgent) handleConn(conn net.Conn) {
 		writeJSON(conn, schema.Response{OK: false})
 		return
 	}
+
+	// Override self-reported uid with kernel-verified uid.
+	if escReq.AgentUID != uint32(peerUID) {
+		log.Printf("uid mismatch: peer=%d self-reported=%d (overridden)", peerUID, escReq.AgentUID)
+	}
+	escReq.AgentUID = uint32(peerUID)
 
 	resp := a.evaluate(escReq)
 	a.logEntry(escReq, resp)

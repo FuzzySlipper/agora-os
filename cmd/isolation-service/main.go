@@ -12,6 +12,7 @@ import (
 	"syscall"
 
 	"github.com/patch/agora-os/internal/agent"
+	"github.com/patch/agora-os/internal/peercred"
 	"github.com/patch/agora-os/internal/schema"
 )
 
@@ -63,6 +64,12 @@ func main() {
 func handleConn(conn net.Conn, mgr *agent.Manager) {
 	defer conn.Close()
 
+	peerUID, err := peercred.PeerUID(conn)
+	if err != nil {
+		writeError(conn, fmt.Sprintf("peer credentials: %v", err))
+		return
+	}
+
 	var req schema.Request
 	if err := json.NewDecoder(conn).Decode(&req); err != nil {
 		writeError(conn, fmt.Sprintf("decode: %v", err))
@@ -72,6 +79,10 @@ func handleConn(conn net.Conn, mgr *agent.Manager) {
 	var resp schema.Response
 	switch req.Method {
 	case "spawn_agent":
+		if peerUID != 0 {
+			writeError(conn, "spawn_agent requires root")
+			return
+		}
 		var body schema.SpawnAgentRequest
 		if err := json.Unmarshal(req.Body, &body); err != nil {
 			writeError(conn, fmt.Sprintf("bad body: %v", err))
@@ -90,6 +101,10 @@ func handleConn(conn net.Conn, mgr *agent.Manager) {
 			writeError(conn, fmt.Sprintf("bad body: %v", err))
 			return
 		}
+		if peerUID != 0 && body.UID != uint32(peerUID) {
+			writeError(conn, "cannot terminate another agent")
+			return
+		}
 		if err := mgr.Terminate(body.UID); err != nil {
 			writeError(conn, err.Error())
 			return
@@ -97,7 +112,17 @@ func handleConn(conn net.Conn, mgr *agent.Manager) {
 		resp = okResponse("terminated")
 
 	case "list_agents":
-		resp = okResponse(schema.ListAgentsResponse{Agents: mgr.List()})
+		agents := mgr.List()
+		if peerUID != 0 {
+			filtered := make([]schema.AgentInfo, 0)
+			for _, a := range agents {
+				if a.UID == uint32(peerUID) {
+					filtered = append(filtered, a)
+				}
+			}
+			agents = filtered
+		}
+		resp = okResponse(schema.ListAgentsResponse{Agents: agents})
 
 	default:
 		writeError(conn, fmt.Sprintf("unknown method: %s", req.Method))
