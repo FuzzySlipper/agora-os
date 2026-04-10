@@ -1,0 +1,61 @@
+# Editors
+.idea/
+.vscode/
+.claude/
+.codex/
+*.sw?
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment / secrets
+.env
+.env.local
+*.local
+*.key
+*.pem
+secrets/
+
+# Logs
+logs/
+*.log
+
+# Agent guidance files (local-only per global convention)
+AGENTS.md
+CLAUDE.md
+
+# Go
+bin/
+vendor/
+*.test
+*.out
+coverage.out
+coverage.html
+
+# Rust (when added)
+target/
+**/*.rs.bk
+
+# Node (for the eventual shell/ TypeScript app)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# VM artifacts (raw qemu wrapper, task #515)
+*.qcow2
+*.img
+*.iso
+vm/
+.vm/
+
+# Build output / local-only scratch
+build/
+dist/
+out/
+local/
+.claude/
+.codex/
+.codex
