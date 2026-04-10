@@ -10,7 +10,7 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/patch/agent-os/internal/schema"
+	"github.com/patch/agora-os/internal/schema"
 )
 
 const (

@@ -11,8 +11,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/patch/agent-os/internal/agent"
-	"github.com/patch/agent-os/internal/schema"
+	"github.com/patch/agora-os/internal/agent"
+	"github.com/patch/agora-os/internal/schema"
 )
 
 const socketPath = "/run/agent-os/isolation.sock"
