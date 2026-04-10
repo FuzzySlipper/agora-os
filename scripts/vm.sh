@@ -194,6 +194,14 @@ cmd_start() {
     done
     [[ -S "$VFS_SOCK" ]] || die "virtiofsd socket did not appear"
 
+    local qemu_serial=("-serial" "file:$CONSOLE_LOG")
+    local qemu_daemon=("-pidfile" "$PID_FILE" "-daemonize")
+
+    if [[ "${FOREGROUND:-}" == "1" ]]; then
+        qemu_serial=("-serial" "mon:stdio")
+        qemu_daemon=()
+    fi
+
     info "Booting QEMU (mem=$VM_MEM cpus=$VM_CPUS ssh=127.0.0.1:$SSH_PORT)"
     qemu-system-x86_64 \
         -machine q35,accel=kvm,memory-backend=mem \
@@ -207,9 +215,11 @@ cmd_start() {
         -chardev "socket,id=vfs,path=$VFS_SOCK" \
         -device vhost-user-fs-pci,chardev=vfs,tag=repo \
         -display none \
-        -serial "file:$CONSOLE_LOG" \
-        -pidfile "$PID_FILE" \
-        -daemonize
+        "${qemu_serial[@]}" \
+        "${qemu_daemon[@]}"
+
+    # In foreground mode, QEMU blocks — we're done when it exits.
+    [[ "${FOREGROUND:-}" == "1" ]] && return
 
     info "Waiting for SSH..."
     local i=0
@@ -220,6 +230,13 @@ cmd_start() {
     done
 
     info "VM ready. Use: vm.sh ssh"
+}
+
+# ---------------------------------------------------------------------------
+# console — foreground boot with serial mon:stdio for first-boot debugging
+# ---------------------------------------------------------------------------
+cmd_console() {
+    FOREGROUND=1 cmd_start "$@"
 }
 
 # ---------------------------------------------------------------------------
@@ -289,7 +306,7 @@ cmd_destroy() {
 # dispatch
 # ---------------------------------------------------------------------------
 case "${1:-}" in
-    build|start|ssh|snap|restore|stop|destroy)
+    build|start|ssh|console|snap|restore|stop|destroy)
         cmd="$1"; shift; "cmd_$cmd" "$@" ;;
     *)
         cat >&2 <<'USAGE'
@@ -298,6 +315,7 @@ Usage: vm.sh <command> [args]
 Commands:
   build              Create disk image and install Arch (requires sudo)
   start              Boot the VM headless (SSH on port 2222)
+  console            Boot foreground with serial on stdio (first-boot debug)
   ssh [cmd]          SSH into the VM or run a one-shot command
   snap <name>        Take a qcow2 snapshot (VM must be stopped)
   restore <name>     Restore a snapshot (VM must be stopped)
