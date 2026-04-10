@@ -4,6 +4,7 @@ package agent
 import (
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -52,17 +53,19 @@ func BootstrapNftables() error {
 }
 
 type Manager struct {
-	mu      sync.Mutex
-	agents  map[uint32]*schema.AgentInfo
-	procs   map[uint32]*exec.Cmd // systemd-run scope processes, keyed by uid
-	nextUID uint32
+	mu          sync.Mutex
+	agents      map[uint32]*schema.AgentInfo
+	procs       map[uint32]*exec.Cmd    // systemd-run scope processes, keyed by uid
+	ruleHandles map[uint32][]uint64     // nft rule handles per agent uid
+	nextUID     uint32
 }
 
 func NewManager() *Manager {
 	return &Manager{
-		agents:  make(map[uint32]*schema.AgentInfo),
-		procs:   make(map[uint32]*exec.Cmd),
-		nextUID: agentUIDBase,
+		agents:      make(map[uint32]*schema.AgentInfo),
+		procs:       make(map[uint32]*exec.Cmd),
+		ruleHandles: make(map[uint32][]uint64),
+		nextUID:     agentUIDBase,
 	}
 }
 
@@ -232,32 +235,65 @@ func (m *Manager) applyNetRules(uid uint32, policy schema.NetPolicy) error {
 		policy = schema.NetDeny
 	}
 
+	var handle uint64
+	var err error
+	uidStr := fmt.Sprintf("%d", uid)
+
 	switch policy {
 	case schema.NetAllow:
 		return nil // no rules needed
 	case schema.NetLocalOnly:
-		// Allow loopback only — drop everything else for this uid
-		return exec.Command("nft", "add", "rule", "inet", "filter", nftChain,
-			"meta", "skuid", fmt.Sprintf("%d", uid),
-			"oif", "!=", "lo",
-			"drop",
-		).Run()
+		handle, err = addNftRule("inet", "filter", nftChain,
+			"meta", "skuid", uidStr, "oif", "!=", "lo", "drop")
 	case schema.NetDeny:
-		// Drop all outbound for this uid
-		return exec.Command("nft", "add", "rule", "inet", "filter", nftChain,
-			"meta", "skuid", fmt.Sprintf("%d", uid),
-			"drop",
-		).Run()
+		handle, err = addNftRule("inet", "filter", nftChain,
+			"meta", "skuid", uidStr, "drop")
 	default:
 		return fmt.Errorf("unknown net policy: %s", policy)
 	}
+	if err != nil {
+		return err
+	}
+
+	m.ruleHandles[uid] = append(m.ruleHandles[uid], handle)
+	return nil
 }
 
 func (m *Manager) removeNetRules(uid uint32) error {
-	// In production you'd track rule handles and delete by handle.
-	// For v1, flushing and rebuilding the agent chain is simpler.
-	// TODO: track nft rule handles per agent uid
-	return nil
+	handles := m.ruleHandles[uid]
+	delete(m.ruleHandles, uid)
+
+	var firstErr error
+	for _, h := range handles {
+		if out, err := exec.Command("nft", "delete", "rule", "inet", "filter", nftChain,
+			"handle", fmt.Sprintf("%d", h),
+		).CombinedOutput(); err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("nft delete handle %d: %s: %w", h, string(out), err)
+		}
+	}
+	return firstErr
+}
+
+// addNftRule inserts a rule and returns the kernel-assigned handle.
+func addNftRule(args ...string) (uint64, error) {
+	cmdArgs := append([]string{"--echo", "--handle", "add", "rule"}, args...)
+	out, err := exec.Command("nft", cmdArgs...).CombinedOutput()
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", string(out), err)
+	}
+	return parseNftHandle(string(out))
+}
+
+// parseNftHandle extracts the handle number from nft --echo --handle output.
+// Expected format: "... # handle 42\n"
+func parseNftHandle(output string) (uint64, error) {
+	const prefix = "# handle "
+	idx := strings.LastIndex(output, prefix)
+	if idx < 0 {
+		return 0, fmt.Errorf("no handle in nft output: %q", output)
+	}
+	s := strings.TrimSpace(output[idx+len(prefix):])
+	return strconv.ParseUint(s, 10, 64)
 }
 
 func defaultStr(val, fallback string) string {
