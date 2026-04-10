@@ -19,24 +19,36 @@ const (
 )
 
 // BootstrapNftables ensures the inet filter table, base output chain, and
-// our dedicated agent-os-output chain exist. Idempotent — safe to call on
-// every startup. Per-agent rules go in agent-os-output so we can flush it
-// without disturbing the host's existing nft state.
+// our dedicated agent-os-output chain exist. Each step probes before creating
+// so the function is safe to call on every startup regardless of prior state.
 func BootstrapNftables() error {
-	script := strings.Join([]string{
-		"add table inet filter",
-		"add chain inet filter output { type filter hook output priority 0 ; policy accept ; }",
-		"add chain inet filter " + nftChain,
-		"flush chain inet filter " + nftChain,
-	}, "\n") + "\n"
-
-	cmd := exec.Command("nft", "-f", "-")
-	cmd.Stdin = strings.NewReader(script)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("nft bootstrap: %s: %w", string(out), err)
+	// 1. Table — nft add table is a no-op if it already exists.
+	if out, err := exec.Command("nft", "add", "table", "inet", "filter").CombinedOutput(); err != nil {
+		return fmt.Errorf("nft add table: %s: %w", string(out), err)
 	}
 
-	// Add jump from output → agent-os-output, unless it already exists.
+	// 2. Base output chain — only create if missing (don't clobber an
+	//    existing chain that may have different priority/policy).
+	if exec.Command("nft", "list", "chain", "inet", "filter", "output").Run() != nil {
+		script := "add chain inet filter output { type filter hook output priority 0 ; policy accept ; }\n"
+		cmd := exec.Command("nft", "-f", "-")
+		cmd.Stdin = strings.NewReader(script)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("nft create output chain: %s: %w", string(out), err)
+		}
+	}
+
+	// 3. Our dedicated chain — nft add chain is a no-op for regular chains.
+	if out, err := exec.Command("nft", "add", "chain", "inet", "filter", nftChain).CombinedOutput(); err != nil {
+		return fmt.Errorf("nft add %s: %s: %w", nftChain, string(out), err)
+	}
+
+	// 4. Flush our chain — we own it, safe to clear on startup.
+	if out, err := exec.Command("nft", "flush", "chain", "inet", "filter", nftChain).CombinedOutput(); err != nil {
+		return fmt.Errorf("nft flush %s: %s: %w", nftChain, string(out), err)
+	}
+
+	// 5. Jump rule — add only if not already present.
 	out, err := exec.Command("nft", "list", "chain", "inet", "filter", "output").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("nft list output: %s: %w", string(out), err)
@@ -55,7 +67,7 @@ func BootstrapNftables() error {
 type Manager struct {
 	mu          sync.Mutex
 	agents      map[uint32]*schema.AgentInfo
-	procs       map[uint32]*exec.Cmd    // systemd-run scope processes, keyed by uid
+	hasCmd      map[uint32]bool         // agents with a running systemd unit
 	ruleHandles map[uint32][]uint64     // nft rule handles per agent uid
 	nextUID     uint32
 }
@@ -63,10 +75,15 @@ type Manager struct {
 func NewManager() *Manager {
 	return &Manager{
 		agents:      make(map[uint32]*schema.AgentInfo),
-		procs:       make(map[uint32]*exec.Cmd),
+		hasCmd:      make(map[uint32]bool),
 		ruleHandles: make(map[uint32][]uint64),
 		nextUID:     agentUIDBase,
 	}
+}
+
+// agentUnitName returns the deterministic systemd unit name for an agent.
+func agentUnitName(uid uint32) string {
+	return fmt.Sprintf("agent-%d-cmd.service", uid)
 }
 
 func (m *Manager) Spawn(req schema.SpawnAgentRequest) (*schema.AgentInfo, error) {
@@ -143,11 +160,13 @@ func (m *Manager) Terminate(uid uint32) error {
 
 	username := fmt.Sprintf("agent-%s-%d", info.Name, uid)
 
-	// Remove proc tracking — pkill below handles the actual kill,
-	// and the waitProcess goroutine will no-op when it can't find the agent.
-	delete(m.procs, uid)
+	// Stop the agent's systemd unit if one was started.
+	if m.hasCmd[uid] {
+		_ = exec.Command("systemctl", "stop", agentUnitName(uid)).Run()
+		delete(m.hasCmd, uid)
+	}
 
-	// Kill all processes owned by this uid
+	// Kill any remaining processes owned by this uid
 	_ = exec.Command("pkill", "-U", fmt.Sprintf("%d", uid)).Run()
 
 	// Remove nftables rules
@@ -171,18 +190,30 @@ func (m *Manager) List() []schema.AgentInfo {
 
 	out := make([]schema.AgentInfo, 0, len(m.agents))
 	for _, a := range m.agents {
-		out = append(out, *a)
+		info := *a
+		// Authoritative status: query systemd for agents with a command unit.
+		if m.hasCmd[info.UID] {
+			if exec.Command("systemctl", "is-active", "--quiet", agentUnitName(info.UID)).Run() != nil {
+				info.Status = "exited"
+				a.Status = "exited"
+				delete(m.hasCmd, info.UID)
+			}
+		}
+		out = append(out, info)
 	}
 	return out
 }
 
-// startProcess launches the agent's command inside its cgroup slice via
-// systemd-run --scope.  The scope inherits the slice's cgroup tree and gets
-// its own resource limits so the command is properly contained.
+// startProcess launches the agent's command as a transient systemd service
+// inside its cgroup slice.  systemd-run --wait blocks until the service
+// exits, giving us a reliable lifecycle signal; List() also cross-checks
+// the unit state via systemctl so status is authoritative even if the
+// wait goroutine hasn't run yet.
 func (m *Manager) startProcess(uid uint32, slice string, req schema.SpawnAgentRequest) error {
+	unit := fmt.Sprintf("agent-%d-cmd", uid)
 	args := []string{
-		"--scope",
-		"--unit", fmt.Sprintf("agent-%d-cmd", uid),
+		"--wait",
+		"--unit", unit,
 		"--slice", slice,
 		"--uid", fmt.Sprintf("%d", uid),
 		"--gid", fmt.Sprintf("%d", uid),
@@ -197,12 +228,12 @@ func (m *Manager) startProcess(uid uint32, slice string, req schema.SpawnAgentRe
 		return err
 	}
 
-	m.procs[uid] = cmd
+	m.hasCmd[uid] = true
 	go m.waitProcess(uid, cmd)
 	return nil
 }
 
-// waitProcess blocks until the agent's command exits, then updates status.
+// waitProcess blocks until the agent's systemd unit exits, then updates status.
 func (m *Manager) waitProcess(uid uint32, cmd *exec.Cmd) {
 	cmd.Wait()
 
@@ -212,7 +243,7 @@ func (m *Manager) waitProcess(uid uint32, cmd *exec.Cmd) {
 	if info, ok := m.agents[uid]; ok {
 		info.Status = "exited"
 	}
-	delete(m.procs, uid)
+	delete(m.hasCmd, uid)
 }
 
 func (m *Manager) createSlice(name string, req schema.SpawnAgentRequest) error {

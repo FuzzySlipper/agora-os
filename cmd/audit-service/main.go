@@ -52,6 +52,8 @@ func main() {
 		log.Printf("watching: %s", path)
 	}
 
+	os.MkdirAll("/run/agent-os", 0755)
+
 	broker := NewBroker(ringSize)
 	go serveSubscribers(subscriberSock, broker)
 
