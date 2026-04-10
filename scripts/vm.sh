@@ -38,6 +38,13 @@ ssh_cmd() {
         dev@127.0.0.1 "$@"
 }
 
+stop_virtiofsd() {
+    if [[ -f "$VFS_PID" ]]; then
+        kill "$(cat "$VFS_PID")" 2>/dev/null || true
+        rm -f "$VFS_PID" "$VFS_SOCK"
+    fi
+}
+
 # ---------------------------------------------------------------------------
 # build — create disk image and install Arch via pacstrap
 # ---------------------------------------------------------------------------
@@ -218,8 +225,11 @@ cmd_start() {
         "${qemu_serial[@]}" \
         "${qemu_daemon[@]}"
 
-    # In foreground mode, QEMU blocks — we're done when it exits.
-    [[ "${FOREGROUND:-}" == "1" ]] && return
+    # In foreground mode, QEMU blocks — clean up virtiofsd when it exits.
+    if [[ "${FOREGROUND:-}" == "1" ]]; then
+        stop_virtiofsd
+        return
+    fi
 
     info "Waiting for SSH..."
     local i=0
@@ -285,10 +295,7 @@ cmd_stop() {
         rm -f "$PID_FILE"
     fi
 
-    if [[ -f "$VFS_PID" ]]; then
-        kill "$(cat "$VFS_PID")" 2>/dev/null || true
-        rm -f "$VFS_PID" "$VFS_SOCK"
-    fi
+    stop_virtiofsd
 
     $stopped && info "VM stopped." || info "VM was not running."
 }
