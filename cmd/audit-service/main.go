@@ -16,9 +16,11 @@ import (
 )
 
 const (
-	logPath       = "/var/log/agent-os/audit.log"
-	agentUIDBase  = 60000
-	agentUIDMax   = 61000
+	logPath          = "/var/log/agent-os/audit.log"
+	subscriberSock   = "/run/agent-os/audit.sock"
+	agentUIDBase     = 60000
+	agentUIDMax      = 61000
+	ringSize         = 1024
 )
 
 func main() {
@@ -50,6 +52,9 @@ func main() {
 		log.Printf("watching: %s", path)
 	}
 
+	broker := NewBroker(ringSize)
+	go serveSubscribers(subscriberSock, broker)
+
 	log.Println("audit service running")
 
 	// Graceful shutdown
@@ -76,8 +81,10 @@ func main() {
 			}
 
 			b, _ := json.Marshal(ev)
-			fmt.Println(string(b))        // stdout for real-time consumers
-			logFile.Write(append(b, '\n')) // append-only log
+			line := append(b, '\n')
+			fmt.Print(string(line))  // stdout for real-time consumers
+			logFile.Write(line)      // append-only log
+			broker.Publish(line)     // fan out to socket subscribers
 		}
 	}
 }
