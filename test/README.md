@@ -27,7 +27,7 @@ behavior.
   - escalation request is logged with kernel-verified uid and safe default decision
   - terminate removes the user, systemd unit, nft rules, and home directory
 
-  Runs 16 assertions. Requires root, `python3`, and `nft`.
+  Runs 18 assertions. Requires root, `python3`, and `nft`.
 
 - **`test/phase1-peercred.sh`**: focused proof that `SO_PEERCRED` attribution
   overrides self-reported identity and that cross-uid authorization checks

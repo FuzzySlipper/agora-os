@@ -39,6 +39,8 @@ AUDIT_PID=""
 SPAWNED_UID=""
 AGENT_USER=""
 WRITE_PID=""
+LISTENER_PID=""
+SPINNER_UNIT=""
 
 note() { echo ":: $*"; }
 
@@ -111,8 +113,10 @@ print(body$1)
 cleanup() {
     set +e
 
-    # Kill background write process if running.
-    [[ -n "$WRITE_PID" ]] && kill "$WRITE_PID" 2>/dev/null && wait "$WRITE_PID" 2>/dev/null
+    # Kill background helpers.
+    [[ -n "$WRITE_PID" ]]    && kill "$WRITE_PID" 2>/dev/null && wait "$WRITE_PID" 2>/dev/null
+    [[ -n "$LISTENER_PID" ]] && kill "$LISTENER_PID" 2>/dev/null && wait "$LISTENER_PID" 2>/dev/null
+    [[ -n "$SPINNER_UNIT" ]] && systemctl stop "${SPINNER_UNIT}.service" 2>/dev/null
 
     # Clean up spawned agent.
     if [[ -n "$SPAWNED_UID" ]]; then
@@ -241,11 +245,13 @@ fi
 # ==== Test 2: Cgroup limits enforced ====
 
 echo
-note "test 2: cgroup resource limits on the agent service"
+note "test 2: cgroup resource limits — configuration and enforcement"
 
 CGROUP=$(systemctl show "$UNIT" -p ControlGroup --value 2>/dev/null)
 
 if [[ -n "$CGROUP" && -d "/sys/fs/cgroup${CGROUP}" ]]; then
+    # 2a. Configuration: verify cgroupfs values match what was requested.
+
     # CPU: 50% = 50000 usec per 100000 usec period.
     CPU_MAX=$(cat "/sys/fs/cgroup${CGROUP}/cpu.max" 2>/dev/null || echo "")
     CPU_QUOTA=$(echo "$CPU_MAX" | awk '{print $1}')
@@ -267,29 +273,109 @@ else
     fail "(skipping memory.max check)"
 fi
 
+# 2b. Enforcement — CPU: run a busy loop under the same limits and verify
+#     the kernel actually throttled it (nr_throttled > 0 in cpu.stat).
+
+SPINNER_UNIT="agent-${SPAWNED_UID}-spin"
+systemd-run --unit="$SPINNER_UNIT" \
+    --slice="agent-${SPAWNED_UID}.slice" \
+    --uid="$SPAWNED_UID" --gid="$SPAWNED_UID" \
+    --property=CPUQuota=50% \
+    -- sh -c 'while true; do :; done' 2>/dev/null
+
+for _ in $(seq 1 10); do
+    systemctl is-active --quiet "${SPINNER_UNIT}.service" 2>/dev/null && break
+    sleep 0.25
+done
+# Let the spinner run long enough to accumulate measurable throttling.
+sleep 2
+
+SPIN_CGROUP=$(systemctl show "${SPINNER_UNIT}.service" -p ControlGroup --value 2>/dev/null)
+if [[ -n "$SPIN_CGROUP" && -f "/sys/fs/cgroup${SPIN_CGROUP}/cpu.stat" ]]; then
+    NR_THROTTLED=$(awk '/^nr_throttled/ {print $2}' "/sys/fs/cgroup${SPIN_CGROUP}/cpu.stat")
+    if [[ "$NR_THROTTLED" -gt 0 ]] 2>/dev/null; then
+        pass "cpu enforcement: kernel throttled spinner (nr_throttled=$NR_THROTTLED)"
+    else
+        fail "cpu spinner was not throttled (nr_throttled=$NR_THROTTLED)"
+    fi
+else
+    fail "cpu.stat not readable for spinner (cgroup='$SPIN_CGROUP')"
+fi
+systemctl stop "${SPINNER_UNIT}.service" 2>/dev/null
+SPINNER_UNIT=""
+
+# 2c. Enforcement — memory: attempt to allocate 300M with a 256M limit.
+#     The cgroup OOM killer should terminate the process.
+
+MEM_UNIT="agent-${SPAWNED_UID}-memproof"
+if systemd-run --quiet --unit="$MEM_UNIT" \
+    --slice="agent-${SPAWNED_UID}.slice" \
+    --uid="$SPAWNED_UID" --gid="$SPAWNED_UID" \
+    --property=MemoryMax=256M \
+    --wait \
+    -- python3 -c "x = bytearray(300 * 1024 * 1024)" 2>/dev/null; then
+    fail "process survived allocating 300M with 256M limit"
+else
+    pass "memory enforcement: allocation beyond 256M was killed"
+fi
+
 
 # ==== Test 3: Network access blocked ====
 
 echo
 note "test 3: outbound network blocked by nftables"
 
-# Attempt a TCP connect from the agent's uid.  The nft rule
-# "meta skuid <uid> drop" on the output chain should block it.
+# Use a local TCP listener so the proof is deterministic — independent of
+# external network availability.  Root proves the listener is reachable,
+# then the agent uid proves the nft "meta skuid <uid> drop" rule blocks it.
+
+NET_PORT=19876
+python3 -c "
+import socket, signal, sys
+signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(('127.0.0.1', int(sys.argv[1])))
+s.listen(5)
+while True:
+    try:
+        conn, _ = s.accept()
+        conn.close()
+    except:
+        break
+" "$NET_PORT" &
+LISTENER_PID=$!
+sleep 0.3
+
+# Control: root can reach the listener (proves it's up).
+if python3 -c "
+import socket, sys
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.settimeout(3)
+s.connect(('127.0.0.1', int(sys.argv[1])))
+s.close()
+" "$NET_PORT" 2>/dev/null; then
+    pass "control: root connects to local listener"
+else
+    fail "control: root cannot connect to local listener (test is invalid)"
+fi
+
+# Agent uid should be blocked by the nft drop rule.
 if runuser -u "$AGENT_USER" -- python3 -c "
 import socket, sys
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 s.settimeout(3)
-try:
-    s.connect(('1.1.1.1', 80))
-    s.close()
-    sys.exit(0)
-except Exception:
-    sys.exit(1)
-" 2>/dev/null; then
-    fail "outbound TCP connect succeeded (should be blocked by nft)"
+s.connect(('127.0.0.1', int(sys.argv[1])))
+s.close()
+sys.exit(0)
+" "$NET_PORT" 2>/dev/null; then
+    fail "agent uid connected to local listener (nft rule not enforced)"
 else
-    pass "outbound network access blocked"
+    pass "agent uid blocked from local listener by nftables"
 fi
+
+kill "$LISTENER_PID" 2>/dev/null && wait "$LISTENER_PID" 2>/dev/null
+LISTENER_PID=""
 
 # Verify the nft rule references this uid.
 NFT_RULES=$(nft list chain inet filter agent-os-output 2>/dev/null || echo "")
