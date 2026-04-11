@@ -18,13 +18,22 @@ behavior.
 
 ## Integration tests
 
-- `test/phase1-peercred.sh`: automated proof that `SO_PEERCRED` attribution
+- **`test/phase1.sh`**: end-to-end Phase 1 scenario. Starts all three services
+  (isolation, admin-agent, audit), spawns an agent with resource limits
+  (cpu 50%, mem 256M, net deny), then verifies:
+  - cgroup limits are enforced (cpu.max, memory.max in cgroupfs)
+  - outbound network access is blocked by nftables
+  - file I/O is captured in the audit log attributed to the agent uid
+  - escalation request is logged with kernel-verified uid and safe default decision
+  - terminate removes the user, systemd unit, nft rules, and home directory
+
+  Runs 16 assertions. Requires root, `python3`, and `nft`.
+
+- **`test/phase1-peercred.sh`**: focused proof that `SO_PEERCRED` attribution
   overrides self-reported identity and that cross-uid authorization checks
-  hold.  Creates a temporary user, starts both services, and runs four
-  assertions (uid override in admin-agent log, spawn denied for non-root,
-  cross-uid terminate denied, list_agents filtered). The script fails hard if
-  it cannot create the proof agent for `list_agents`, and it cleans up the
-  temporary agent user on exit so reruns stay reliable. Requires root and
+  hold. Creates a temporary user, starts isolation + admin-agent, and runs
+  four assertions (uid override in admin-agent log, spawn denied for non-root,
+  cross-uid terminate denied, list_agents filtered). Requires root and
   `python3`.
 
 ## Typical loop
@@ -32,6 +41,7 @@ behavior.
 ```sh
 scripts/vm.sh start
 scripts/vm.sh ssh -- 'cd /repo && go test ./...'
+scripts/vm.sh ssh -- 'cd /repo && sudo test/phase1.sh'
 scripts/vm.sh ssh -- 'cd /repo && sudo test/phase1-peercred.sh'
 scripts/vm.sh stop
 ```
