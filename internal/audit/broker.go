@@ -1,4 +1,4 @@
-package main
+package audit
 
 import (
 	"io"
@@ -16,7 +16,7 @@ type Broker struct {
 	mu     sync.Mutex
 	ring   [][]byte
 	pos    int // next write index
-	count  int // how many slots are occupied (≤ len(ring))
+	count  int // how many slots are occupied (<= len(ring))
 	subs   map[int]chan []byte
 	nextID int
 }

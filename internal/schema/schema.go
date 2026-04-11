@@ -1,4 +1,5 @@
-// Package schema defines the request/response types shared across Phase 1 services.
+// Package schema defines the request/response types and protocol constants
+// shared across Phase 1 services.
 package schema
 
 import (
@@ -6,15 +7,52 @@ import (
 	"time"
 )
 
+// --- Socket Paths ---
+
+const (
+	SocketDir       = "/run/agent-os"
+	IsolationSocket = "/run/agent-os/isolation.sock"
+	AdminSocket     = "/run/agent-os/admin-agent.sock"
+	AuditSocket     = "/run/agent-os/audit.sock"
+)
+
+// --- Wire Protocol ---
+// All three services use the same envelope over Unix sockets.
+
+// Method constants for the request envelope.
+const (
+	MethodSpawnAgent     = "spawn_agent"
+	MethodTerminateAgent = "terminate_agent"
+	MethodListAgents     = "list_agents"
+	MethodEscalate       = "escalate"
+)
+
+type Request struct {
+	Method string          `json:"method"`
+	Body   json.RawMessage `json:"body"`
+}
+
+type Response struct {
+	OK   bool            `json:"ok"`
+	Body json.RawMessage `json:"body,omitempty"`
+}
+
+// --- Agent UID Range ---
+
+const (
+	AgentUIDBase uint32 = 60000 // agent uids start here to avoid collisions
+	AgentUIDMax  uint32 = 61000
+)
+
 // --- Isolation Service ---
 
 type SpawnAgentRequest struct {
-	Name       string     `json:"name"`
-	Command    []string   `json:"command,omitempty"`     // command + args to execute as the agent uid
-	CPUQuota   string     `json:"cpu_quota,omitempty"`   // e.g. "50%" — percent of one core
-	MemoryMax  string     `json:"memory_max,omitempty"`  // e.g. "512M"
-	NetAccess  NetPolicy  `json:"net_access,omitempty"`
-	WatchPaths []string   `json:"watch_paths,omitempty"` // paths for audit service to monitor
+	Name       string    `json:"name"`
+	Command    []string  `json:"command,omitempty"`     // command + args to execute as the agent uid
+	CPUQuota   string    `json:"cpu_quota,omitempty"`   // e.g. "50%" -- percent of one core
+	MemoryMax  string    `json:"memory_max,omitempty"`  // e.g. "512M"
+	NetAccess  NetPolicy `json:"net_access,omitempty"`
+	WatchPaths []string  `json:"watch_paths,omitempty"` // paths for audit service to monitor
 }
 
 type NetPolicy string
@@ -25,12 +63,21 @@ const (
 	NetAllow     NetPolicy = "allow"      // unrestricted
 )
 
+// AgentStatus represents the lifecycle state of an agent.
+type AgentStatus string
+
+const (
+	StatusRunning AgentStatus = "running"
+	StatusExited  AgentStatus = "exited"
+	StatusStopped AgentStatus = "stopped"
+)
+
 type AgentInfo struct {
-	Name      string    `json:"name"`
-	UID       uint32    `json:"uid"`
-	Status    string    `json:"status"` // "running", "exited", "stopped"
-	Slice     string    `json:"slice"`  // systemd slice name
-	CreatedAt time.Time `json:"created_at"`
+	Name      string      `json:"name"`
+	UID       uint32      `json:"uid"`
+	Status    AgentStatus `json:"status"`
+	Slice     string      `json:"slice"` // systemd slice name
+	CreatedAt time.Time   `json:"created_at"`
 }
 
 type SpawnAgentResponse struct {
@@ -73,24 +120,28 @@ type EscalationResponse struct {
 
 // --- Audit Service ---
 
+// AuditAction represents the type of filesystem event observed.
+type AuditAction string
+
+const (
+	ActionFileModify     AuditAction = "file_modify"
+	ActionFileCloseWrite AuditAction = "file_close_write"
+	ActionFileOpen       AuditAction = "file_open"
+)
+
+// AuditOutcome represents whether an observed action was permitted.
+type AuditOutcome string
+
+const (
+	OutcomeAllowed AuditOutcome = "allowed"
+	OutcomeDenied  AuditOutcome = "denied"
+)
+
 type AuditEvent struct {
-	Timestamp time.Time `json:"timestamp"`
-	AgentUID  uint32    `json:"agent_uid"`
-	AgentName string    `json:"agent_name,omitempty"`
-	Action    string    `json:"action"`    // "file_write", "file_read", "file_delete", "process_exec"
-	Resource  string    `json:"resource"`  // path or process info
-	Outcome   string    `json:"outcome"`   // "allowed", "denied"
-}
-
-// --- Wire Protocol ---
-// All three services use the same envelope over Unix sockets.
-
-type Request struct {
-	Method string          `json:"method"` // "spawn_agent", "terminate_agent", "list_agents", "escalate"
-	Body   json.RawMessage `json:"body"`
-}
-
-type Response struct {
-	OK   bool            `json:"ok"`
-	Body json.RawMessage `json:"body,omitempty"`
+	Timestamp time.Time    `json:"timestamp"`
+	AgentUID  uint32       `json:"agent_uid"`
+	AgentName string       `json:"agent_name,omitempty"`
+	Action    AuditAction  `json:"action"`
+	Resource  string       `json:"resource"` // path or process info
+	Outcome   AuditOutcome `json:"outcome"`
 }

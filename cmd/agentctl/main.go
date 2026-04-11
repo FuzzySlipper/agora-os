@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	isolationSock = "/run/agent-os/isolation.sock"
-	adminSock     = "/run/agent-os/admin-agent.sock"
+	isolationSock = schema.IsolationSocket
+	adminSock     = schema.AdminSocket
 )
 
 func main() {
@@ -89,7 +89,7 @@ func cmdSpawn(args []string, pretty bool) error {
 		req.Command = nil
 	}
 
-	resp, err := call(isolationSock, "spawn_agent", req)
+	resp, err := call(isolationSock, schema.MethodSpawnAgent, req)
 	if err != nil {
 		return err
 	}
@@ -99,7 +99,7 @@ func cmdSpawn(args []string, pretty bool) error {
 // --- list ---
 
 func cmdList(pretty bool) error {
-	resp, err := call(isolationSock, "list_agents", nil)
+	resp, err := call(isolationSock, schema.MethodListAgents, nil)
 	if err != nil {
 		return err
 	}
@@ -117,7 +117,7 @@ func cmdTerminate(args []string, pretty bool) error {
 		return fmt.Errorf("invalid uid: %w", err)
 	}
 
-	resp, err := call(isolationSock, "terminate_agent", schema.TerminateAgentRequest{UID: uint32(uid)})
+	resp, err := call(isolationSock, schema.MethodTerminateAgent, schema.TerminateAgentRequest{UID: uint32(uid)})
 	if err != nil {
 		return err
 	}
@@ -147,7 +147,7 @@ func cmdEscalate(args []string, pretty bool) error {
 		Justification:     *justification,
 	}
 
-	resp, err := call(adminSock, "escalate", req)
+	resp, err := call(adminSock, schema.MethodEscalate, req)
 	if err != nil {
 		return err
 	}
