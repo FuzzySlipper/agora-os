@@ -488,6 +488,14 @@ else
     pass "systemd unit $UNIT stopped"
 fi
 
+# Agent slice should be gone/stopped too.
+SLICE="agent-${SPAWNED_UID}.slice"
+if systemctl is-active --quiet "$SLICE" 2>/dev/null; then
+    fail "agent slice $SLICE still active after terminate"
+else
+    pass "agent slice $SLICE stopped"
+fi
+
 # Nftables rules for this uid should be gone.
 NFT_AFTER=$(nft list chain inet filter agent-os-output 2>/dev/null || echo "")
 if echo "$NFT_AFTER" | grep -q "skuid $SPAWNED_UID"; then

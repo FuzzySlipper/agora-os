@@ -25,9 +25,9 @@ behavior.
   - outbound network access is blocked by nftables
   - file I/O is captured in the audit log attributed to the agent uid
   - escalation request is logged with kernel-verified uid and safe default decision
-  - terminate removes the user, systemd unit, nft rules, and home directory
+  - terminate removes the user, systemd unit, slice, nft rules, and home directory
 
-  Runs 18 assertions. Requires root, `python3`, and `nft`.
+  Runs 19 assertions. Requires root, `python3`, and `nft`.
 
 - **`test/phase1-peercred.sh`**: focused proof that `SO_PEERCRED` attribution
   overrides self-reported identity and that cross-uid authorization checks
