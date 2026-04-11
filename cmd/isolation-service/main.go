@@ -1,10 +1,9 @@
 // Isolation service: manages agent Linux users, cgroups, and network rules.
-// Listens on a Unix socket for spawn/terminate/list commands.
+// This file is the composition root — bootstrap, socket setup, and signal
+// handling. Request dispatch and authorization live in internal/isolation.
 package main
 
 import (
-	"encoding/json"
-	"fmt"
 	"log"
 	"net"
 	"os"
@@ -12,7 +11,7 @@ import (
 	"syscall"
 
 	"github.com/patch/agora-os/internal/agent"
-	"github.com/patch/agora-os/internal/peercred"
+	"github.com/patch/agora-os/internal/isolation"
 	"github.com/patch/agora-os/internal/schema"
 )
 
@@ -25,6 +24,7 @@ func main() {
 	}
 
 	mgr := agent.NewManager()
+	svc := isolation.New(mgr)
 
 	// Ensure the socket directory exists
 	os.MkdirAll(schema.SocketDir, 0755)
@@ -57,87 +57,6 @@ func main() {
 			log.Printf("accept: %v", err)
 			return
 		}
-		go handleConn(conn, mgr)
+		go svc.HandleConn(conn)
 	}
-}
-
-func handleConn(conn net.Conn, mgr *agent.Manager) {
-	defer conn.Close()
-
-	peerUID, err := peercred.PeerUID(conn)
-	if err != nil {
-		writeError(conn, fmt.Sprintf("peer credentials: %v", err))
-		return
-	}
-
-	var req schema.Request
-	if err := json.NewDecoder(conn).Decode(&req); err != nil {
-		writeError(conn, fmt.Sprintf("decode: %v", err))
-		return
-	}
-
-	var resp schema.Response
-	switch req.Method {
-	case schema.MethodSpawnAgent:
-		if peerUID != 0 {
-			writeError(conn, "spawn_agent requires root")
-			return
-		}
-		var body schema.SpawnAgentRequest
-		if err := json.Unmarshal(req.Body, &body); err != nil {
-			writeError(conn, fmt.Sprintf("bad body: %v", err))
-			return
-		}
-		info, err := mgr.Spawn(body)
-		if err != nil {
-			writeError(conn, err.Error())
-			return
-		}
-		resp = okResponse(schema.SpawnAgentResponse{Agent: *info})
-
-	case schema.MethodTerminateAgent:
-		var body schema.TerminateAgentRequest
-		if err := json.Unmarshal(req.Body, &body); err != nil {
-			writeError(conn, fmt.Sprintf("bad body: %v", err))
-			return
-		}
-		if peerUID != 0 && body.UID != uint32(peerUID) {
-			writeError(conn, "cannot terminate another agent")
-			return
-		}
-		if err := mgr.Terminate(body.UID); err != nil {
-			writeError(conn, err.Error())
-			return
-		}
-		resp = okResponse("terminated")
-
-	case schema.MethodListAgents:
-		agents := mgr.List()
-		if peerUID != 0 {
-			filtered := make([]schema.AgentInfo, 0)
-			for _, a := range agents {
-				if a.UID == uint32(peerUID) {
-					filtered = append(filtered, a)
-				}
-			}
-			agents = filtered
-		}
-		resp = okResponse(schema.ListAgentsResponse{Agents: agents})
-
-	default:
-		writeError(conn, fmt.Sprintf("unknown method: %s", req.Method))
-		return
-	}
-
-	json.NewEncoder(conn).Encode(resp)
-}
-
-func okResponse(body any) schema.Response {
-	b, _ := json.Marshal(body)
-	return schema.Response{OK: true, Body: b}
-}
-
-func writeError(conn net.Conn, msg string) {
-	b, _ := json.Marshal(msg)
-	json.NewEncoder(conn).Encode(schema.Response{OK: false, Body: b})
 }
