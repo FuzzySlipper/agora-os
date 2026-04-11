@@ -13,9 +13,7 @@ import (
 )
 
 const (
-	agentUIDBase = 60000 // agent uids start here to avoid collisions
-	agentUIDMax  = 61000
-	nftChain     = "agent-os-output" // dedicated chain so we can flush without touching host rules
+	nftChain = "agent-os-output" // dedicated chain so we can flush without touching host rules
 )
 
 // BootstrapNftables ensures the inet filter table, base output chain, and
@@ -77,7 +75,7 @@ func NewManager() *Manager {
 		agents:      make(map[uint32]*schema.AgentInfo),
 		hasCmd:      make(map[uint32]bool),
 		ruleHandles: make(map[uint32][]uint64),
-		nextUID:     agentUIDBase,
+		nextUID:     schema.AgentUIDBase,
 	}
 }
 
@@ -91,7 +89,7 @@ func (m *Manager) Spawn(req schema.SpawnAgentRequest) (*schema.AgentInfo, error)
 	defer m.mu.Unlock()
 
 	uid := m.nextUID
-	if uid >= agentUIDMax {
+	if uid >= schema.AgentUIDMax {
 		return nil, fmt.Errorf("agent uid pool exhausted")
 	}
 	m.nextUID++
@@ -129,7 +127,7 @@ func (m *Manager) Spawn(req schema.SpawnAgentRequest) (*schema.AgentInfo, error)
 	info := &schema.AgentInfo{
 		Name:      req.Name,
 		UID:       uid,
-		Status:    "running",
+		Status:    schema.StatusRunning,
 		Slice:     sliceName,
 		CreatedAt: time.Now(),
 	}
@@ -194,7 +192,7 @@ func (m *Manager) List() []schema.AgentInfo {
 		// Authoritative status: query systemd for agents with a command unit.
 		if m.hasCmd[info.UID] {
 			if exec.Command("systemctl", "is-active", "--quiet", agentUnitName(info.UID)).Run() != nil {
-				info.Status = "exited"
+				info.Status = schema.StatusExited
 				a.Status = "exited"
 				delete(m.hasCmd, info.UID)
 			}
@@ -241,7 +239,7 @@ func (m *Manager) waitProcess(uid uint32, cmd *exec.Cmd) {
 	defer m.mu.Unlock()
 
 	if info, ok := m.agents[uid]; ok {
-		info.Status = "exited"
+		info.Status = schema.StatusExited
 	}
 	delete(m.hasCmd, uid)
 }

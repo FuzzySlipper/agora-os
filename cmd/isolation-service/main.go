@@ -16,7 +16,7 @@ import (
 	"github.com/patch/agora-os/internal/schema"
 )
 
-const socketPath = "/run/agent-os/isolation.sock"
+const socketPath = schema.IsolationSocket
 
 func main() {
 	// Set up nftables table + chains before accepting any requests.
@@ -27,7 +27,7 @@ func main() {
 	mgr := agent.NewManager()
 
 	// Ensure the socket directory exists
-	os.MkdirAll("/run/agent-os", 0755)
+	os.MkdirAll(schema.SocketDir, 0755)
 	os.Remove(socketPath) // clean up stale socket
 
 	ln, err := net.Listen("unix", socketPath)
@@ -78,7 +78,7 @@ func handleConn(conn net.Conn, mgr *agent.Manager) {
 
 	var resp schema.Response
 	switch req.Method {
-	case "spawn_agent":
+	case schema.MethodSpawnAgent:
 		if peerUID != 0 {
 			writeError(conn, "spawn_agent requires root")
 			return
@@ -95,7 +95,7 @@ func handleConn(conn net.Conn, mgr *agent.Manager) {
 		}
 		resp = okResponse(schema.SpawnAgentResponse{Agent: *info})
 
-	case "terminate_agent":
+	case schema.MethodTerminateAgent:
 		var body schema.TerminateAgentRequest
 		if err := json.Unmarshal(req.Body, &body); err != nil {
 			writeError(conn, fmt.Sprintf("bad body: %v", err))
@@ -111,7 +111,7 @@ func handleConn(conn net.Conn, mgr *agent.Manager) {
 		}
 		resp = okResponse("terminated")
 
-	case "list_agents":
+	case schema.MethodListAgents:
 		agents := mgr.List()
 		if peerUID != 0 {
 			filtered := make([]schema.AgentInfo, 0)

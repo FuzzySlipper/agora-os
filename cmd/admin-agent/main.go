@@ -21,7 +21,7 @@ import (
 	"github.com/patch/agora-os/internal/schema"
 )
 
-const socketPath = "/run/agent-os/admin-agent.sock"
+const socketPath = schema.AdminSocket
 
 type AdminAgent struct {
 	systemPrompt string
@@ -61,7 +61,7 @@ func main() {
 		logFile:      logFile,
 	}
 
-	os.MkdirAll("/run/agent-os", 0755)
+	os.MkdirAll(schema.SocketDir, 0755)
 	os.Remove(socketPath)
 
 	ln, err := net.Listen("unix", socketPath)
@@ -108,7 +108,7 @@ func (a *AdminAgent) handleConn(conn net.Conn) {
 		return
 	}
 
-	if req.Method != "escalate" {
+	if req.Method != schema.MethodEscalate {
 		writeJSON(conn, schema.Response{OK: false})
 		return
 	}

@@ -16,11 +16,8 @@ import (
 )
 
 const (
-	logPath          = "/var/log/agent-os/audit.log"
-	subscriberSock   = "/run/agent-os/audit.sock"
-	agentUIDBase     = 60000
-	agentUIDMax      = 61000
-	ringSize         = 1024
+	logPath  = "/var/log/agent-os/audit.log"
+	ringSize = 1024
 )
 
 func main() {
@@ -52,10 +49,10 @@ func main() {
 		log.Printf("watching: %s", path)
 	}
 
-	os.MkdirAll("/run/agent-os", 0755)
+	os.MkdirAll(schema.SocketDir, 0755)
 
 	broker := NewBroker(ringSize)
-	go serveSubscribers(subscriberSock, broker)
+	go serveSubscribers(schema.AuditSocket, broker)
 
 	log.Println("audit service running")
 
@@ -78,7 +75,7 @@ func main() {
 		events := parseFanotifyEvents(buf[:n])
 		for _, ev := range events {
 			// Only log events from agent uids
-			if ev.AgentUID < agentUIDBase || ev.AgentUID >= agentUIDMax {
+			if ev.AgentUID < schema.AgentUIDBase || ev.AgentUID >= schema.AgentUIDMax {
 				continue
 			}
 
@@ -169,7 +166,7 @@ func parseFanotifyEvents(buf []byte) []schema.AuditEvent {
 			AgentUID:  uid,
 			Action:    action,
 			Resource:  path,
-			Outcome:   "allowed",
+			Outcome:   schema.OutcomeAllowed,
 		})
 
 		offset += int(meta.EventLen)
@@ -203,15 +200,15 @@ func uidForPid(pid int32) uint32 {
 	return 0
 }
 
-func maskToAction(mask uint64) string {
+func maskToAction(mask uint64) schema.AuditAction {
 	switch {
 	case mask&0x02 != 0:
-		return "file_modify"
+		return schema.ActionFileModify
 	case mask&0x08 != 0:
-		return "file_close_write"
+		return schema.ActionFileCloseWrite
 	case mask&0x20 != 0:
-		return "file_open"
+		return schema.ActionFileOpen
 	default:
-		return fmt.Sprintf("unknown:0x%x", mask)
+		return schema.AuditAction(fmt.Sprintf("unknown:0x%x", mask))
 	}
 }
