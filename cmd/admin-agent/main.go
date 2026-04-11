@@ -49,10 +49,15 @@ func main() {
 	}
 	defer logFile.Close()
 
+	apiURL := "https://api.anthropic.com/v1/messages"
+	if u := os.Getenv("ADMIN_AGENT_API_URL"); u != "" {
+		apiURL = u
+	}
+
 	agent := &AdminAgent{
 		systemPrompt: string(promptBytes),
 		apiKey:       os.Getenv("ANTHROPIC_API_KEY"),
-		apiURL:       "https://api.anthropic.com/v1/messages",
+		apiURL:       apiURL,
 		logFile:      logFile,
 	}
 

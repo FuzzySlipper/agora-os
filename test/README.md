@@ -16,11 +16,16 @@ The local sandbox may block socket creation or other privileged operations, so
 `go test ./...` on the host can produce false negatives for Phase 1 system
 behavior.
 
-## Current scaffolds
+## Integration tests
 
-- `test/phase1-peercred.sh`: integration outline for proving that
-  `SO_PEERCRED` attribution overrides self-reported identity and that
-  cross-uid authorization checks hold in the VM.
+- `test/phase1-peercred.sh`: automated proof that `SO_PEERCRED` attribution
+  overrides self-reported identity and that cross-uid authorization checks
+  hold.  Creates a temporary user, starts both services, and runs four
+  assertions (uid override in admin-agent log, spawn denied for non-root,
+  cross-uid terminate denied, list_agents filtered). The script fails hard if
+  it cannot create the proof agent for `list_agents`, and it cleans up the
+  temporary agent user on exit so reruns stay reliable. Requires root and
+  `python3`.
 
 ## Typical loop
 
