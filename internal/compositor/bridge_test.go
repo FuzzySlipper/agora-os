@@ -2,7 +2,11 @@ package compositor
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -25,10 +29,10 @@ func (f *fakePublisher) Publish(topic string, body any) error {
 
 func TestHandlePluginConnPublishesMappedEvent(t *testing.T) {
 	pub := &fakePublisher{}
-	bridge := New(pub)
+	bridge := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})
 
-	server, client := net.Pipe()
-	defer client.Close()
+	server, client, cleanup := unixSocketPair(t)
+	defer cleanup()
 
 	done := make(chan struct{})
 	go func() {
@@ -90,13 +94,50 @@ func TestHandlePluginConnPublishesMappedEvent(t *testing.T) {
 		t.Fatalf("got surfaces %+v, want tracked view-42", surfaces)
 	}
 
-	client.Close()
+	_ = client.Close()
 	<-done
+}
+
+func TestHandlePluginConnRejectsUnauthorizedPeer(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("cannot exercise unauthorized non-root plugin peer while running as root")
+	}
+
+	pub := &fakePublisher{}
+	bridge := New(pub, Config{AllowedPluginUID: uint32(os.Getuid() + 1)})
+
+	server, client, cleanup := unixSocketPair(t)
+	defer cleanup()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		bridge.HandlePluginConn(server)
+	}()
+
+	_ = client.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+	var msg any
+	err := json.NewDecoder(client).Decode(&msg)
+	if err == nil {
+		t.Fatal("expected unauthorized plugin peer to receive no sync data")
+	}
+	if !errors.Is(err, os.ErrDeadlineExceeded) && !errors.Is(err, net.ErrClosed) && !errors.Is(err, io.EOF) {
+		// EOF is the usual case; a closed or timed-out socket is also acceptable.
+		var netErr net.Error
+		if !errors.As(err, &netErr) {
+			t.Fatalf("expected socket close/timeout, got %v", err)
+		}
+	}
+
+	<-done
+	if len(pub.events) != 0 {
+		t.Fatalf("got published events %+v, want none", pub.events)
+	}
 }
 
 func TestReconnectSendsPolicySnapshot(t *testing.T) {
 	pub := &fakePublisher{}
-	bridge := New(pub)
+	bridge := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})
 
 	policy := schema.CompositorSurfacePolicy{
 		SurfaceID:         "view-99",
@@ -112,8 +153,8 @@ func TestReconnectSendsPolicySnapshot(t *testing.T) {
 		t.Fatalf("SetInputContext: %v", err)
 	}
 
-	server, client := net.Pipe()
-	defer client.Close()
+	server, client, cleanup := unixSocketPair(t)
+	defer cleanup()
 	go bridge.HandlePluginConn(server)
 
 	dec := json.NewDecoder(client)
@@ -135,7 +176,7 @@ func TestReconnectSendsPolicySnapshot(t *testing.T) {
 }
 
 func TestDispatchRejectsNonRootMutation(t *testing.T) {
-	bridge := New(&fakePublisher{})
+	bridge := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
 	body, _ := json.Marshal(schema.UpsertSurfacePolicyRequest{
 		Surface: schema.CompositorSurfacePolicy{SurfaceID: "view-1", OwnerUID: 60001},
 	})
@@ -145,10 +186,84 @@ func TestDispatchRejectsNonRootMutation(t *testing.T) {
 	}
 }
 
-func TestCloseSurfacesByUIDQueuesMatchingSurfaces(t *testing.T) {
-	bridge := New(&fakePublisher{})
+func TestDispatchRejectsNonRootListSurfaces(t *testing.T) {
+	bridge := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
+	_, err := bridge.dispatch(1234, schema.Request{Method: schema.MethodListSurfaces})
+	if err == nil {
+		t.Fatal("expected non-root list_surfaces to be rejected")
+	}
+}
+
+func TestSyncPluginSessionDoesNotLoseConcurrentPolicyUpdate(t *testing.T) {
+	bridge := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err := bridge.UpsertSurfacePolicy(schema.CompositorSurfacePolicy{SurfaceID: "view-1", OwnerUID: 60001}); err != nil {
+		t.Fatalf("seed UpsertSurfacePolicy: %v", err)
+	}
+
 	server, client := net.Pipe()
+	defer server.Close()
 	defer client.Close()
+
+	session := &pluginSession{conn: server, enc: json.NewEncoder(server)}
+	bridge.installPluginSession(session)
+	defer bridge.clearPluginSession(session)
+
+	syncDone := make(chan error, 1)
+	go func() {
+		syncDone <- bridge.syncPluginSession(session)
+	}()
+
+	dec := json.NewDecoder(client)
+
+	var replace schema.CompositorPolicyReplace
+	if err := dec.Decode(&replace); err != nil {
+		t.Fatalf("decode policy replace: %v", err)
+	}
+	if len(replace.Surfaces) != 1 || replace.Surfaces[0].SurfaceID != "view-1" {
+		t.Fatalf("got replace surfaces %+v, want only seeded policy", replace.Surfaces)
+	}
+
+	upsertDone := make(chan error, 1)
+	go func() {
+		upsertDone <- bridge.UpsertSurfacePolicy(schema.CompositorSurfacePolicy{SurfaceID: "view-2", OwnerUID: 60002})
+	}()
+
+	var input schema.CompositorInputContextUpdate
+	if err := dec.Decode(&input); err != nil {
+		t.Fatalf("decode input context: %v", err)
+	}
+
+	select {
+	case err := <-syncDone:
+		if err != nil {
+			t.Fatalf("syncPluginSession: %v", err)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("timed out waiting for syncPluginSession")
+	}
+
+	var upsert schema.CompositorPolicyUpsert
+	if err := dec.Decode(&upsert); err != nil {
+		t.Fatalf("decode policy upsert: %v", err)
+	}
+	if upsert.Surface.SurfaceID != "view-2" {
+		t.Fatalf("got upsert %+v, want view-2", upsert)
+	}
+
+	select {
+	case err := <-upsertDone:
+		if err != nil {
+			t.Fatalf("UpsertSurfacePolicy: %v", err)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("timed out waiting for UpsertSurfacePolicy")
+	}
+}
+
+func TestCloseSurfacesByUIDQueuesMatchingSurfaces(t *testing.T) {
+	bridge := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
+	server, client, cleanup := unixSocketPair(t)
+	defer cleanup()
 
 	go bridge.HandlePluginConn(server)
 	dec := json.NewDecoder(client)
@@ -198,4 +313,55 @@ func TestCloseSurfacesByUIDQueuesMatchingSurfaces(t *testing.T) {
 	if closeMsg.Type != schema.PluginMessageCloseSurfacesByUID || closeMsg.OwnerUID != 60001 {
 		t.Fatalf("got close msg %+v, want owner 60001", closeMsg)
 	}
+}
+
+func unixSocketPair(t *testing.T) (server net.Conn, client net.Conn, cleanup func()) {
+	t.Helper()
+
+	sock := filepath.Join(t.TempDir(), "bridge.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatalf("listen unix socket: %v", err)
+	}
+
+	acceptedCh := make(chan net.Conn, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			errCh <- err
+			return
+		}
+		acceptedCh <- conn
+		_ = ln.Close()
+	}()
+
+	client, err = net.Dial("unix", sock)
+	if err != nil {
+		_ = ln.Close()
+		t.Fatalf("dial unix socket: %v", err)
+	}
+
+	select {
+	case server = <-acceptedCh:
+	case err := <-errCh:
+		_ = client.Close()
+		_ = ln.Close()
+		t.Fatalf("accept unix socket: %v", err)
+	case <-time.After(time.Second):
+		_ = client.Close()
+		_ = ln.Close()
+		t.Fatal("timed out accepting unix socket")
+	}
+
+	cleanup = func() {
+		if client != nil {
+			_ = client.Close()
+		}
+		if server != nil {
+			_ = server.Close()
+		}
+		_ = ln.Close()
+	}
+	return server, client, cleanup
 }

@@ -17,6 +17,10 @@ type publisher interface {
 	Publish(topic string, body any) error
 }
 
+type Config struct {
+	AllowedPluginUID uint32
+}
+
 type pluginSession struct {
 	conn net.Conn
 	enc  *json.Encoder
@@ -34,7 +38,8 @@ func (s *pluginSession) Close() error {
 }
 
 type Bridge struct {
-	bus publisher
+	bus              publisher
+	allowedPluginUID uint32
 
 	mu       sync.RWMutex
 	plugin   *pluginSession
@@ -43,16 +48,27 @@ type Bridge struct {
 	actorUID *uint32
 }
 
-func New(bus publisher) *Bridge {
+func New(bus publisher, cfg Config) *Bridge {
 	return &Bridge{
-		bus:      bus,
-		surfaces: make(map[string]schema.CompositorTrackedSurface),
-		policies: make(map[string]schema.CompositorSurfacePolicy),
+		bus:              bus,
+		allowedPluginUID: cfg.AllowedPluginUID,
+		surfaces:         make(map[string]schema.CompositorTrackedSurface),
+		policies:         make(map[string]schema.CompositorSurfacePolicy),
 	}
 }
 
 func (b *Bridge) HandlePluginConn(conn net.Conn) {
 	defer conn.Close()
+
+	peerUID, err := peercred.PeerUID(conn)
+	if err != nil {
+		log.Printf("compositor bridge plugin peer credentials: %v", err)
+		return
+	}
+	if !b.isAllowedPluginUID(peerUID) {
+		log.Printf("compositor bridge rejected plugin peer uid=%d", peerUID)
+		return
+	}
 
 	session := &pluginSession{conn: conn, enc: json.NewEncoder(conn)}
 	previous := b.installPluginSession(session)
@@ -117,45 +133,56 @@ func (b *Bridge) ListSurfaces() []schema.CompositorTrackedSurface {
 }
 
 func (b *Bridge) UpsertSurfacePolicy(policy schema.CompositorSurfacePolicy) error {
-	b.mu.Lock()
-	b.policies[policy.SurfaceID] = policy
-	b.mu.Unlock()
-
 	msg := schema.CompositorPolicyUpsert{Type: schema.PluginMessagePolicyUpsert, Surface: policy}
-	return b.sendToPluginIfConnected(msg)
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	b.policies[policy.SurfaceID] = policy
+	if b.plugin == nil {
+		return nil
+	}
+	return b.plugin.Send(msg)
 }
 
 func (b *Bridge) RemoveSurfacePolicy(surfaceID string) error {
-	b.mu.Lock()
-	delete(b.policies, surfaceID)
-	b.mu.Unlock()
-
 	msg := schema.CompositorPolicyRemove{Type: schema.PluginMessagePolicyRemove, SurfaceID: surfaceID}
-	return b.sendToPluginIfConnected(msg)
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	delete(b.policies, surfaceID)
+	if b.plugin == nil {
+		return nil
+	}
+	return b.plugin.Send(msg)
 }
 
 func (b *Bridge) SetInputContext(actorUID *uint32) error {
+	msg := schema.CompositorInputContextUpdate{Type: schema.PluginMessageInputContext}
+
 	b.mu.Lock()
+	defer b.mu.Unlock()
+
 	if actorUID == nil {
 		b.actorUID = nil
 	} else {
 		uid := *actorUID
 		b.actorUID = &uid
+		msg.ActorUID = &uid
 	}
-	b.mu.Unlock()
 
-	msg := schema.CompositorInputContextUpdate{Type: schema.PluginMessageInputContext, ActorUID: actorUID}
-	return b.sendToPluginIfConnected(msg)
+	if b.plugin == nil {
+		return nil
+	}
+	return b.plugin.Send(msg)
 }
 
 func (b *Bridge) CloseSurface(surfaceID string) error {
-	if err := b.sendToPlugin(schema.CompositorCloseSurface{
+	return b.sendToPlugin(schema.CompositorCloseSurface{
 		Type:      schema.PluginMessageCloseSurface,
 		SurfaceID: surfaceID,
-	}); err != nil {
-		return err
-	}
-	return nil
+	})
 }
 
 func (b *Bridge) CloseSurfacesByUID(ownerUID uint32) (int, error) {
@@ -184,6 +211,9 @@ func (b *Bridge) CloseSurfacesByUID(ownerUID uint32) (int, error) {
 func (b *Bridge) dispatch(peerUID uint32, req schema.Request) (schema.Response, error) {
 	switch req.Method {
 	case schema.MethodListSurfaces:
+		if peerUID != 0 {
+			return schema.Response{}, fmt.Errorf("list_surfaces requires root")
+		}
 		return okResponse(schema.ListSurfacesResponse{Surfaces: b.ListSurfaces()}), nil
 	case schema.MethodUpsertSurfacePolicy:
 		if peerUID != 0 {
@@ -329,22 +359,8 @@ func (b *Bridge) clearPluginSession(session *pluginSession) {
 }
 
 func (b *Bridge) syncPluginSession(session *pluginSession) error {
-	policies, actorUID := b.snapshotPolicyState()
-	if err := session.Send(schema.CompositorPolicyReplace{
-		Type:     schema.PluginMessagePolicyReplace,
-		Surfaces: policies,
-	}); err != nil {
-		return err
-	}
-	return session.Send(schema.CompositorInputContextUpdate{
-		Type:     schema.PluginMessageInputContext,
-		ActorUID: actorUID,
-	})
-}
-
-func (b *Bridge) snapshotPolicyState() ([]schema.CompositorSurfacePolicy, *uint32) {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
+	b.mu.Lock()
+	defer b.mu.Unlock()
 
 	policies := make([]schema.CompositorSurfacePolicy, 0, len(b.policies))
 	for _, policy := range b.policies {
@@ -359,17 +375,21 @@ func (b *Bridge) snapshotPolicyState() ([]schema.CompositorSurfacePolicy, *uint3
 		uid := *b.actorUID
 		actorUID = &uid
 	}
-	return policies, actorUID
+
+	if err := session.Send(schema.CompositorPolicyReplace{
+		Type:     schema.PluginMessagePolicyReplace,
+		Surfaces: policies,
+	}); err != nil {
+		return err
+	}
+	return session.Send(schema.CompositorInputContextUpdate{
+		Type:     schema.PluginMessageInputContext,
+		ActorUID: actorUID,
+	})
 }
 
-func (b *Bridge) sendToPluginIfConnected(msg any) error {
-	b.mu.RLock()
-	session := b.plugin
-	b.mu.RUnlock()
-	if session == nil {
-		return nil
-	}
-	return session.Send(msg)
+func (b *Bridge) isAllowedPluginUID(peerUID uint32) bool {
+	return peerUID == 0 || peerUID == b.allowedPluginUID
 }
 
 func (b *Bridge) sendToPlugin(msg any) error {
