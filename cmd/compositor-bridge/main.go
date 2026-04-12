@@ -13,6 +13,8 @@ import (
 	"github.com/patch/agora-os/internal/schema"
 )
 
+const defaultGrantLogPath = "/var/log/agent-os/compositor-grants.jsonl"
+
 func main() {
 	busClient, err := bus.Dial(schema.BusSocket)
 	if err != nil {
@@ -22,7 +24,15 @@ func main() {
 
 	compositorUID := envUint32("AGORA_COMPOSITOR_UID", 0)
 	compositorGID := envUint32("AGORA_COMPOSITOR_GID", compositorUID)
-	bridge := compositor.New(busClient, compositor.Config{AllowedPluginUID: compositorUID})
+	grantLogPath := envString("AGORA_COMPOSITOR_GRANT_LOG", defaultGrantLogPath)
+
+	bridge, err := compositor.New(busClient, compositor.Config{
+		AllowedPluginUID: compositorUID,
+		GrantLogPath:     grantLogPath,
+	})
+	if err != nil {
+		log.Fatalf("init compositor bridge: %v", err)
+	}
 
 	if err := os.MkdirAll(schema.SocketDir, 0755); err != nil {
 		log.Fatalf("mkdir %s: %v", schema.SocketDir, err)
@@ -47,6 +57,7 @@ func main() {
 
 	log.Printf("compositor bridge plugin socket: %s (peer uid %d or root)", schema.CompositorPluginSocket, compositorUID)
 	log.Printf("compositor bridge control socket: %s (root only)", schema.CompositorControlSocket)
+	log.Printf("compositor grant log: %s", grantLogPath)
 
 	go func() {
 		sig := make(chan os.Signal, 1)
@@ -96,4 +107,12 @@ func envUint32(name string, fallback uint32) uint32 {
 		log.Fatalf("parse %s: %v", name, err)
 	}
 	return uint32(parsed)
+}
+
+func envString(name, fallback string) string {
+	value := os.Getenv(name)
+	if value == "" {
+		return fallback
+	}
+	return value
 }

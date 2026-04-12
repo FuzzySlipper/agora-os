@@ -14,6 +14,9 @@ const (
 	MethodSetInputContext     = "set_input_context"
 	MethodCloseSurface        = "close_surface"
 	MethodCloseSurfacesByUID  = "close_surfaces_by_uid"
+	MethodGrantViewport       = "grant_viewport"
+	MethodRevokeViewport      = "revoke_viewport"
+	MethodCheckSurfaceAccess  = "check_surface_access"
 )
 
 const (
@@ -42,6 +45,14 @@ const (
 	SurfaceEventUnmapped    CompositorSurfaceEventName = "unmapped"
 	SurfaceEventFocused     CompositorSurfaceEventName = "focused"
 	SurfaceEventInputDenied CompositorSurfaceEventName = "input_denied"
+)
+
+type CompositorAccessAction string
+
+const (
+	AccessPointer    CompositorAccessAction = "pointer"
+	AccessKeyboard   CompositorAccessAction = "keyboard"
+	AccessReadPixels CompositorAccessAction = "read_pixels"
 )
 
 type CompositorSurface struct {
@@ -144,4 +155,54 @@ type CloseSurfacesByUIDRequest struct {
 
 type CloseSurfacesResponse struct {
 	Queued int `json:"queued"`
+}
+
+type ViewportGrantRequest struct {
+	SurfaceID string                   `json:"surface_id"`
+	AgentUID  uint32                   `json:"agent_uid"`
+	Actions   []CompositorAccessAction `json:"actions,omitempty"`
+}
+
+type RevokeViewportGrantRequest struct {
+	SurfaceID string `json:"surface_id"`
+	AgentUID  uint32 `json:"agent_uid"`
+}
+
+type SurfaceAccessCheckRequest struct {
+	SurfaceID string                 `json:"surface_id"`
+	AgentUID  uint32                 `json:"agent_uid"`
+	Action    CompositorAccessAction `json:"action"`
+}
+
+type SurfaceAccessGrant struct {
+	SurfaceID    string                   `json:"surface_id"`
+	AgentUID     uint32                   `json:"agent_uid"`
+	Actions      []CompositorAccessAction `json:"actions"`
+	GrantedByUID uint32                   `json:"granted_by_uid"`
+	GrantedAt    time.Time                `json:"granted_at"`
+}
+
+type SurfaceAccessCheckResponse struct {
+	Allowed bool   `json:"allowed"`
+	Reason  string `json:"reason,omitempty"`
+}
+
+type GrantViewportResponse struct {
+	Grant SurfaceAccessGrant `json:"grant"`
+}
+
+type SurfaceGrantRecordKind string
+
+const (
+	GrantRecordGrant  SurfaceGrantRecordKind = "grant"
+	GrantRecordRevoke SurfaceGrantRecordKind = "revoke"
+)
+
+type SurfaceGrantRecord struct {
+	Kind         SurfaceGrantRecordKind   `json:"kind"`
+	SurfaceID    string                   `json:"surface_id"`
+	AgentUID     uint32                   `json:"agent_uid"`
+	Actions      []CompositorAccessAction `json:"actions,omitempty"`
+	GrantedByUID uint32                   `json:"granted_by_uid"`
+	RecordedAt   time.Time                `json:"recorded_at"`
 }

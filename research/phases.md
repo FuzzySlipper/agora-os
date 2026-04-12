@@ -30,13 +30,15 @@ The compositor is the hardest component and the least novel. Start with the coor
 
 **What gets built:**
 
-1. **Compositor Bridge Service (Go)** — Wayfire bridge daemon speaking a Unix-socket protocol to a thin in-process Wayfire plugin. Translates compositor events to event bus messages and pushes policy/grant-cache updates down to the plugin. Exposes compositor control (close/move surface, restrict input) to other services.
+1. **Compositor Bridge Service (Go)** — Wayfire bridge daemon speaking a Unix-socket protocol to a thin in-process Wayfire plugin. Translates compositor events to event bus messages, pushes policy/grant-cache updates down to the plugin, and records explicit human-approved viewport grants to an append-only log. Exposes compositor control (close surface, check access, grant/revoke viewport) over a root-only Unix socket control API.
 
 2. **Event Bus** — custom Unix socket broker. Services publish and subscribe to typed events. Compositor bridge, audit service, and isolation service all connect.
 
 3. **Surface ownership model** — agent-spawned processes run as agent uids; the compositor bridge tracks which surfaces are owned by which uid; access mediation is enforced via compositor APIs.
 
-**Test scenario:** Spawn an agent as uid 1001. Have it open a window (WebKitGTK or any Wayland client). Observe that the compositor bridge correctly attributes the surface to uid 1001. Attempt to have the agent interact with a surface owned by uid 0 (the human user) — observe the denial.
+4. **Minimal operator grant flow** — a small root-only control path records explicit viewport grants for a single surface/agent pair and propagates them into the plugin cache without requiring the full shell UI yet.
+
+**Test scenario:** Spawn an agent as uid 1001. Have it open a window (WebKitGTK or any Wayland client). Observe that the compositor bridge correctly attributes the surface to uid 1001. Attempt to have the agent interact with a surface owned by uid 0 (the human user) and observe the denial. Then record an explicit viewport grant through the root-only control path and observe the plugin cache allow the approved surface access.
 
 ---
 

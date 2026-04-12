@@ -19,6 +19,7 @@ type publisher interface {
 
 type Config struct {
 	AllowedPluginUID uint32
+	GrantLogPath     string
 }
 
 type pluginSession struct {
@@ -40,21 +41,29 @@ func (s *pluginSession) Close() error {
 type Bridge struct {
 	bus              publisher
 	allowedPluginUID uint32
+	grantStore       *grantStore
 
 	mu       sync.RWMutex
 	plugin   *pluginSession
 	surfaces map[string]schema.CompositorTrackedSurface
 	policies map[string]schema.CompositorSurfacePolicy
+	grants   map[string]map[uint32]schema.SurfaceAccessGrant
 	actorUID *uint32
 }
 
-func New(bus publisher, cfg Config) *Bridge {
+func New(bus publisher, cfg Config) (*Bridge, error) {
+	store, err := newGrantStore(cfg.GrantLogPath)
+	if err != nil {
+		return nil, err
+	}
 	return &Bridge{
 		bus:              bus,
 		allowedPluginUID: cfg.AllowedPluginUID,
+		grantStore:       store,
 		surfaces:         make(map[string]schema.CompositorTrackedSurface),
 		policies:         make(map[string]schema.CompositorSurfacePolicy),
-	}
+		grants:           make(map[string]map[uint32]schema.SurfaceAccessGrant),
+	}, nil
 }
 
 func (b *Bridge) HandlePluginConn(conn net.Conn) {
@@ -115,7 +124,9 @@ func (b *Bridge) HandleControlConn(conn net.Conn) {
 		writeError(conn, err.Error())
 		return
 	}
-	json.NewEncoder(conn).Encode(resp)
+	if err := json.NewEncoder(conn).Encode(resp); err != nil {
+		log.Printf("write compositor response: %v", err)
+	}
 }
 
 func (b *Bridge) ListSurfaces() []schema.CompositorTrackedSurface {
@@ -208,6 +219,79 @@ func (b *Bridge) CloseSurfacesByUID(ownerUID uint32) (int, error) {
 	return queued, nil
 }
 
+// GrantViewport records the operator approval immediately; if syncing the derived policy to the plugin fails, the grant remains durable in memory and the append-only log and will be re-sent on the next plugin reconnect.
+func (b *Bridge) GrantViewport(grantedByUID uint32, req schema.ViewportGrantRequest) (schema.SurfaceAccessGrant, error) {
+	actions := normalizeViewportActions(req.Actions)
+	if len(actions) == 0 {
+		return schema.SurfaceAccessGrant{}, fmt.Errorf("at least one valid viewport action is required")
+	}
+
+	record := newGrantRecord(schema.GrantRecordGrant, req.SurfaceID, req.AgentUID, grantedByUID, actions)
+	grant := schema.SurfaceAccessGrant{
+		SurfaceID:    req.SurfaceID,
+		AgentUID:     req.AgentUID,
+		Actions:      record.Actions,
+		GrantedByUID: record.GrantedByUID,
+		GrantedAt:    record.RecordedAt,
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if _, ok := b.surfaces[req.SurfaceID]; !ok {
+		return schema.SurfaceAccessGrant{}, fmt.Errorf("surface %s not found", req.SurfaceID)
+	}
+	if err := b.grantStore.Append(record); err != nil {
+		return schema.SurfaceAccessGrant{}, err
+	}
+	byAgent, ok := b.grants[req.SurfaceID]
+	if !ok {
+		byAgent = make(map[uint32]schema.SurfaceAccessGrant)
+		b.grants[req.SurfaceID] = byAgent
+	}
+	byAgent[req.AgentUID] = grant
+
+	if err := b.syncDerivedPolicyLocked(req.SurfaceID); err != nil {
+		return schema.SurfaceAccessGrant{}, err
+	}
+	return grant, nil
+}
+
+func (b *Bridge) RevokeViewport(grantedByUID uint32, req schema.RevokeViewportGrantRequest) error {
+	record := newGrantRecord(schema.GrantRecordRevoke, req.SurfaceID, req.AgentUID, grantedByUID, nil)
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	byAgent, ok := b.grants[req.SurfaceID]
+	if !ok {
+		return fmt.Errorf("no viewport grant for surface %s", req.SurfaceID)
+	}
+	if _, ok := byAgent[req.AgentUID]; !ok {
+		return fmt.Errorf("no viewport grant for surface %s and agent uid %d", req.SurfaceID, req.AgentUID)
+	}
+	if err := b.grantStore.Append(record); err != nil {
+		return err
+	}
+	delete(byAgent, req.AgentUID)
+	if len(byAgent) == 0 {
+		delete(b.grants, req.SurfaceID)
+	}
+
+	if _, ok := b.surfaces[req.SurfaceID]; ok {
+		return b.syncDerivedPolicyLocked(req.SurfaceID)
+	}
+	return nil
+}
+
+func (b *Bridge) CheckSurfaceAccess(surfaceID string, agentUID uint32, action schema.CompositorAccessAction) schema.SurfaceAccessCheckResponse {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	allowed, reason := b.checkSurfaceAccessLocked(surfaceID, agentUID, action)
+	return schema.SurfaceAccessCheckResponse{Allowed: allowed, Reason: reason}
+}
+
 func (b *Bridge) dispatch(peerUID uint32, req schema.Request) (schema.Response, error) {
 	switch req.Method {
 	case schema.MethodListSurfaces:
@@ -285,6 +369,49 @@ func (b *Bridge) dispatch(peerUID uint32, req schema.Request) (schema.Response, 
 			return schema.Response{}, err
 		}
 		return okResponse(schema.CloseSurfacesResponse{Queued: queued}), nil
+	case schema.MethodGrantViewport:
+		if peerUID != 0 {
+			return schema.Response{}, fmt.Errorf("grant_viewport requires root")
+		}
+		var body schema.ViewportGrantRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			return schema.Response{}, fmt.Errorf("bad body: %w", err)
+		}
+		if body.SurfaceID == "" || body.AgentUID == 0 {
+			return schema.Response{}, fmt.Errorf("surface_id and agent_uid are required")
+		}
+		grant, err := b.GrantViewport(peerUID, body)
+		if err != nil {
+			return schema.Response{}, err
+		}
+		return okResponse(schema.GrantViewportResponse{Grant: grant}), nil
+	case schema.MethodRevokeViewport:
+		if peerUID != 0 {
+			return schema.Response{}, fmt.Errorf("revoke_viewport requires root")
+		}
+		var body schema.RevokeViewportGrantRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			return schema.Response{}, fmt.Errorf("bad body: %w", err)
+		}
+		if body.SurfaceID == "" || body.AgentUID == 0 {
+			return schema.Response{}, fmt.Errorf("surface_id and agent_uid are required")
+		}
+		if err := b.RevokeViewport(peerUID, body); err != nil {
+			return schema.Response{}, err
+		}
+		return okResponse("revoked"), nil
+	case schema.MethodCheckSurfaceAccess:
+		if peerUID != 0 {
+			return schema.Response{}, fmt.Errorf("check_surface_access requires root")
+		}
+		var body schema.SurfaceAccessCheckRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			return schema.Response{}, fmt.Errorf("bad body: %w", err)
+		}
+		if body.SurfaceID == "" || body.AgentUID == 0 || body.Action == "" {
+			return schema.Response{}, fmt.Errorf("surface_id, agent_uid, and action are required")
+		}
+		return okResponse(b.CheckSurfaceAccess(body.SurfaceID, body.AgentUID, body.Action)), nil
 	default:
 		return schema.Response{}, fmt.Errorf("unknown method: %s", req.Method)
 	}
@@ -299,31 +426,47 @@ func (b *Bridge) handleSurfaceEvent(msg schema.CompositorPluginEvent) {
 		UpdatedAt: time.Now(),
 	}
 
-	switch msg.Event {
-	case schema.SurfaceEventMapped, schema.SurfaceEventFocused, schema.SurfaceEventInputDenied:
-		b.mu.Lock()
-		b.surfaces[msg.Surface.ID] = tracked
-		b.mu.Unlock()
-	case schema.SurfaceEventUnmapped:
-		b.mu.Lock()
-		delete(b.surfaces, msg.Surface.ID)
-		b.mu.Unlock()
-	default:
-		return
-	}
-
 	topic := topicForSurfaceEvent(msg.Event)
-	if topic == "" {
-		return
-	}
-
-	if err := b.bus.Publish(topic, schema.CompositorBusEvent{
+	busBody := schema.CompositorBusEvent{
 		Surface: msg.Surface,
 		Client:  msg.Client,
 		Event:   msg.Event,
 		Device:  msg.Device,
-	}); err != nil {
-		log.Printf("publish compositor event %s: %v", topic, err)
+	}
+
+	b.mu.Lock()
+	switch msg.Event {
+	case schema.SurfaceEventMapped:
+		b.surfaces[msg.Surface.ID] = tracked
+		if err := b.syncDerivedPolicyLocked(msg.Surface.ID); err != nil {
+			log.Printf("sync compositor policy for %s: %v", msg.Surface.ID, err)
+		}
+	case schema.SurfaceEventFocused, schema.SurfaceEventInputDenied:
+		b.surfaces[msg.Surface.ID] = tracked
+		if _, ok := b.policies[msg.Surface.ID]; !ok {
+			if err := b.syncDerivedPolicyLocked(msg.Surface.ID); err != nil {
+				log.Printf("sync compositor policy for %s: %v", msg.Surface.ID, err)
+			}
+		}
+	case schema.SurfaceEventUnmapped:
+		delete(b.surfaces, msg.Surface.ID)
+		delete(b.policies, msg.Surface.ID)
+		delete(b.grants, msg.Surface.ID)
+		if b.plugin != nil {
+			if err := b.plugin.Send(schema.CompositorPolicyRemove{Type: schema.PluginMessagePolicyRemove, SurfaceID: msg.Surface.ID}); err != nil {
+				log.Printf("sync compositor policy for %s: %v", msg.Surface.ID, err)
+			}
+		}
+	default:
+		b.mu.Unlock()
+		return
+	}
+	b.mu.Unlock()
+
+	if topic != "" {
+		if err := b.bus.Publish(topic, busBody); err != nil {
+			log.Printf("publish compositor event %s: %v", topic, err)
+		}
 	}
 }
 
@@ -362,14 +505,7 @@ func (b *Bridge) syncPluginSession(session *pluginSession) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	policies := make([]schema.CompositorSurfacePolicy, 0, len(b.policies))
-	for _, policy := range b.policies {
-		policies = append(policies, policy)
-	}
-	sort.Slice(policies, func(i, j int) bool {
-		return policies[i].SurfaceID < policies[j].SurfaceID
-	})
-
+	policies := b.snapshotPoliciesLocked()
 	var actorUID *uint32
 	if b.actorUID != nil {
 		uid := *b.actorUID
@@ -388,6 +524,17 @@ func (b *Bridge) syncPluginSession(session *pluginSession) error {
 	})
 }
 
+func (b *Bridge) snapshotPoliciesLocked() []schema.CompositorSurfacePolicy {
+	policies := make([]schema.CompositorSurfacePolicy, 0, len(b.policies))
+	for _, policy := range b.policies {
+		policies = append(policies, policy)
+	}
+	sort.Slice(policies, func(i, j int) bool {
+		return policies[i].SurfaceID < policies[j].SurfaceID
+	})
+	return policies
+}
+
 func (b *Bridge) isAllowedPluginUID(peerUID uint32) bool {
 	return peerUID == 0 || peerUID == b.allowedPluginUID
 }
@@ -400,6 +547,73 @@ func (b *Bridge) sendToPlugin(msg any) error {
 		return fmt.Errorf("no plugin connected")
 	}
 	return session.Send(msg)
+}
+
+func (b *Bridge) syncDerivedPolicyLocked(surfaceID string) error {
+	policy := b.rebuildSurfacePolicyLocked(surfaceID)
+	if b.plugin == nil {
+		return nil
+	}
+	return b.plugin.Send(schema.CompositorPolicyUpsert{Type: schema.PluginMessagePolicyUpsert, Surface: policy})
+}
+
+func (b *Bridge) rebuildSurfacePolicyLocked(surfaceID string) schema.CompositorSurfacePolicy {
+	tracked := b.surfaces[surfaceID]
+	policy := schema.CompositorSurfacePolicy{
+		SurfaceID: surfaceID,
+		OwnerUID:  tracked.Client.UID,
+	}
+
+	pointer := make(map[uint32]struct{})
+	keyboard := make(map[uint32]struct{})
+	for uid, grant := range b.grants[surfaceID] {
+		if grantAllows(grant, schema.AccessPointer) {
+			pointer[uid] = struct{}{}
+		}
+		if grantAllows(grant, schema.AccessKeyboard) {
+			keyboard[uid] = struct{}{}
+		}
+	}
+	policy.AllowPointerUIDs = sortedUIDs(pointer)
+	policy.AllowKeyboardUIDs = sortedUIDs(keyboard)
+	b.policies[surfaceID] = policy
+	return policy
+}
+
+func (b *Bridge) checkSurfaceAccessLocked(surfaceID string, agentUID uint32, action schema.CompositorAccessAction) (bool, string) {
+	tracked, ok := b.surfaces[surfaceID]
+	if !ok {
+		return false, "surface not found"
+	}
+	if action != schema.AccessPointer && action != schema.AccessKeyboard && action != schema.AccessReadPixels {
+		return false, "unknown access action"
+	}
+	if tracked.Client.UID == agentUID {
+		return true, "surface owner"
+	}
+	grantsForSurface, ok := b.grants[surfaceID]
+	if !ok {
+		return false, "no viewport grant"
+	}
+	grant, ok := grantsForSurface[agentUID]
+	if !ok {
+		return false, "no viewport grant"
+	}
+	if !grantAllows(grant, action) {
+		return false, fmt.Sprintf("viewport grant does not include %s", action)
+	}
+	return true, "viewport grant"
+}
+
+func sortedUIDs(values map[uint32]struct{}) []uint32 {
+	uids := make([]uint32, 0, len(values))
+	for uid := range values {
+		uids = append(uids, uid)
+	}
+	sort.Slice(uids, func(i, j int) bool {
+		return uids[i] < uids[j]
+	})
+	return uids
 }
 
 func okResponse(body any) schema.Response {
