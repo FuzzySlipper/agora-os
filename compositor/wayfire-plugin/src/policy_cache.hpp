@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <mutex>
+#include <optional>
 #include <shared_mutex>
 #include <string>
 #include <string_view>
@@ -50,13 +51,13 @@ class policy_cache_t
         this->by_surface_.erase(std::string(surface_id));
     }
 
-    void set_actor_uid(uint32_t actor_uid)
+    void set_actor_uid(std::optional<uint32_t> actor_uid)
     {
         std::unique_lock lock(this->mutex_);
         this->actor_uid_ = actor_uid;
     }
 
-    uint32_t actor_uid() const
+    std::optional<uint32_t> actor_uid() const
     {
         std::shared_lock lock(this->mutex_);
         return this->actor_uid_;
@@ -65,7 +66,7 @@ class policy_cache_t
     bool allows(std::string_view surface_id, input_device_t device) const
     {
         std::shared_lock lock(this->mutex_);
-        if (this->actor_uid_ == 0)
+        if (!this->actor_uid_.has_value())
         {
             return true;
         }
@@ -76,8 +77,9 @@ class policy_cache_t
             return false;
         }
 
+        const auto actor_uid = *this->actor_uid_;
         const auto& policy = it->second;
-        if (policy.owner_uid == this->actor_uid_)
+        if (policy.owner_uid == actor_uid)
         {
             return true;
         }
@@ -85,12 +87,12 @@ class policy_cache_t
         const auto& allowed = (device == input_device_t::pointer) ?
             policy.allow_pointer_uids :
             policy.allow_keyboard_uids;
-        return allowed.count(this->actor_uid_) > 0;
+        return allowed.count(actor_uid) > 0;
     }
 
   private:
     mutable std::shared_mutex mutex_;
     std::unordered_map<std::string, surface_policy_t> by_surface_;
-    uint32_t actor_uid_ = 0;
+    std::optional<uint32_t> actor_uid_;
 };
 }

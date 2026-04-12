@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <cstdio>
 #include <optional>
 #include <regex>
 #include <sstream>
@@ -46,24 +47,87 @@ struct bridge_message_t
     bridge_message_kind kind = bridge_message_kind::invalid;
     std::vector<surface_policy_t> policies;
     std::string surface_id;
-    uint32_t actor_uid = 0;
+    std::optional<uint32_t> actor_uid;
 };
+
+inline void append_unicode_escape(std::string& out, unsigned char ch)
+{
+    char buf[7];
+    std::snprintf(buf, sizeof(buf), "\\u%04x", ch);
+    out += buf;
+}
 
 inline std::string json_escape(std::string_view text)
 {
     std::string out;
     out.reserve(text.size() + 8);
-    for (char ch : text)
+    for (unsigned char ch : text)
     {
         switch (ch)
         {
           case '\\': out += "\\\\"; break;
           case '"': out += "\\\""; break;
+          case '\b': out += "\\b"; break;
+          case '\f': out += "\\f"; break;
           case '\n': out += "\\n"; break;
           case '\r': out += "\\r"; break;
           case '\t': out += "\\t"; break;
           default:
+            if (ch < 0x20)
+            {
+                append_unicode_escape(out, ch);
+            } else
+            {
+                out += static_cast<char>(ch);
+            }
+            break;
+        }
+    }
+
+    return out;
+}
+
+inline std::string json_unescape(std::string_view text)
+{
+    std::string out;
+    out.reserve(text.size());
+    for (size_t i = 0; i < text.size(); ++i)
+    {
+        char ch = text[i];
+        if ((ch != '\\') || (i + 1 >= text.size()))
+        {
             out += ch;
+            continue;
+        }
+
+        char esc = text[++i];
+        switch (esc)
+        {
+          case '\\': out += '\\'; break;
+          case '"': out += '"'; break;
+          case '/': out += '/'; break;
+          case 'b': out += '\b'; break;
+          case 'f': out += '\f'; break;
+          case 'n': out += '\n'; break;
+          case 'r': out += '\r'; break;
+          case 't': out += '\t'; break;
+          case 'u':
+            if (i + 4 < text.size())
+            {
+                auto hex = std::string{text.substr(i + 1, 4)};
+                unsigned value = std::stoul(hex, nullptr, 16);
+                if (value <= 0x7F)
+                {
+                    out += static_cast<char>(value);
+                } else
+                {
+                    out += '?';
+                }
+                i += 4;
+            }
+            break;
+          default:
+            out += esc;
             break;
         }
     }
@@ -82,12 +146,12 @@ inline std::string encode_surface_event(std::string_view event_name, const surfa
     }
 
     out << ",\"surface\":{"
-        << "\"id\":\"" << json_escape(surface.id) << "\"," 
+        << "\"id\":\"" << json_escape(surface.id) << "\","
         << "\"wayfire_view_id\":" << surface.wayfire_view_id << ","
-        << "\"app_id\":\"" << json_escape(surface.app_id) << "\"," 
-        << "\"title\":\"" << json_escape(surface.title) << "\"," 
+        << "\"app_id\":\"" << json_escape(surface.app_id) << "\","
+        << "\"title\":\"" << json_escape(surface.title) << "\","
         << "\"role\":\"" << json_escape(surface.role) << "\"},"
-        << "\"client\":{" 
+        << "\"client\":{"
         << "\"pid\":" << client.pid << ","
         << "\"uid\":" << client.uid << ","
         << "\"gid\":" << client.gid << "}}";
@@ -96,11 +160,11 @@ inline std::string encode_surface_event(std::string_view event_name, const surfa
 
 inline std::optional<std::string> find_string_field(const std::string& text, const char *key)
 {
-    std::regex re(std::string{"\""} + key + "\"\\s*:\\s*\"([^\"]*)\"");
+    std::regex re(std::string{"\""} + key + "\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"");
     std::smatch match;
     if (std::regex_search(text, match, re) && (match.size() > 1))
     {
-        return match[1].str();
+        return json_unescape(match[1].str());
     }
 
     return std::nullopt;
@@ -134,12 +198,36 @@ inline std::optional<std::string> find_braced_region(const std::string& text, co
     }
 
     int depth = 0;
+    bool in_string = false;
+    bool escaped = false;
     for (size_t i = start; i < text.size(); ++i)
     {
-        if (text[i] == open_ch)
+        char ch = text[i];
+        if (in_string)
+        {
+            if (escaped)
+            {
+                escaped = false;
+            } else if (ch == '\\')
+            {
+                escaped = true;
+            } else if (ch == '"')
+            {
+                in_string = false;
+            }
+            continue;
+        }
+
+        if (ch == '"')
+        {
+            in_string = true;
+            continue;
+        }
+
+        if (ch == open_ch)
         {
             ++depth;
-        } else if (text[i] == close_ch)
+        } else if (ch == close_ch)
         {
             --depth;
             if (depth == 0)
@@ -195,10 +283,34 @@ inline std::vector<std::string> split_top_level_objects(const std::string& array
 {
     std::vector<std::string> objects;
     int depth = 0;
+    bool in_string = false;
+    bool escaped = false;
     size_t current_start = std::string::npos;
     for (size_t i = 0; i < array_text.size(); ++i)
     {
-        if (array_text[i] == '{')
+        char ch = array_text[i];
+        if (in_string)
+        {
+            if (escaped)
+            {
+                escaped = false;
+            } else if (ch == '\\')
+            {
+                escaped = true;
+            } else if (ch == '"')
+            {
+                in_string = false;
+            }
+            continue;
+        }
+
+        if (ch == '"')
+        {
+            in_string = true;
+            continue;
+        }
+
+        if (ch == '{')
         {
             if (depth == 0)
             {
@@ -206,7 +318,7 @@ inline std::vector<std::string> split_top_level_objects(const std::string& array
             }
 
             ++depth;
-        } else if (array_text[i] == '}')
+        } else if (ch == '}')
         {
             --depth;
             if ((depth == 0) && (current_start != std::string::npos))
@@ -284,7 +396,7 @@ inline bridge_message_t parse_bridge_message(const std::string& line)
     if (*type == "input_context")
     {
         message.kind = bridge_message_kind::input_context;
-        message.actor_uid = find_uint_field(line, "actor_uid").value_or(0);
+        message.actor_uid = find_uint_field(line, "actor_uid");
         return message;
     }
 

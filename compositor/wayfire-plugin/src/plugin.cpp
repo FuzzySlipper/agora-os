@@ -2,6 +2,7 @@
 #include "protocol.hpp"
 
 #include <sys/socket.h>
+#include <sys/types.h>
 #include <sys/un.h>
 #include <unistd.h>
 #include <wayland-server-core.h>
@@ -13,9 +14,9 @@
 #include <cstring>
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
-#include <unordered_map>
 
 #include <wayfire/core.hpp>
 #include <wayfire/nonstd/wlroots-full.hpp>
@@ -65,6 +66,25 @@ agora::protocol::client_identity_t extract_client_identity(wayfire_view view)
     identity.uid = uid;
     identity.gid = gid;
     return identity;
+}
+
+bool verify_bridge_peer_identity(int fd)
+{
+    ucred cred{};
+    socklen_t len = sizeof(cred);
+    if (::getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cred, &len) < 0)
+    {
+        wf::log::warn("agora-bridge: SO_PEERCRED failed: ", std::strerror(errno));
+        return false;
+    }
+
+    if (cred.uid != 0)
+    {
+        wf::log::warn("agora-bridge: rejecting non-root bridge peer uid=", cred.uid);
+        return false;
+    }
+
+    return true;
 }
 
 agora::protocol::surface_snapshot_t snapshot_view(wayfire_view view)
@@ -180,6 +200,12 @@ class bridge_client_t
         addr.sun_family = AF_UNIX;
         std::snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", socket_path_.c_str());
         if (::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0)
+        {
+            ::close(fd);
+            return false;
+        }
+
+        if (!verify_bridge_peer_identity(fd))
         {
             ::close(fd);
             return false;
