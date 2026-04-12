@@ -23,6 +23,7 @@ sudo usermod -aG kvm $USER   # then re-login
 ```sh
 sudo scripts/vm.sh build       # one-time: install Arch to qcow2 (~5 min)
 scripts/vm.sh start             # boot headless, SSH on port 2222
+scripts/vm.sh gui               # boot with a local graphics window
 scripts/vm.sh ssh               # open a shell inside the VM
 scripts/vm.sh ssh 'cd /repo && go build ./cmd/...'  # one-shot command
 scripts/vm.sh phase2-deps      # install Wayfire/plugin/test deps inside the guest
@@ -59,13 +60,19 @@ scripts/vm.sh stop
 scripts/vm.sh snap phase2-deps
 ```
 
-After that, you can restore `phase2-deps` before compositor work.
-The host stays unprivileged after the initial `vm.sh build`; all package
-installation happens inside the guest via passwordless sudo for the `dev` user.
+For live compositor work, restore `phase2-deps` and boot the graphical guest:
 
-Note: the current VM wrapper still boots headless. `phase2-deps` prepares the
-guest-side environment, but full live Wayfire validation still needs a
-graphical guest session follow-up.
+```sh
+scripts/vm.sh restore phase2-deps
+scripts/vm.sh gui
+```
+
+That opens a local QEMU window with a virtual GPU while keeping the host
+workflow unprivileged. Log into the guest console, start `seatd`, and launch a
+root-owned Wayfire session there when you need to run `test/phase2.sh`.
+Use `start` for Phase 1 and headless guest setup; use `gui` when the task needs
+a real guest compositor session. If GTK is unavailable on the host, override
+`AGORA_VM_GUI_DISPLAY` to another supported backend such as `sdl`.
 
 ### Where state lives
 
@@ -87,6 +94,8 @@ All VM artifacts go to `.vm/` in the repo root (gitignored):
 | `AGORA_VM_CPUS` | `4` | VM CPU count |
 | `AGORA_VM_DISK` | `20G` | Disk image size (only affects build) |
 | `AGORA_VM_DIR` | `.vm/` | State directory |
+| `AGORA_VM_GUI_DISPLAY` | `gtk,gl=off` | QEMU display backend for `vm.sh gui` |
+| `AGORA_VM_GUI_GPU` | `virtio-vga` | Virtual GPU device for `vm.sh gui` |
 | `AGORA_VM_NBD` | `/dev/nbd0` | NBD device used during build |
 
 ### Inside the VM

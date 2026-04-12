@@ -21,6 +21,8 @@ VM_MEM="${AGORA_VM_MEM:-4G}"
 VM_CPUS="${AGORA_VM_CPUS:-4}"
 DISK_SIZE="${AGORA_VM_DISK:-20G}"
 NBD_DEV="${AGORA_VM_NBD:-/dev/nbd0}"
+VM_GUI_DISPLAY="${AGORA_VM_GUI_DISPLAY:-gtk,gl=off}"
+VM_GUI_GPU="${AGORA_VM_GUI_GPU:-virtio-vga}"
 
 die()  { echo "error: $*" >&2; exit 1; }
 info() { echo ":: $*"; }
@@ -165,14 +167,16 @@ EOF
     chown "$caller_uid:$caller_gid" "$VM_DIR"
 
     info "Build complete."
-    info "Next: vm.sh start"
+    info "Next: vm.sh start   # or: vm.sh gui for a graphical guest window"
     info "Then: vm.sh snap clean-base"
 }
 
 # ---------------------------------------------------------------------------
-# start — boot headless with virtiofs, user-mode networking, SSH port-forward
+# start — boot with virtiofs, user-mode networking, SSH port-forward
 # ---------------------------------------------------------------------------
 cmd_start() {
+    local boot_mode="${1:-headless}"
+
     [[ -f "$DISK" ]] || die "no disk — run 'vm.sh build' first"
     is_running && die "VM already running (pid $(cat "$PID_FILE"))"
 
@@ -209,6 +213,18 @@ cmd_start() {
         qemu_daemon=()
     fi
 
+    local qemu_display=("-display" "none")
+    local qemu_graphics=()
+    if [[ "$boot_mode" == "gui" ]]; then
+        qemu_display=("-display" "$VM_GUI_DISPLAY")
+        qemu_graphics=(
+            "-device" "$VM_GUI_GPU"
+            "-device" "qemu-xhci"
+            "-device" "usb-tablet"
+            "-device" "usb-kbd"
+        )
+    fi
+
     info "Booting QEMU (mem=$VM_MEM cpus=$VM_CPUS ssh=127.0.0.1:$SSH_PORT)"
     qemu-system-x86_64 \
         -machine q35,accel=kvm,memory-backend=mem \
@@ -221,7 +237,8 @@ cmd_start() {
         -device virtio-net-pci,netdev=net0 \
         -chardev "socket,id=vfs,path=$VFS_SOCK" \
         -device vhost-user-fs-pci,chardev=vfs,tag=repo \
-        -display none \
+        "${qemu_display[@]}" \
+        "${qemu_graphics[@]}" \
         "${qemu_serial[@]}" \
         "${qemu_daemon[@]}"
 
@@ -250,10 +267,17 @@ cmd_console() {
 }
 
 # ---------------------------------------------------------------------------
+# gui — boot with a local QEMU window and virtual GPU for guest Wayfire work
+# ---------------------------------------------------------------------------
+cmd_gui() {
+    cmd_start gui "$@"
+}
+
+# ---------------------------------------------------------------------------
 # ssh — passwordless SSH into the VM (or run a one-shot command)
 # ---------------------------------------------------------------------------
 cmd_ssh() {
-    is_running || die "VM is not running — use 'vm.sh start'"
+    is_running || die "VM is not running — use 'vm.sh start' or 'vm.sh gui'"
     ssh_cmd "$@"
 }
 
@@ -278,7 +302,7 @@ cmd_restore() {
 # phase2-deps — install guest-side Phase 2 compositor dependencies
 # ---------------------------------------------------------------------------
 cmd_phase2_deps() {
-    is_running || die "VM is not running — use 'vm.sh start'"
+    is_running || die "VM is not running — use 'vm.sh start' or 'vm.sh gui'"
     ssh_cmd "sudo /repo/scripts/provision-phase2-vm.sh"
 }
 
@@ -321,7 +345,7 @@ cmd_destroy() {
 # dispatch
 # ---------------------------------------------------------------------------
 case "${1:-}" in
-    build|start|ssh|console|snap|restore|phase2-deps|stop|destroy)
+    build|start|gui|ssh|console|snap|restore|phase2-deps|stop|destroy)
         cmd=${1//-/_}; shift; "cmd_$cmd" "$@" ;;
     *)
         cat >&2 <<'USAGE'
@@ -330,6 +354,7 @@ Usage: vm.sh <command> [args]
 Commands:
   build              Create disk image and install Arch (requires sudo)
   start              Boot the VM headless (SSH on port 2222)
+  gui                Boot the VM with a local graphics window for guest Wayfire
   console            Boot foreground with serial on stdio (first-boot debug)
   ssh [cmd]          SSH into the VM or run a one-shot command
   snap <name>        Take a qcow2 snapshot (VM must be stopped)
@@ -344,6 +369,8 @@ Environment overrides:
   AGORA_VM_CPUS      VM CPU count (default: 4)
   AGORA_VM_DISK      Disk size on build (default: 20G)
   AGORA_VM_DIR       State directory (default: .vm/)
+  AGORA_VM_GUI_DISPLAY  QEMU display backend for 'gui' (default: gtk,gl=off)
+  AGORA_VM_GUI_GPU      Virtual GPU device for 'gui' (default: virtio-vga)
   AGORA_VM_NBD       NBD device for build (default: /dev/nbd0)
 USAGE
         exit 1 ;;
