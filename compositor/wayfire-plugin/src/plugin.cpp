@@ -1,6 +1,7 @@
 #include "policy_cache.hpp"
 #include "protocol.hpp"
 
+#include <sys/eventfd.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/un.h>
@@ -11,12 +12,15 @@
 #include <chrono>
 #include <cerrno>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <functional>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <thread>
+#include <unordered_map>
+#include <vector>
 
 #include <wayfire/core.hpp>
 #include <wayfire/nonstd/wlroots-full.hpp>
@@ -290,6 +294,8 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
   public:
     void init() override
     {
+        setup_close_wake();
+
         bridge_ = std::make_unique<bridge_client_t>(socket_path_.value(),
             [this] (const agora::protocol::bridge_message_t& message)
         {
@@ -319,9 +325,198 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
             bridge_->stop();
             bridge_.reset();
         }
+
+        teardown_close_wake();
     }
 
   private:
+    static int handle_close_wake(int fd, uint32_t mask, void *data)
+    {
+        return static_cast<agora_bridge_plugin_t*>(data)->process_close_wake(fd, mask);
+    }
+
+    bool setup_close_wake()
+    {
+        close_wake_fd_ = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+        if (close_wake_fd_ < 0)
+        {
+            wf::log::warn("agora-bridge: eventfd() failed: ", std::strerror(errno));
+            return false;
+        }
+
+        close_wake_source_ = wl_event_loop_add_fd(
+            wf::get_core().ev_loop,
+            close_wake_fd_,
+            WL_EVENT_READABLE,
+            handle_close_wake,
+            this);
+        if (!close_wake_source_)
+        {
+            wf::log::warn("agora-bridge: wl_event_loop_add_fd() failed");
+            ::close(close_wake_fd_);
+            close_wake_fd_ = -1;
+            return false;
+        }
+
+        return true;
+    }
+
+    void teardown_close_wake()
+    {
+        if (close_wake_source_)
+        {
+            wl_event_source_remove(close_wake_source_);
+            close_wake_source_ = nullptr;
+        }
+
+        if (close_wake_fd_ >= 0)
+        {
+            ::close(close_wake_fd_);
+            close_wake_fd_ = -1;
+        }
+
+        std::lock_guard lock(state_mutex_);
+        views_by_surface_.clear();
+        pending_close_surfaces_.clear();
+        pending_close_owner_uids_.clear();
+    }
+
+    int process_close_wake(int fd, uint32_t mask)
+    {
+        if (mask & (WL_EVENT_ERROR | WL_EVENT_HANGUP))
+        {
+            return 0;
+        }
+
+        if ((mask & WL_EVENT_READABLE) == 0)
+        {
+            return 0;
+        }
+
+        uint64_t count = 0;
+        while (::read(fd, &count, sizeof(count)) > 0)
+        {}
+
+        if ((errno != 0) && (errno != EAGAIN) && (errno != EWOULDBLOCK))
+        {
+            wf::log::warn("agora-bridge: wake read failed: ", std::strerror(errno));
+        }
+
+        std::vector<std::string> close_surfaces;
+        std::vector<uint32_t> close_owner_uids;
+        std::unordered_map<std::string, wayfire_view> views;
+        {
+            std::lock_guard lock(state_mutex_);
+            close_surfaces.swap(pending_close_surfaces_);
+            close_owner_uids.swap(pending_close_owner_uids_);
+            views = views_by_surface_;
+        }
+
+        std::unordered_map<std::string, wayfire_view> targets;
+        for (const auto& surface_id : close_surfaces)
+        {
+            auto it = views.find(surface_id);
+            if ((it != views.end()) && it->second)
+            {
+                targets[surface_id] = it->second;
+            }
+        }
+
+        for (auto owner_uid : close_owner_uids)
+        {
+            for (const auto& [surface_id, view] : views)
+            {
+                if (!view)
+                {
+                    continue;
+                }
+
+                auto identity = extract_client_identity(view);
+                if (identity.uid == owner_uid)
+                {
+                    targets[surface_id] = view;
+                }
+            }
+        }
+
+        for (const auto& [surface_id, view] : targets)
+        {
+            if (!view)
+            {
+                continue;
+            }
+
+            wf::log::info("agora-bridge: closing surface ", surface_id);
+            view->close();
+        }
+
+        return 0;
+    }
+
+    void queue_close_surface(std::string surface_id)
+    {
+        if (surface_id.empty())
+        {
+            return;
+        }
+
+        {
+            std::lock_guard lock(state_mutex_);
+            pending_close_surfaces_.push_back(std::move(surface_id));
+        }
+
+        notify_close_wake();
+    }
+
+    void queue_close_surfaces_by_uid(uint32_t owner_uid)
+    {
+        {
+            std::lock_guard lock(state_mutex_);
+            pending_close_owner_uids_.push_back(owner_uid);
+        }
+
+        notify_close_wake();
+    }
+
+    void notify_close_wake()
+    {
+        if (close_wake_fd_ < 0)
+        {
+            wf::log::warn("agora-bridge: no wake fd available for close request");
+            return;
+        }
+
+        uint64_t one = 1;
+        if ((::write(close_wake_fd_, &one, sizeof(one)) < 0) && (errno != EAGAIN))
+        {
+            wf::log::warn("agora-bridge: wake write failed: ", std::strerror(errno));
+        }
+    }
+
+    void track_view(wayfire_view view)
+    {
+        if (!view)
+        {
+            return;
+        }
+
+        auto snapshot = snapshot_view(view);
+        std::lock_guard lock(state_mutex_);
+        views_by_surface_[snapshot.id] = view;
+    }
+
+    void forget_view(wayfire_view view)
+    {
+        if (!view)
+        {
+            return;
+        }
+
+        auto snapshot = snapshot_view(view);
+        std::lock_guard lock(state_mutex_);
+        views_by_surface_.erase(snapshot.id);
+    }
+
     void handle_bridge_message(const agora::protocol::bridge_message_t& message)
     {
         switch (message.kind)
@@ -340,6 +535,15 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
             break;
           case agora::protocol::bridge_message_kind::input_context:
             policies_.set_actor_uid(message.actor_uid);
+            break;
+          case agora::protocol::bridge_message_kind::close_surface:
+            queue_close_surface(message.surface_id);
+            break;
+          case agora::protocol::bridge_message_kind::close_surfaces_by_uid:
+            if (message.owner_uid.has_value())
+            {
+                queue_close_surfaces_by_uid(*message.owner_uid);
+            }
             break;
           case agora::protocol::bridge_message_kind::invalid:
             break;
@@ -381,12 +585,19 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
     wf::option_wrapper_t<bool> emit_input_denied_{"agora-bridge/emit_input_denied"};
     agora::policy_cache_t policies_;
     std::unique_ptr<bridge_client_t> bridge_;
+    std::mutex state_mutex_;
+    std::unordered_map<std::string, wayfire_view> views_by_surface_;
+    std::vector<std::string> pending_close_surfaces_;
+    std::vector<uint32_t> pending_close_owner_uids_;
+    int close_wake_fd_ = -1;
+    wl_event_source *close_wake_source_ = nullptr;
     wayfire_view keyboard_focus_view_;
     wayfire_view pointer_focus_view_;
 
     wf::signal::connection_t<wf::view_mapped_signal> on_view_mapped_ =
         [this] (wf::view_mapped_signal *ev)
     {
+        track_view(ev->view);
         emit_surface_event("mapped", ev->view);
     };
 
@@ -396,7 +607,18 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         emit_surface_event("unmapped", ev->view);
         if (ev->view)
         {
+            if (keyboard_focus_view_ == ev->view)
+            {
+                keyboard_focus_view_ = nullptr;
+            }
+
+            if (pointer_focus_view_ == ev->view)
+            {
+                pointer_focus_view_ = nullptr;
+            }
+
             policies_.erase("view-" + std::to_string(ev->view->get_id()));
+            forget_view(ev->view);
         }
     };
 
@@ -404,6 +626,7 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         [this] (wf::keyboard_focus_changed_signal *ev)
     {
         keyboard_focus_view_ = wf::node_to_view(ev->new_focus);
+        track_view(keyboard_focus_view_);
         if (keyboard_focus_view_)
         {
             emit_surface_event("focused", keyboard_focus_view_);
@@ -414,6 +637,7 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         [this] (wf::pointer_focus_changed_signal *ev)
     {
         pointer_focus_view_ = wf::node_to_view(ev->new_focus);
+        track_view(pointer_focus_view_);
     };
 
     wf::signal::connection_t<wf::input_event_signal<wlr_keyboard_key_event>> on_keyboard_key_ =

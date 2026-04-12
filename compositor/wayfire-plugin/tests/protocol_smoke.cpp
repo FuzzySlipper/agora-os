@@ -40,6 +40,16 @@ int main()
     assert(human_msg.kind == bridge_message_kind::input_context);
     assert(human_msg.actor_uid == std::nullopt);
 
+    auto close_surface_msg = parse_bridge_message(
+        "{\"type\":\"close_surface\",\"surface_id\":\"view-9\"}");
+    assert(close_surface_msg.kind == bridge_message_kind::close_surface);
+    assert(close_surface_msg.surface_id == "view-9");
+
+    auto close_uid_msg = parse_bridge_message(
+        "{\"type\":\"close_surfaces_by_uid\",\"owner_uid\":60003}");
+    assert(close_uid_msg.kind == bridge_message_kind::close_surfaces_by_uid);
+    assert(close_uid_msg.owner_uid.has_value() && (*close_uid_msg.owner_uid == 60003));
+
     policy_cache_t cache;
     cache.set_actor_uid(std::nullopt);
     assert(cache.allows("view-1", input_device_t::keyboard));
