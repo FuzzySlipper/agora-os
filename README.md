@@ -45,7 +45,7 @@ internal/
   bus/                 event-bus types, matcher, broker, and client library
   isolation/           isolation-service request handling and authorization
   peercred/            SO_PEERCRED helpers
-  schema/              shared socket paths, contracts, and typed domain values
+  schema/              shared socket paths, service contracts, and 3PO/R2 protocol types
 config/
   admin-agent-system-prompt.md   the out-of-band prompt — edited only outside the running system
   default-nftables.conf

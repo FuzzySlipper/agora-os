@@ -179,7 +179,7 @@ Example profile:
 ```json
 {
   "profile": "repo-inspector",
-  "runtime": "local-llm",
+  "runtime": "local_llm",
   "tools": ["fs.read", "git.diff", "ripgrep"],
   "cpu_quota": "50%",
   "memory_max": "2G",
@@ -272,7 +272,7 @@ The supervisor should reject requests that exceed budget instead of silently que
 
 ## Initial control API
 
-The initial API should stay small and synchronous.
+The initial API should stay small and synchronous. The tracked request/response and worker-profile contracts for this design live in `internal/schema/agent_protocol.go`; the examples below describe how those types should be used.
 
 ### `ensure_worker`
 

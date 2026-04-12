@@ -179,7 +179,7 @@ If the task needs broader access than the current worker already has, create a n
 
 ## Contracts
 
-The project will stay more maintainable if the 3PO/R2 layer is built around a small set of rigid message types rather than open-ended chat transcripts.
+The project will stay more maintainable if the 3PO/R2 layer is built around a small set of rigid message types rather than open-ended chat transcripts. The tracked contract definitions live in `internal/schema/agent_protocol.go`; the examples below explain the intent of those contracts rather than replacing them.
 
 ### Worker profile
 
@@ -190,7 +190,7 @@ Example:
 ```json
 {
   "profile": "repo-inspector",
-  "runtime": "local-llm",
+  "runtime": "local_llm",
   "tools": ["fs.read", "git.diff", "ripgrep"],
   "cpu_quota": "50%",
   "memory_max": "2G",
@@ -256,8 +256,7 @@ R2 results should come back in machine-friendly form first. 3PO is what turns th
   "follow_up": [
     "Needs supervisor-side spawn policy",
     "Needs peer-attributed bus sender metadata"
-  ],
-  "needs_3po": false
+  ]
 }
 ```
 

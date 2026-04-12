@@ -1,5 +1,5 @@
 // Package schema defines the request/response types and protocol constants
-// shared across Phase 1 services.
+// shared across system services and the tracked 3PO/R2 protocol.
 package schema
 
 import (
@@ -49,9 +49,9 @@ const (
 
 type SpawnAgentRequest struct {
 	Name       string    `json:"name"`
-	Command    []string  `json:"command,omitempty"`     // command + args to execute as the agent uid
-	CPUQuota   string    `json:"cpu_quota,omitempty"`   // e.g. "50%" -- percent of one core
-	MemoryMax  string    `json:"memory_max,omitempty"`  // e.g. "512M"
+	Command    []string  `json:"command,omitempty"`    // command + args to execute as the agent uid
+	CPUQuota   string    `json:"cpu_quota,omitempty"`  // e.g. "50%" -- percent of one core
+	MemoryMax  string    `json:"memory_max,omitempty"` // e.g. "512M"
 	NetAccess  NetPolicy `json:"net_access,omitempty"`
 	WatchPaths []string  `json:"watch_paths,omitempty"` // paths for audit service to monitor
 }
