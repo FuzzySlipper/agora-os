@@ -14,6 +14,7 @@ type Client struct {
 	enc  *json.Encoder
 	dec  *json.Decoder
 	mu   sync.Mutex // protects enc (writes)
+	rmu  sync.Mutex // protects dec (reads)
 }
 
 // Dial connects to the event bus broker at the given Unix socket path.
@@ -22,11 +23,15 @@ func Dial(socketPath string) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	return newClient(conn), nil
+}
+
+func newClient(conn net.Conn) *Client {
 	return &Client{
 		conn: conn,
 		enc:  json.NewEncoder(conn),
 		dec:  json.NewDecoder(conn),
-	}, nil
+	}
 }
 
 // Publish sends an event to the bus. All clients subscribed to a
@@ -59,6 +64,9 @@ func (c *Client) Unsubscribe(pattern string) error {
 // Receive blocks until the next matching event arrives from the broker.
 // Returns an error when the connection is closed.
 func (c *Client) Receive() (Event, error) {
+	c.rmu.Lock()
+	defer c.rmu.Unlock()
+
 	var ev Event
 	err := c.dec.Decode(&ev)
 	return ev, err
