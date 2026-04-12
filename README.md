@@ -55,6 +55,7 @@ research/
   phases.md            build phases and acceptance criteria
   research.md          literature review
   local-agents.md      3PO/R2 architecture for local-first sub-agents
+  3po-r2.md            concrete 3PO/R2 system design
   compositor-decision.md  Wayfire vs Pinnacle spike outcome
 scripts/
   vm.sh                disposable Arch VM workflow
