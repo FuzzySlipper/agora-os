@@ -12,7 +12,7 @@ This repo is the system-services and bridge layer of that idea. The compositor w
 | **Admin agent daemon** | Privilege escalation gateway. A stateless LLM evaluator that receives structured requests over a Unix socket, evaluates each independently against an out-of-band system prompt, and returns approve/deny/escalate. No conversation history, no user-facing input channel, no in-band prompt updates. |
 | **Audit service** | fanotify watches on agent-writable paths; events are attributed by uid via `/proc/<pid>/status`, structured, and written to an append-only log. |
 | **Event bus** | Local Unix-socket pub/sub broker for typed events such as audit activity, agent lifecycle changes, and later compositor surface events. Subscriber-visible sender uids are broker-stamped from `SO_PEERCRED`, not trusted from payload claims. |
-| **Compositor bridge** | Phase 2 is split between a root-owned Go bridge daemon and a thin Wayfire plugin. The bridge now owns typed Unix-socket translation between Wayfire surface events, event-bus publication, plugin policy-cache updates, and forced surface close controls. |
+| **Compositor bridge** | Phase 2 is split between a root-owned Go bridge daemon and a thin Wayfire plugin. The bridge owns typed Unix-socket translation between Wayfire surface events, event-bus publication, plugin policy-cache updates, forced surface close controls, and root-approved viewport grants recorded to an append-only log. |
 
 The novel contribution isn't any one of these in isolation. It's the integration of all of them into a single OS-level coordination model rather than a stack of application-layer frameworks bolted onto an existing desktop.
 
@@ -29,6 +29,7 @@ Phase 1 is now real enough to exercise end-to-end in the disposable VM:
 Phase 2 planning is also more concrete now:
 - the compositor spike concluded that Pinnacle's current gRPC API does not expose the enforcement primitives this project needs
 - the first compositor-facing slice is now in place as a Wayfire plugin plus a Go bridge daemon speaking a typed Unix-socket protocol
+- a minimal root-only `compositorctl` flow now records explicit viewport grants before an agent may interact with a human-owned surface
 
 ## Repo layout
 
@@ -39,6 +40,7 @@ cmd/
   audit-service/       fanotify event collector with uid attribution
   event-bus/           local pub/sub broker over a Unix socket
   compositor-bridge/   Wayfire bridge daemon for surface events and policy/control
+  compositorctl/      root-only CLI for viewport grants and access checks
 internal/
   admin/               admin-agent request handling and evaluation logic
   agent/               agent lifecycle orchestration and system integration

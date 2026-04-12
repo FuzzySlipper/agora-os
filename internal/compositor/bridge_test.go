@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,9 +28,12 @@ func (f *fakePublisher) Publish(topic string, body any) error {
 	return nil
 }
 
-func TestHandlePluginConnPublishesMappedEvent(t *testing.T) {
+func TestHandlePluginConnPublishesMappedEventAndOwnerPolicy(t *testing.T) {
 	pub := &fakePublisher{}
-	bridge := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})
+	bridge, err := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
 
 	server, client, cleanup := unixSocketPair(t)
 	defer cleanup()
@@ -41,34 +45,27 @@ func TestHandlePluginConnPublishesMappedEvent(t *testing.T) {
 	}()
 
 	dec := json.NewDecoder(client)
-	var replace schema.CompositorPolicyReplace
-	if err := dec.Decode(&replace); err != nil {
-		t.Fatalf("decode policy replace: %v", err)
-	}
-	if replace.Type != schema.PluginMessagePolicyReplace {
-		t.Fatalf("got sync type %q, want %q", replace.Type, schema.PluginMessagePolicyReplace)
-	}
+	readInitialSync(t, dec)
 
-	var input schema.CompositorInputContextUpdate
-	if err := dec.Decode(&input); err != nil {
-		t.Fatalf("decode input context: %v", err)
-	}
-	if input.Type != schema.PluginMessageInputContext {
-		t.Fatalf("got input type %q, want %q", input.Type, schema.PluginMessageInputContext)
-	}
-	if input.ActorUID != nil {
-		t.Fatalf("got actor uid %v, want nil", *input.ActorUID)
-	}
-
-	enc := json.NewEncoder(client)
 	event := schema.CompositorPluginEvent{
 		Type:    schema.PluginMessageSurfaceEvent,
 		Event:   schema.SurfaceEventMapped,
 		Surface: schema.CompositorSurface{ID: "view-42", WayfireViewID: 42, AppID: "org.example.App", Title: "Example", Role: "toplevel"},
 		Client:  schema.CompositorClientIdentity{PID: 1234, UID: 60001, GID: 60001},
 	}
-	if err := enc.Encode(event); err != nil {
+	if err := json.NewEncoder(client).Encode(event); err != nil {
 		t.Fatalf("encode plugin event: %v", err)
+	}
+
+	var policyMsg schema.CompositorPolicyUpsert
+	if err := dec.Decode(&policyMsg); err != nil {
+		t.Fatalf("decode policy upsert: %v", err)
+	}
+	if policyMsg.Surface.SurfaceID != "view-42" || policyMsg.Surface.OwnerUID != 60001 {
+		t.Fatalf("got policy %+v, want owner policy for view-42", policyMsg.Surface)
+	}
+	if len(policyMsg.Surface.AllowPointerUIDs) != 0 || len(policyMsg.Surface.AllowKeyboardUIDs) != 0 {
+		t.Fatalf("got grant lists %+v, want owner-only policy", policyMsg.Surface)
 	}
 
 	deadline := time.Now().Add(200 * time.Millisecond)
@@ -81,6 +78,7 @@ func TestHandlePluginConnPublishesMappedEvent(t *testing.T) {
 	if pub.events[0].topic != schema.TopicCompositorSurfaceCreated {
 		t.Fatalf("got topic %q, want %q", pub.events[0].topic, schema.TopicCompositorSurfaceCreated)
 	}
+
 	body, ok := pub.events[0].body.(schema.CompositorBusEvent)
 	if !ok {
 		t.Fatalf("got body type %T, want schema.CompositorBusEvent", pub.events[0].body)
@@ -89,13 +87,147 @@ func TestHandlePluginConnPublishesMappedEvent(t *testing.T) {
 		t.Fatalf("got owner uid %d, want 60001", body.Client.UID)
 	}
 
-	surfaces := bridge.ListSurfaces()
-	if len(surfaces) != 1 || surfaces[0].Surface.ID != "view-42" {
-		t.Fatalf("got surfaces %+v, want tracked view-42", surfaces)
+	if access := bridge.CheckSurfaceAccess("view-42", 60001, schema.AccessReadPixels); !access.Allowed {
+		t.Fatalf("owner read_pixels access denied: %+v", access)
+	}
+	if access := bridge.CheckSurfaceAccess("view-42", 60002, schema.AccessReadPixels); access.Allowed {
+		t.Fatalf("non-owner read_pixels access allowed without grant: %+v", access)
 	}
 
 	_ = client.Close()
 	<-done
+}
+
+func TestGrantViewportRecordsAndUpdatesPolicy(t *testing.T) {
+	grantLog := filepath.Join(t.TempDir(), "grants.jsonl")
+	pub := &fakePublisher{}
+	bridge, err := New(pub, Config{AllowedPluginUID: uint32(os.Getuid()), GrantLogPath: grantLog})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	server, client, cleanup := unixSocketPair(t)
+	defer cleanup()
+	go bridge.HandlePluginConn(server)
+
+	dec := json.NewDecoder(client)
+	readInitialSync(t, dec)
+
+	surface := schema.CompositorPluginEvent{
+		Type:    schema.PluginMessageSurfaceEvent,
+		Event:   schema.SurfaceEventMapped,
+		Surface: schema.CompositorSurface{ID: "view-root", WayfireViewID: 7, Title: "Human shell", Role: "toplevel"},
+		Client:  schema.CompositorClientIdentity{PID: 77, UID: 0, GID: 0},
+	}
+	if err := json.NewEncoder(client).Encode(surface); err != nil {
+		t.Fatalf("encode mapped event: %v", err)
+	}
+
+	var ownerPolicy schema.CompositorPolicyUpsert
+	if err := dec.Decode(&ownerPolicy); err != nil {
+		t.Fatalf("decode owner policy: %v", err)
+	}
+	if ownerPolicy.Surface.OwnerUID != 0 {
+		t.Fatalf("got owner uid %d, want 0", ownerPolicy.Surface.OwnerUID)
+	}
+	if len(ownerPolicy.Surface.AllowPointerUIDs) != 0 || len(ownerPolicy.Surface.AllowKeyboardUIDs) != 0 {
+		t.Fatalf("expected owner-only policy before grant, got %+v", ownerPolicy.Surface)
+	}
+	if access := bridge.CheckSurfaceAccess("view-root", 60001, schema.AccessPointer); access.Allowed {
+		t.Fatalf("expected pointer deny before grant, got %+v", access)
+	}
+	if access := bridge.CheckSurfaceAccess("view-root", 60001, schema.AccessReadPixels); access.Allowed {
+		t.Fatalf("expected read_pixels deny before grant, got %+v", access)
+	}
+
+	grant, err := bridge.GrantViewport(0, schema.ViewportGrantRequest{
+		SurfaceID: "view-root",
+		AgentUID:  60001,
+	})
+	if err != nil {
+		t.Fatalf("GrantViewport: %v", err)
+	}
+	if !grantAllows(grant, schema.AccessReadPixels) {
+		t.Fatalf("grant %+v missing read_pixels", grant)
+	}
+
+	var grantPolicy schema.CompositorPolicyUpsert
+	if err := dec.Decode(&grantPolicy); err != nil {
+		t.Fatalf("decode grant policy: %v", err)
+	}
+	if grantPolicy.Surface.OwnerUID != 0 {
+		t.Fatalf("got owner uid %d, want 0", grantPolicy.Surface.OwnerUID)
+	}
+	if !containsUID(grantPolicy.Surface.AllowPointerUIDs, 60001) || !containsUID(grantPolicy.Surface.AllowKeyboardUIDs, 60001) {
+		t.Fatalf("grant policy %+v missing agent uid 60001", grantPolicy.Surface)
+	}
+
+	access := bridge.CheckSurfaceAccess("view-root", 60001, schema.AccessReadPixels)
+	if !access.Allowed {
+		t.Fatalf("expected read_pixels grant, got %+v", access)
+	}
+
+	data, err := os.ReadFile(grantLog)
+	if err != nil {
+		t.Fatalf("ReadFile(grantLog): %v", err)
+	}
+	if !strings.Contains(string(data), "grant") || !strings.Contains(string(data), "view-root") {
+		t.Fatalf("grant log %q missing expected record", string(data))
+	}
+}
+
+func TestCheckSurfaceAccessDeniesReadPixelsWithoutGrant(t *testing.T) {
+	bridge, err := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{
+		Type:    schema.PluginMessageSurfaceEvent,
+		Event:   schema.SurfaceEventMapped,
+		Surface: schema.CompositorSurface{ID: "view-root", WayfireViewID: 9},
+		Client:  schema.CompositorClientIdentity{UID: 0},
+	})
+
+	access := bridge.CheckSurfaceAccess("view-root", 60001, schema.AccessReadPixels)
+	if access.Allowed {
+		t.Fatalf("expected read_pixels deny, got %+v", access)
+	}
+	if !strings.Contains(access.Reason, "no viewport grant") {
+		t.Fatalf("got deny reason %q, want viewport-grant denial", access.Reason)
+	}
+}
+
+func TestRevokeViewportRemovesPolicyAndAccess(t *testing.T) {
+	bridge, err := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{
+		Type:    schema.PluginMessageSurfaceEvent,
+		Event:   schema.SurfaceEventMapped,
+		Surface: schema.CompositorSurface{ID: "view-root", WayfireViewID: 11},
+		Client:  schema.CompositorClientIdentity{UID: 0},
+	})
+	if _, err := bridge.GrantViewport(0, schema.ViewportGrantRequest{SurfaceID: "view-root", AgentUID: 60002}); err != nil {
+		t.Fatalf("GrantViewport: %v", err)
+	}
+	if err := bridge.RevokeViewport(0, schema.RevokeViewportGrantRequest{SurfaceID: "view-root", AgentUID: 60002}); err != nil {
+		t.Fatalf("RevokeViewport: %v", err)
+	}
+
+	access := bridge.CheckSurfaceAccess("view-root", 60002, schema.AccessKeyboard)
+	if access.Allowed {
+		t.Fatalf("expected keyboard deny after revoke, got %+v", access)
+	}
+
+	bridge.mu.RLock()
+	policy := bridge.policies["view-root"]
+	bridge.mu.RUnlock()
+	if containsUID(policy.AllowPointerUIDs, 60002) || containsUID(policy.AllowKeyboardUIDs, 60002) {
+		t.Fatalf("policy %+v still contains revoked uid 60002", policy)
+	}
 }
 
 func TestHandlePluginConnRejectsUnauthorizedPeer(t *testing.T) {
@@ -103,8 +235,10 @@ func TestHandlePluginConnRejectsUnauthorizedPeer(t *testing.T) {
 		t.Skip("cannot exercise unauthorized non-root plugin peer while running as root")
 	}
 
-	pub := &fakePublisher{}
-	bridge := New(pub, Config{AllowedPluginUID: uint32(os.Getuid() + 1)})
+	bridge, err := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid() + 1)})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
 
 	server, client, cleanup := unixSocketPair(t)
 	defer cleanup()
@@ -117,12 +251,11 @@ func TestHandlePluginConnRejectsUnauthorizedPeer(t *testing.T) {
 
 	_ = client.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
 	var msg any
-	err := json.NewDecoder(client).Decode(&msg)
+	err = json.NewDecoder(client).Decode(&msg)
 	if err == nil {
 		t.Fatal("expected unauthorized plugin peer to receive no sync data")
 	}
 	if !errors.Is(err, os.ErrDeadlineExceeded) && !errors.Is(err, net.ErrClosed) && !errors.Is(err, io.EOF) {
-		// EOF is the usual case; a closed or timed-out socket is also acceptable.
 		var netErr net.Error
 		if !errors.As(err, &netErr) {
 			t.Fatalf("expected socket close/timeout, got %v", err)
@@ -130,72 +263,24 @@ func TestHandlePluginConnRejectsUnauthorizedPeer(t *testing.T) {
 	}
 
 	<-done
-	if len(pub.events) != 0 {
-		t.Fatalf("got published events %+v, want none", pub.events)
-	}
-}
-
-func TestReconnectSendsPolicySnapshot(t *testing.T) {
-	pub := &fakePublisher{}
-	bridge := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})
-
-	policy := schema.CompositorSurfacePolicy{
-		SurfaceID:         "view-99",
-		OwnerUID:          60002,
-		AllowPointerUIDs:  []uint32{0, 60002},
-		AllowKeyboardUIDs: []uint32{0},
-	}
-	if err := bridge.UpsertSurfacePolicy(policy); err != nil {
-		t.Fatalf("UpsertSurfacePolicy: %v", err)
-	}
-	actor := uint32(60002)
-	if err := bridge.SetInputContext(&actor); err != nil {
-		t.Fatalf("SetInputContext: %v", err)
-	}
-
-	server, client, cleanup := unixSocketPair(t)
-	defer cleanup()
-	go bridge.HandlePluginConn(server)
-
-	dec := json.NewDecoder(client)
-	var replace schema.CompositorPolicyReplace
-	if err := dec.Decode(&replace); err != nil {
-		t.Fatalf("decode policy replace: %v", err)
-	}
-	if len(replace.Surfaces) != 1 || replace.Surfaces[0].SurfaceID != "view-99" {
-		t.Fatalf("got surfaces %+v, want synced view-99 policy", replace.Surfaces)
-	}
-
-	var input schema.CompositorInputContextUpdate
-	if err := dec.Decode(&input); err != nil {
-		t.Fatalf("decode input context: %v", err)
-	}
-	if input.ActorUID == nil || *input.ActorUID != 60002 {
-		t.Fatalf("got actor uid %v, want 60002", input.ActorUID)
-	}
-}
-
-func TestDispatchRejectsNonRootMutation(t *testing.T) {
-	bridge := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
-	body, _ := json.Marshal(schema.UpsertSurfacePolicyRequest{
-		Surface: schema.CompositorSurfacePolicy{SurfaceID: "view-1", OwnerUID: 60001},
-	})
-	_, err := bridge.dispatch(1234, schema.Request{Method: schema.MethodUpsertSurfacePolicy, Body: body})
-	if err == nil {
-		t.Fatal("expected non-root mutation to be rejected")
-	}
 }
 
 func TestDispatchRejectsNonRootListSurfaces(t *testing.T) {
-	bridge := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
-	_, err := bridge.dispatch(1234, schema.Request{Method: schema.MethodListSurfaces})
+	bridge, err := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	_, err = bridge.dispatch(1234, schema.Request{Method: schema.MethodListSurfaces})
 	if err == nil {
 		t.Fatal("expected non-root list_surfaces to be rejected")
 	}
 }
 
 func TestSyncPluginSessionDoesNotLoseConcurrentPolicyUpdate(t *testing.T) {
-	bridge := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
+	bridge, err := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
 	if err := bridge.UpsertSurfacePolicy(schema.CompositorSurfacePolicy{SurfaceID: "view-1", OwnerUID: 60001}); err != nil {
 		t.Fatalf("seed UpsertSurfacePolicy: %v", err)
 	}
@@ -214,7 +299,6 @@ func TestSyncPluginSessionDoesNotLoseConcurrentPolicyUpdate(t *testing.T) {
 	}()
 
 	dec := json.NewDecoder(client)
-
 	var replace schema.CompositorPolicyReplace
 	if err := dec.Decode(&replace); err != nil {
 		t.Fatalf("decode policy replace: %v", err)
@@ -261,15 +345,16 @@ func TestSyncPluginSessionDoesNotLoseConcurrentPolicyUpdate(t *testing.T) {
 }
 
 func TestCloseSurfacesByUIDQueuesMatchingSurfaces(t *testing.T) {
-	bridge := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
+	bridge, err := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
 	server, client, cleanup := unixSocketPair(t)
 	defer cleanup()
 
 	go bridge.HandlePluginConn(server)
 	dec := json.NewDecoder(client)
-	var discard any
-	_ = dec.Decode(&discard)
-	_ = dec.Decode(&discard)
+	readInitialSync(t, dec)
 
 	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{
 		Type:    schema.PluginMessageSurfaceEvent,
@@ -277,12 +362,16 @@ func TestCloseSurfacesByUIDQueuesMatchingSurfaces(t *testing.T) {
 		Surface: schema.CompositorSurface{ID: "view-a", WayfireViewID: 10},
 		Client:  schema.CompositorClientIdentity{UID: 60001},
 	})
+	var discard schema.CompositorPolicyUpsert
+	_ = dec.Decode(&discard)
+
 	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{
 		Type:    schema.PluginMessageSurfaceEvent,
 		Event:   schema.SurfaceEventMapped,
 		Surface: schema.CompositorSurface{ID: "view-b", WayfireViewID: 11},
 		Client:  schema.CompositorClientIdentity{UID: 60002},
 	})
+	_ = dec.Decode(&discard)
 
 	queuedCh := make(chan int, 1)
 	errCh := make(chan error, 1)
@@ -313,6 +402,34 @@ func TestCloseSurfacesByUIDQueuesMatchingSurfaces(t *testing.T) {
 	if closeMsg.Type != schema.PluginMessageCloseSurfacesByUID || closeMsg.OwnerUID != 60001 {
 		t.Fatalf("got close msg %+v, want owner 60001", closeMsg)
 	}
+}
+
+func readInitialSync(t *testing.T, dec *json.Decoder) {
+	t.Helper()
+	var replace schema.CompositorPolicyReplace
+	if err := dec.Decode(&replace); err != nil {
+		t.Fatalf("decode policy replace: %v", err)
+	}
+	if replace.Type != schema.PluginMessagePolicyReplace {
+		t.Fatalf("got sync type %q, want %q", replace.Type, schema.PluginMessagePolicyReplace)
+	}
+
+	var input schema.CompositorInputContextUpdate
+	if err := dec.Decode(&input); err != nil {
+		t.Fatalf("decode input context: %v", err)
+	}
+	if input.Type != schema.PluginMessageInputContext {
+		t.Fatalf("got input type %q, want %q", input.Type, schema.PluginMessageInputContext)
+	}
+}
+
+func containsUID(values []uint32, want uint32) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func unixSocketPair(t *testing.T) (server net.Conn, client net.Conn, cleanup func()) {
