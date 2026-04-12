@@ -87,11 +87,12 @@ Then, in the guest console, launch the compositor session:
 ```sh
 sudo systemctl start seatd
 sudo install -d -m 0700 /run/user/0
+# Keep /run/user/0 root-owned: Phase 2 currently models the human session as uid 0.
 sudo dbus-run-session env XDG_RUNTIME_DIR=/run/user/0 wayfire
 ```
 
 From another host terminal, run the Phase 2 proof against that guest session:
 
 ```sh
-scripts/vm.sh ssh -- "cd /repo && sudo env XDG_RUNTIME_DIR=/run/user/0 WAYLAND_DISPLAY=$(basename $(ls /run/user/0/wayland-* | head -n1)) test/phase2.sh"
+scripts/vm.sh ssh -- 'cd /repo && sudo env XDG_RUNTIME_DIR=/run/user/0 WAYLAND_DISPLAY=$(basename $(ls /run/user/0/wayland-* | head -n1)) test/phase2.sh'
 ```
