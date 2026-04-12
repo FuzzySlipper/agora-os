@@ -12,7 +12,7 @@ This repo is the system-services and bridge layer of that idea. The compositor w
 | **Admin agent daemon** | Privilege escalation gateway. A stateless LLM evaluator that receives structured requests over a Unix socket, evaluates each independently against an out-of-band system prompt, and returns approve/deny/escalate. No conversation history, no user-facing input channel, no in-band prompt updates. |
 | **Audit service** | fanotify watches on agent-writable paths; events are attributed by uid via `/proc/<pid>/status`, structured, and written to an append-only log. |
 | **Event bus** | Local Unix-socket pub/sub broker for typed events such as audit activity, agent lifecycle changes, and later compositor surface events. Subscriber-visible sender uids are broker-stamped from `SO_PEERCRED`, not trusted from payload claims. |
-| **Compositor bridge** | Not built yet. Phase 2 is planned around a Go bridge daemon plus a thin Wayfire plugin that handles credentials, events, and local enforcement. |
+| **Compositor bridge** | Phase 2 is split between a root-owned Go bridge daemon and a thin Wayfire plugin. The plugin subtree now exists as the compositor-side enforcement/data-extraction shim; the Go daemon is still to be built. |
 
 The novel contribution isn't any one of these in isolation. It's the integration of all of them into a single OS-level coordination model rather than a stack of application-layer frameworks bolted onto an existing desktop.
 
@@ -60,6 +60,8 @@ research/
   compositor-decision.md  Wayfire vs Pinnacle spike outcome
 scripts/
   vm.sh                disposable Arch VM workflow
+compositor/
+  wayfire-plugin/      thin C++ plugin for credential extraction and local input deny
 test/
   phase1.sh            end-to-end Phase 1 VM proof
   phase1-peercred.sh   focused SO_PEERCRED and authorization proof

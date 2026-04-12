@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<wayfire>
+  <plugin name="agora-bridge">
+    <_short>Agora bridge</_short>
+    <_long>Thin compositor bridge for credential attribution, surface events, and local input deny.</_long>
+    <category>General</category>
+    <option name="socket_path" type="string">
+      <_short>Bridge socket path</_short>
+      <_long>Unix socket used to talk to the root-owned Go compositor bridge daemon.</_long>
+      <default>/run/agent-os/compositor-bridge.sock</default>
+    </option>
+    <option name="emit_input_denied" type="bool">
+      <_short>Emit input denied events</_short>
+      <_long>Whether denied keyboard/pointer events should be reported back to the Go bridge.</_long>
+      <default>true</default>
+    </option>
+  </plugin>
+</wayfire>
