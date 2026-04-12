@@ -29,7 +29,7 @@ Phase 1 is now real enough to exercise end-to-end in the disposable VM:
 Phase 2 planning is also more concrete now:
 - the compositor spike concluded that Pinnacle's current gRPC API does not expose the enforcement primitives this project needs
 - the first compositor-facing slice is now in place as a Wayfire plugin plus a Go bridge daemon speaking a typed Unix-socket protocol
-- a minimal root-only `compositorctl` flow now records explicit viewport grants before an agent may interact with a human-owned surface
+- a minimal root-only `compositorctl` flow now records explicit viewport grants and drives compositor input context for Phase 2 testing before an agent may interact with a human-owned surface
 
 ## Repo layout
 
@@ -40,7 +40,7 @@ cmd/
   audit-service/       fanotify event collector with uid attribution
   event-bus/           local pub/sub broker over a Unix socket
   compositor-bridge/   Wayfire bridge daemon for surface events and policy/control
-  compositorctl/      root-only CLI for viewport grants and access checks
+  compositorctl/      root-only CLI for viewport grants, access checks, and input context
 internal/
   admin/               admin-agent request handling and evaluation logic
   agent/               agent lifecycle orchestration and system integration
@@ -69,6 +69,7 @@ compositor/
 test/
   phase1.sh            end-to-end Phase 1 VM proof
   phase1-peercred.sh   focused SO_PEERCRED and authorization proof
+  phase2.sh            end-to-end Phase 2 Wayfire proof
 ```
 
 ## Build and test
@@ -87,6 +88,14 @@ scripts/vm.sh ssh -- 'cd /repo && go build ./cmd/...'
 scripts/vm.sh ssh -- 'cd /repo && sudo test/phase1.sh'
 scripts/vm.sh ssh -- 'cd /repo && sudo test/phase1-peercred.sh'
 scripts/vm.sh stop
+```
+
+For authoritative Phase 2 validation, run inside a disposable root-owned Wayfire session with the plugin loaded:
+
+```sh
+cd /repo
+go build ./cmd/...
+sudo --preserve-env=XDG_RUNTIME_DIR,WAYLAND_DISPLAY test/phase2.sh
 ```
 
 **Don't run the privileged services on your host.** They create system users, modify nftables rules, and write under `/var/log/agent-os/`. The VM-first workflow is the intended development loop.

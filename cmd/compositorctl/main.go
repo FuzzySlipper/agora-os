@@ -32,6 +32,10 @@ func main() {
 		err = cmdRevokeViewport(args[1:], *pretty)
 	case "check-access":
 		err = cmdCheckAccess(args[1:], *pretty)
+	case "set-input-context":
+		err = cmdSetInputContext(args[1:], *pretty)
+	case "clear-input-context":
+		err = cmdClearInputContext(*pretty)
 	case "list-surfaces":
 		err = cmdListSurfaces(*pretty)
 	default:
@@ -50,10 +54,12 @@ func usage() {
 	fmt.Fprintf(os.Stderr, `Usage: compositorctl [--pretty] <command> [flags]
 
 Commands:
-  grant-viewport   Record an explicit viewport grant for an agent on a surface
-  revoke-viewport  Revoke a previously granted viewport
-  check-access     Ask the compositor bridge whether an agent may access a surface
-  list-surfaces    List tracked compositor surfaces
+  grant-viewport     Record an explicit viewport grant for an agent on a surface
+  revoke-viewport    Revoke a previously granted viewport
+  check-access       Ask the compositor bridge whether an agent may access a surface
+  set-input-context  Mark the current compositor input stream as driven by an agent uid
+  clear-input-context  Return the compositor input stream to human mode
+  list-surfaces      List tracked compositor surfaces
 
 Run compositorctl <command> --help for command-specific flags.
 `)
@@ -123,6 +129,32 @@ func cmdCheckAccess(args []string, pretty bool) error {
 	return printJSON(resp, pretty)
 }
 
+func cmdSetInputContext(args []string, pretty bool) error {
+	fs := flag.NewFlagSet("set-input-context", flag.ExitOnError)
+	agentUID := fs.Uint("agent-uid", 0, "agent UID driving input (required)")
+	fs.Parse(args)
+
+	if *agentUID == 0 {
+		return fmt.Errorf("--agent-uid is required")
+	}
+
+	resp, err := call(compositorSock, schema.MethodSetInputContext, schema.SetInputContextRequest{
+		ActorUID: uint32Ptr(uint32(*agentUID)),
+	})
+	if err != nil {
+		return err
+	}
+	return printJSON(resp, pretty)
+}
+
+func cmdClearInputContext(pretty bool) error {
+	resp, err := call(compositorSock, schema.MethodSetInputContext, schema.SetInputContextRequest{})
+	if err != nil {
+		return err
+	}
+	return printJSON(resp, pretty)
+}
+
 func cmdListSurfaces(pretty bool) error {
 	resp, err := call(compositorSock, schema.MethodListSurfaces, nil)
 	if err != nil {
@@ -181,4 +213,8 @@ func printJSON(data json.RawMessage, pretty bool) error {
 	}
 	_, err := fmt.Printf("%s\n", data)
 	return err
+}
+
+func uint32Ptr(value uint32) *uint32 {
+	return &value
 }
