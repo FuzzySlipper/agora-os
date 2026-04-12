@@ -18,7 +18,7 @@
 
 2. **No input event filtering.** The input API (`input.proto`) handles keybind/mousebind registration — compositor configuration, not real-time event mediation. There is no mechanism to say "deny input to surface X" or "intercept focus change to surface owned by UID Y."
 
-3. **No per-event policy enforcement.** The gRPC boundary introduces a round-trip for every policy decision. Focus changes and input routing require sub-millisecond decisions; routing these through gRPC to an out-of-process Go service adds measurable latency on every keystroke and pointer event.
+3. **No per-event policy enforcement surface.** Even setting latency aside, the current gRPC API exposes no hook where the compositor can synchronously ask "should this input/focus transition be allowed?" and block delivery until policy is known. For this use case, the missing enforcement hook matters more than the transport choice by itself.
 
 Pinnacle internally uses Smithay, which provides `Client::get_credentials()` (kernel-attested PID/UID via `SO_PEERCRED` on the Wayland socket). These capabilities exist inside the compositor but are **not exposed through the gRPC API**. The API is designed for window manager configuration scripting (like AwesomeWM's Lua), not for security-critical access control.
 
@@ -40,9 +40,9 @@ Pinnacle internally uses Smithay, which provides `Client::get_credentials()` (ke
 
 ### 3. Is there a stable extension surface?
 
-**Pinnacle:** The gRPC API is defined via `.proto` files under `api/protobuf/pinnacle/`. It is versioned (`v1`) and language-agnostic. However, the README notes the project is under "heavy development with breaking changes and complete rewrites of the APIs expected." The project has 576 stars and a single primary maintainer. Last release: v0.2.3 (February 2026). Active commits through April 2026.
+**Pinnacle:** The gRPC API is defined via `.proto` files under `api/protobuf/pinnacle/`. It is versioned (`v1`) and language-agnostic. However, the README notes the project is under "heavy development with breaking changes and complete rewrites of the APIs expected." The important takeaway for this spike is not project popularity but API volatility: this would likely mean either tracking upstream churn closely or carrying a fork if the missing security primitives had to be added locally.
 
-**Wayfire:** Plugins compile against C++ headers under `wayfire/`. The top-level plugin interface (`wf::plugin_interface_t`) has been fairly stable, but plugins couple to wlroots types (e.g., `wlr_surface`). Each wlroots minor version (roughly annual) introduces breaking changes that require plugin porting. Wayfire 0.10 (2025) tracks wlroots 0.19. The project is actively maintained by a single primary developer (Ilia Bozhinov) with ~2.5k stars.
+**Wayfire:** Plugins compile against C++ headers under `wayfire/`. The top-level plugin interface (`wf::plugin_interface_t`) has been fairly stable, but plugins couple to wlroots types (e.g., `wlr_surface`). Each wlroots minor version introduces breaking changes that require plugin porting. For this design, that cost is acceptable only if the plugin stays intentionally small and focused on enforcement/data extraction rather than policy logic.
 
 ### 4. Can coordination logic live out-of-process?
 
@@ -61,7 +61,7 @@ The plugin is the enforcement point; the Go service is the policy authority. Per
 ```
 Pinnacle model (not viable):
   Compositor ──gRPC──▶ Go service ──decision──▶ gRPC ──▶ Compositor
-  (every input event requires round-trip; PID/UID not available)
+  (no exposed synchronous enforcement hook; PID/UID not available)
 
 Wayfire model (recommended):
   Go service ──socket──▶ policy cache in C++ plugin
@@ -75,17 +75,17 @@ Wayfire model (recommended):
 
 | Risk | Mitigation |
 |------|------------|
-| Wayfire single-maintainer | Bridge plugin pattern is portable to other wlroots compositors (labwc, etc.) with moderate effort. The C++ surface is intentionally small. |
+| Wayfire project/bus factor risk | Bridge plugin pattern is portable to other wlroots compositors (labwc, etc.) with moderate effort. The C++ surface is intentionally small. |
 | wlroots API churn | Plugin touches `wl_client_get_credentials` (stable libwayland, will not change) and `wf::view_interface_t` signals (semi-stable). Expect annual porting effort proportional to plugin size (~300-500 lines). |
 | C++ in the development loop | Confined to the bridge plugin only. All policy logic, audit integration, and service orchestration remain in Go. The plugin is write-once-per-wlroots-version, not actively developed. |
 | Clipboard/screencopy mediation | Harder than input mediation — requires deeper wlroots hooks. Defer to Phase 3/4. For Phase 2, focus on surface attribution and input deny. |
-| Pinnacle improves its API | Monitor upstream. If PID/UID and input interception land in the gRPC API, re-evaluate. But these are architectural additions, not incremental features — unlikely without our use case driving them. |
+| Pinnacle improves its API | Monitor upstream. If PID/UID and an actual synchronous enforcement surface land in the gRPC API, re-evaluate. But these are architectural additions, not small feature gaps. |
 
 ---
 
 ## Recommendation
 
-1. **Phase 2:** Wayfire + thin C++ bridge plugin. The plugin extracts client credentials, forwards surface lifecycle events to a Go compositor-bridge service over a Unix socket, and enforces input policy from a local cache. All coordination logic stays in Go.
+1. **Phase 2:** Wayfire + thin C++ bridge plugin. The plugin extracts client credentials, forwards surface lifecycle events to a Go compositor-bridge service over a Unix socket, and enforces input policy from a local cache. The **policy authority** stays in Go; the **thin enforcement shim** lives in-process in the plugin.
 
 2. **Phase 4:** Smithay-based custom compositor if the Wayfire bridge proves too limiting (clipboard mediation, screencopy control, wpe-webkit surface ownership). Smithay provides `Client::get_credentials()` natively and is backed by System76/COSMIC, giving it a stronger sustainability story than wlroots long-term.
 
@@ -95,7 +95,7 @@ Wayfire model (recommended):
 
 ## Evidence sources
 
-- Pinnacle proto files: `api/protobuf/pinnacle/{window,signal,input}/v1/*.proto` (GitHub, pinnacle-comp/pinnacle, commit 88889905, April 2026)
+- Pinnacle proto files: `api/protobuf/pinnacle/{window,signal,input}/v1/*.proto` (GitHub, pinnacle-comp/pinnacle, reviewed April 2026)
 - Pinnacle Rust API docs: pinnacle-comp.github.io/rust-reference/main/pinnacle_api/
 - Wayfire plugin API: `wayfire/{view,plugin,core,signal-definitions}.hpp` headers
 - `wl_client_get_credentials()`: libwayland-server, man page wl_client(3)
