@@ -101,7 +101,14 @@ scripts/vm.sh stop
 scripts/vm.sh snap phase2-deps
 ```
 
-The current VM wrapper is still headless, so full live Wayfire validation remains a follow-up once the guest has a graphical session path. The goal is still to keep host interaction unprivileged after the one-time `scripts/vm.sh build` and do the risky compositor setup/testing inside the guest.
+For live compositor validation, restore that snapshot and boot the guest with graphics:
+
+```sh
+scripts/vm.sh restore phase2-deps
+scripts/vm.sh gui
+```
+
+Use the headless VM path for Phase 1 and guest-side dependency setup. Use the graphical guest path when the task needs a real Wayfire session or `test/phase2.sh`. The goal is still to keep host interaction unprivileged after the one-time `scripts/vm.sh build` and do the risky compositor setup/testing inside the guest.
 
 **Don't run the privileged services on your host.** They create system users, modify nftables rules, and write under `/var/log/agent-os/`. The VM-first workflow is the intended development loop.
 

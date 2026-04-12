@@ -19,10 +19,12 @@ REQUIRED_PACKAGES=(
     wayland
     wayland-protocols
     meson
+    python
     ninja
     pkgconf
     wtype
     foot
+    # Keep Xwayland available for mixed-client debugging and future bridge checks.
     xorg-xwayland
     seatd
 )
@@ -62,8 +64,8 @@ print_next_steps() {
 ::   - This installs the current known runtime needs for test/phase2.sh:
 ::     Wayfire, wtype, one supported terminal client (foot), and the plugin
 ::     build dependencies.
-::   - The current VM wrapper is still headless by default. A follow-up task
-::     should add a graphical guest mode for full live Wayfire validation.
+::   - After provisioning, use scripts/vm.sh gui on the host to boot the
+::     guest with a local graphics window for live Wayfire validation.
 STEPS
 }
 
