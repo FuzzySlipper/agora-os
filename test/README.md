@@ -4,7 +4,11 @@ Phase 1 testing is **VM-first**. Changes that depend on kernel attribution,
 cross-uid behavior, privileged paths, or host services are not considered
 validated based on local sandbox runs alone.
 
-## Use the VM for authoritative checks
+Phase 2 testing is **Wayfire-session-first**. The authoritative proof now needs
+a live compositor session with the Agora Wayfire plugin loaded, because the
+important behavior is in-process input mediation rather than just Go-side state.
+
+## Use the VM for authoritative Phase 1 checks
 
 - Validate `SO_PEERCRED` behavior in the disposable VM.
 - Validate Unix sockets under `/run/agent-os` in the VM.
@@ -15,6 +19,20 @@ validated based on local sandbox runs alone.
 The local sandbox may block socket creation or other privileged operations, so
 `go test ./...` on the host can produce false negatives for Phase 1 system
 behavior.
+
+## Use a disposable Wayfire host for authoritative Phase 2 checks
+
+- Run `test/phase2.sh` inside a root-owned Wayfire session with the
+  `agora-bridge` plugin loaded.
+- Preserve `XDG_RUNTIME_DIR` and `WAYLAND_DISPLAY` into the root shell so the
+  script can launch both the human-owned and agent-owned Wayland clients.
+- Install one supported native Wayland terminal client: `foot`,
+  `weston-terminal`, `alacritty`, or `kitty`.
+- Install `wtype` so the script can generate a real keyboard event for the
+  plugin deny/grant path.
+- Treat the Wayfire host as disposable: `test/phase2.sh` temporarily relaxes
+  the compositor socket permissions so a spawned agent uid can connect to the
+  session.
 
 ## Integration tests
 
@@ -36,7 +54,17 @@ behavior.
   cross-uid terminate denied, list_agents filtered). Requires root and
   `python3`.
 
+- **`test/phase2.sh`**: end-to-end Phase 2 compositor proof. Starts the event
+  bus, isolation service, and compositor bridge; launches one agent-owned and
+  one uid-0 Wayland surface; verifies surface attribution; proves agent-driven
+  keyboard input to the human surface is denied before a viewport grant; then
+  records a grant via `compositorctl` and verifies the denial stops. Requires a
+  running Wayfire session with the plugin loaded, root, `python3`, `wtype`,
+  and one supported native Wayland terminal client.
+
 ## Typical loop
+
+### Phase 1
 
 ```sh
 scripts/vm.sh start
@@ -44,4 +72,12 @@ scripts/vm.sh ssh -- 'cd /repo && go test ./...'
 scripts/vm.sh ssh -- 'cd /repo && sudo test/phase1.sh'
 scripts/vm.sh ssh -- 'cd /repo && sudo test/phase1-peercred.sh'
 scripts/vm.sh stop
+```
+
+### Phase 2
+
+```sh
+cd /repo
+go build ./cmd/...
+sudo --preserve-env=XDG_RUNTIME_DIR,WAYLAND_DISPLAY test/phase2.sh
 ```
