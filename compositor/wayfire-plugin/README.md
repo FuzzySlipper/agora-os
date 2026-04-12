@@ -54,6 +54,8 @@ Go bridge -> plugin policy updates:
 {"type":"policy_remove","surface_id":"view-42"}
 {"type":"input_context","actor_uid":60002}
 {"type":"input_context"}
+{"type":"close_surface","surface_id":"view-42"}
+{"type":"close_surfaces_by_uid","owner_uid":60001}
 ```
 
 Notes:
@@ -64,6 +66,9 @@ Notes:
   cross-uid denial without overloading any real kernel uid as a sentinel.
 - Missing policy for an agent-driven context is treated conservatively: no
   cross-uid input delivery.
+- `close_surface` and `close_surfaces_by_uid` are queued from the bridge reader
+  thread and executed on Wayfire's event loop, so forced-close control stays on
+  the compositor thread.
 - The plugin reads `socket_path` once at init; runtime config reload does not
   trigger reconnect in this first slice.
 

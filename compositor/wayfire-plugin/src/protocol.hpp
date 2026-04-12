@@ -40,6 +40,8 @@ enum class bridge_message_kind
     policy_upsert,
     policy_remove,
     input_context,
+    close_surface,
+    close_surfaces_by_uid,
 };
 
 struct bridge_message_t
@@ -48,6 +50,7 @@ struct bridge_message_t
     std::vector<surface_policy_t> policies;
     std::string surface_id;
     std::optional<uint32_t> actor_uid;
+    std::optional<uint32_t> owner_uid;
 };
 
 inline void append_unicode_escape(std::string& out, unsigned char ch)
@@ -397,6 +400,20 @@ inline bridge_message_t parse_bridge_message(const std::string& line)
     {
         message.kind = bridge_message_kind::input_context;
         message.actor_uid = find_uint_field(line, "actor_uid");
+        return message;
+    }
+
+    if (*type == "close_surface")
+    {
+        message.kind = bridge_message_kind::close_surface;
+        message.surface_id = find_string_field(line, "surface_id").value_or("");
+        return message;
+    }
+
+    if (*type == "close_surfaces_by_uid")
+    {
+        message.kind = bridge_message_kind::close_surfaces_by_uid;
+        message.owner_uid = find_uint_field(line, "owner_uid");
         return message;
     }
 
