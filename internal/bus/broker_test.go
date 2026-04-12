@@ -29,7 +29,7 @@ func TestBrokerPubSub(t *testing.T) {
 	b.Subscribe(id1, "audit.file.*")
 	b.Subscribe(id2, "compositor.surface.*")
 
-	// Publish audit event - only client 1 should receive it.
+	// Publish audit event — only client 1 should receive it.
 	b.Publish(-1, Event{Topic: "audit.file.modify", Body: body("test1")})
 
 	ev, ok := recv(ch1, 100*time.Millisecond)
@@ -48,7 +48,7 @@ func TestBrokerPubSub(t *testing.T) {
 		t.Error("client 2 should not receive audit events")
 	}
 
-	// Publish compositor event - only client 2 should receive it.
+	// Publish compositor event — only client 2 should receive it.
 	b.Publish(-1, Event{Topic: "compositor.surface.created", Body: body("test2")})
 
 	ev, ok = recv(ch2, 100*time.Millisecond)
@@ -77,7 +77,7 @@ func TestBrokerSelfExclusion(t *testing.T) {
 	id, ch := b.Register(1001)
 	b.Subscribe(id, "audit.*.*")
 
-	// Publisher is the same client - should not receive own event.
+	// Publisher is the same client — should not receive own event.
 	b.Publish(id, Event{Topic: "audit.file.modify", Body: body("self")})
 
 	_, ok := recv(ch, 50*time.Millisecond)
@@ -122,7 +122,7 @@ func TestBrokerSlowSubscriber(t *testing.T) {
 		b.Publish(-1, Event{Topic: "test.flood.event", Body: body(string(rune(i)))})
 	}
 
-	// Drain - should get exactly subscriberBufSize events (non-blocking drop).
+	// Drain — should get exactly subscriberBufSize events (non-blocking drop).
 	count := 0
 	for {
 		select {

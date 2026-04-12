@@ -1,5 +1,5 @@
 // Event bus broker: topic-based pub/sub over a Unix socket.
-// This file is the composition root - socket setup, signal handling,
+// This file is the composition root — socket setup, signal handling,
 // and connection accept loop. Broker logic lives in internal/bus.
 package main
 

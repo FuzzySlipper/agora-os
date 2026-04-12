@@ -16,7 +16,7 @@ type subscriber struct {
 // metadata captured at registration time. Published events are delivered to
 // clients whose subscription patterns match the event topic. Delivery is
 // non-blocking: if a client's channel is full, the event is dropped for that
-// client (backpressure - slow subscribers don't block publishers).
+// client (backpressure — slow subscribers don't block publishers).
 type Broker struct {
 	mu      sync.Mutex
 	clients map[int]*subscriber
@@ -101,7 +101,7 @@ func (b *Broker) Publish(senderID int, ev Event) {
 		if matchesAny(sub.patterns, stamped.Topic) {
 			select {
 			case sub.ch <- stamped:
-			default: // subscriber too slow - drop
+			default: // subscriber too slow — drop
 			}
 		}
 	}

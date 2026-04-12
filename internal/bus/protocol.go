@@ -3,13 +3,13 @@
 // Wire protocol: newline-delimited JSON over a single bidirectional connection.
 // Each connection can publish, subscribe, and receive events.
 //
-// Client -> Server:
+// Client → Server:
 //
 //	{"op":"sub","topic":"audit.file.*"}
 //	{"op":"unsub","topic":"audit.file.*"}
 //	{"op":"pub","topic":"audit.file.modify","body":{...}}
 //
-// Server -> Client (matching events only):
+// Server → Client (matching events only):
 //
 //	{"topic":"audit.file.modify","body":{...},"sender":{"uid":60001}}
 //
@@ -25,16 +25,16 @@
 //
 // Planned topic taxonomy:
 //
-//	audit.file.modify            - agent wrote to a watched path
-//	audit.file.open              - agent opened a watched file
-//	audit.file.close_write       - agent closed a written file
-//	compositor.surface.created   - new Wayland surface mapped
-//	compositor.surface.destroyed - surface unmapped
-//	compositor.surface.focused   - surface received keyboard focus
-//	agent.lifecycle.spawned      - new agent user created
-//	agent.lifecycle.terminated   - agent torn down
-//	escalation.request.submitted - escalation sent to admin agent
-//	escalation.request.decided   - admin agent returned a decision
+//	audit.file.modify            — agent wrote to a watched path
+//	audit.file.open              — agent opened a watched file
+//	audit.file.close_write       — agent closed a written file
+//	compositor.surface.created   — new Wayland surface mapped
+//	compositor.surface.destroyed — surface unmapped
+//	compositor.surface.focused   — surface received keyboard focus
+//	agent.lifecycle.spawned      — new agent user created
+//	agent.lifecycle.terminated   — agent torn down
+//	escalation.request.submitted — escalation sent to admin agent
+//	escalation.request.decided   — admin agent returned a decision
 package bus
 
 import "encoding/json"
