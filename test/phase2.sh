@@ -253,8 +253,25 @@ restore_wayland_socket_perms() {
     [[ -n "$ORIG_SOCKET_MODE" ]] && chmod "$ORIG_SOCKET_MODE" "$WAYLAND_SOCKET" 2>/dev/null || true
 }
 
+dump_logs_on_fail() {
+    if (( FAIL > 0 )); then
+        note "compositor-bridge log:"
+        tail -n 50 "$COMPOSITOR_LOG" 2>/dev/null || true
+        note "event-bus log:"
+        tail -n 50 "$BUS_LOG" 2>/dev/null || true
+        note "isolation log:"
+        tail -n 50 "$ISOLATION_LOG" 2>/dev/null || true
+        note "wtype denied:"
+        cat /tmp/agora-wtype-denied.log 2>/dev/null || true
+        note "wtype allowed:"
+        cat /tmp/agora-wtype-allowed.log 2>/dev/null || true
+    fi
+}
+
 cleanup() {
     set +e
+
+    dump_logs_on_fail
 
     "$BIN_DIR/compositorctl" clear-input-context >/dev/null 2>&1
 
