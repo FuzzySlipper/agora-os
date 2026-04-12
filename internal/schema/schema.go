@@ -14,6 +14,7 @@ const (
 	IsolationSocket = "/run/agent-os/isolation.sock"
 	AdminSocket     = "/run/agent-os/admin-agent.sock"
 	AuditSocket     = "/run/agent-os/audit.sock"
+	BusSocket       = "/run/agent-os/bus.sock"
 )
 
 // --- Wire Protocol ---
