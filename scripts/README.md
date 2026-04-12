@@ -25,6 +25,7 @@ sudo scripts/vm.sh build       # one-time: install Arch to qcow2 (~5 min)
 scripts/vm.sh start             # boot headless, SSH on port 2222
 scripts/vm.sh ssh               # open a shell inside the VM
 scripts/vm.sh ssh 'cd /repo && go build ./cmd/...'  # one-shot command
+scripts/vm.sh phase2-deps      # install Wayfire/plugin/test deps inside the guest
 scripts/vm.sh snap clean-base   # save a snapshot (VM must be stopped)
 scripts/vm.sh restore clean-base
 scripts/vm.sh stop
@@ -36,9 +37,10 @@ scripts/vm.sh destroy           # delete everything
 | Snapshot | When to take | Purpose |
 |---|---|---|
 | `clean-base` | After first `build` + `start` + verify SSH works | Pristine Arch install |
-| `phase1-deps` | After first `go build ./cmd/...` inside the VM | Fast test iteration |
+| `phase1-deps` | After first `go build ./cmd/...` inside the VM | Fast Phase 1 test iteration |
+| `phase2-deps` | After `scripts/vm.sh phase2-deps` + plugin build sanity-check | Reusable Wayfire/plugin dev environment |
 
-Every test run restores from `phase1-deps`:
+Phase 1 restores from `phase1-deps`:
 
 ```sh
 scripts/vm.sh restore phase1-deps
@@ -46,6 +48,24 @@ scripts/vm.sh start
 scripts/vm.sh ssh -- 'sudo /repo/test/phase1.sh'
 scripts/vm.sh stop
 ```
+
+Phase 2 guest setup uses the same pattern:
+
+```sh
+scripts/vm.sh start
+scripts/vm.sh phase2-deps
+scripts/vm.sh ssh -- 'cd /repo/compositor/wayfire-plugin && meson setup build && meson compile -C build'
+scripts/vm.sh stop
+scripts/vm.sh snap phase2-deps
+```
+
+After that, you can restore `phase2-deps` before compositor work.
+The host stays unprivileged after the initial `vm.sh build`; all package
+installation happens inside the guest via passwordless sudo for the `dev` user.
+
+Note: the current VM wrapper still boots headless. `phase2-deps` prepares the
+guest-side environment, but full live Wayfire validation still needs a
+graphical guest session follow-up.
 
 ### Where state lives
 

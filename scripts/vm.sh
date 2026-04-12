@@ -275,6 +275,14 @@ cmd_restore() {
 }
 
 # ---------------------------------------------------------------------------
+# phase2-deps — install guest-side Phase 2 compositor dependencies
+# ---------------------------------------------------------------------------
+cmd_phase2_deps() {
+    is_running || die "VM is not running — use 'vm.sh start'"
+    ssh_cmd "sudo /repo/scripts/provision-phase2-vm.sh"
+}
+
+# ---------------------------------------------------------------------------
 # stop — shut down QEMU and virtiofsd
 # ---------------------------------------------------------------------------
 cmd_stop() {
@@ -313,8 +321,8 @@ cmd_destroy() {
 # dispatch
 # ---------------------------------------------------------------------------
 case "${1:-}" in
-    build|start|ssh|console|snap|restore|stop|destroy)
-        cmd="$1"; shift; "cmd_$cmd" "$@" ;;
+    build|start|ssh|console|snap|restore|phase2-deps|stop|destroy)
+        cmd=${1//-/_}; shift; "cmd_$cmd" "$@" ;;
     *)
         cat >&2 <<'USAGE'
 Usage: vm.sh <command> [args]
@@ -326,6 +334,7 @@ Commands:
   ssh [cmd]          SSH into the VM or run a one-shot command
   snap <name>        Take a qcow2 snapshot (VM must be stopped)
   restore <name>     Restore a snapshot (VM must be stopped)
+  phase2-deps        Install Wayfire/plugin/test dependencies inside the guest
   stop               Shut down the VM
   destroy            Stop and delete all VM state
 
