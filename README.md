@@ -64,6 +64,7 @@ research/
   compositor-decision.md  Wayfire vs Pinnacle spike outcome
 scripts/
   vm.sh                disposable Arch VM workflow
+  provision-phase2-vm.sh  guest-side Wayfire/plugin dependency installer
 compositor/
   wayfire-plugin/      thin C++ plugin for credential extraction and local input deny
 test/
@@ -90,13 +91,17 @@ scripts/vm.sh ssh -- 'cd /repo && sudo test/phase1-peercred.sh'
 scripts/vm.sh stop
 ```
 
-For authoritative Phase 2 validation, run inside a disposable root-owned Wayfire session with the plugin loaded:
+For authoritative Phase 2 validation, use the VM as the disposable guest environment. A typical setup loop is:
 
 ```sh
-cd /repo
-go build ./cmd/...
-sudo --preserve-env=XDG_RUNTIME_DIR,WAYLAND_DISPLAY test/phase2.sh
+scripts/vm.sh start
+scripts/vm.sh phase2-deps
+scripts/vm.sh ssh -- 'cd /repo/compositor/wayfire-plugin && meson setup build && meson compile -C build'
+scripts/vm.sh stop
+scripts/vm.sh snap phase2-deps
 ```
+
+The current VM wrapper is still headless, so full live Wayfire validation remains a follow-up once the guest has a graphical session path. The goal is still to keep host interaction unprivileged after the one-time `scripts/vm.sh build` and do the risky compositor setup/testing inside the guest.
 
 **Don't run the privileged services on your host.** They create system users, modify nftables rules, and write under `/var/log/agent-os/`. The VM-first workflow is the intended development loop.
 
