@@ -1,6 +1,9 @@
 package schema
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"time"
+)
 
 // --- 3PO / R2 Topic Constants ---
 //
@@ -69,10 +72,10 @@ const (
 type WorkResultStatus string
 
 const (
-	WorkStatusOK       WorkResultStatus = "ok"
-	WorkStatusFailed   WorkResultStatus = "failed"
-	WorkStatusNeeds3PO WorkResultStatus = "needs_3po"
-	WorkStatusCanceled WorkResultStatus = "canceled"
+	WorkStatusOK        WorkResultStatus = "ok"
+	WorkStatusFailed    WorkResultStatus = "failed"
+	WorkStatusNeeds3PO  WorkResultStatus = "needs_3po"
+	WorkStatusCancelled WorkResultStatus = "cancelled"
 )
 
 type ArtifactKind string
@@ -129,12 +132,12 @@ type EnsureWorkerRequest struct {
 // WorkerAssignment describes the worker a caller should use for subsequent
 // event-bus work orders.
 type WorkerAssignment struct {
-	WorkerID        string    `json:"worker_id"`
-	Created         bool      `json:"created"`
-	Agent           AgentInfo `json:"agent"`
-	Profile         string    `json:"profile"`
-	LeaseExpiresAt  string    `json:"lease_expires_at,omitempty"`
-	AssignmentTopic string    `json:"assignment_topic"`
+	WorkerID        string     `json:"worker_id"`
+	Created         bool       `json:"created"`
+	Agent           AgentInfo  `json:"agent"`
+	Profile         string     `json:"profile"`
+	LeaseExpiresAt  *time.Time `json:"lease_expires_at,omitempty"`
+	AssignmentTopic string     `json:"assignment_topic"`
 }
 
 type EnsureWorkerResponse struct {
@@ -173,7 +176,7 @@ type WorkerLease struct {
 	Profile         string           `json:"profile"`
 	OwnerSessionID  string           `json:"owner_session_id"`
 	RequesterUID    uint32           `json:"requester_uid"`
-	LeaseExpiresAt  string           `json:"lease_expires_at,omitempty"`
+	LeaseExpiresAt  *time.Time       `json:"lease_expires_at,omitempty"`
 	AssignmentTopic string           `json:"assignment_topic"`
 	State           WorkerLeaseState `json:"state"`
 }
@@ -229,12 +232,13 @@ type SpawnRejectedEvent struct {
 	Reason    string `json:"reason"`
 }
 
+// WorkerLifecycleEvent publishes the lease record after a supervisor lifecycle
+// transition such as assign, reuse, or terminate. The topic conveys which
+// transition occurred; the payload carries the authoritative post-transition
+// lease state.
 type WorkerLifecycleEvent struct {
-	SessionID string           `json:"session_id,omitempty"`
-	WorkerID  string           `json:"worker_id"`
-	Lease     WorkerLease      `json:"lease"`
-	Profile   string           `json:"profile"`
-	State     WorkerLeaseState `json:"state"`
+	SessionID string      `json:"session_id,omitempty"`
+	Lease     WorkerLease `json:"lease"`
 }
 
 // WorkBudget bounds how much effort an R2 worker should spend on one work
@@ -272,23 +276,27 @@ type ArtifactRef struct {
 	Text string       `json:"text,omitempty"`
 }
 
-// WorkResult is the machine-readable completion payload returned by an R2.
-// 3PO is responsible for turning this into human-facing narrative.
+// WorkResult is the final machine-readable completion payload returned by an
+// R2 on the result topic. `Status` is the single source of truth for outcome,
+// including cases where the worker completed only by requesting 3PO help.
 type WorkResult struct {
 	TaskID    string           `json:"task_id"`
 	Status    WorkResultStatus `json:"status"`
 	Summary   string           `json:"summary"`
 	Artifacts []ArtifactRef    `json:"artifacts,omitempty"`
 	FollowUp  []string         `json:"follow_up,omitempty"`
-	Needs3PO  bool             `json:"needs_3po,omitempty"`
 	Error     string           `json:"error,omitempty"`
 }
 
+// WorkCancelled is a mid-flight signal published on the cancelled topic when
+// work is stopped before a final result is emitted.
 type WorkCancelled struct {
 	TaskID string `json:"task_id"`
 	Reason string `json:"reason,omitempty"`
 }
 
+// WorkNeeds3PO is a mid-flight signal published on the needs_3po topic when an
+// R2 pauses and requests 3PO involvement before any final result is emitted.
 type WorkNeeds3PO struct {
 	TaskID  string `json:"task_id"`
 	Reason  string `json:"reason"`

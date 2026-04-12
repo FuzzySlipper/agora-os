@@ -179,7 +179,7 @@ Example profile:
 ```json
 {
   "profile": "repo-inspector",
-  "runtime": "local-llm",
+  "runtime": "local_llm",
   "tools": ["fs.read", "git.diff", "ripgrep"],
   "cpu_quota": "50%",
   "memory_max": "2G",

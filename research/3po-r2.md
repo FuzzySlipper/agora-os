@@ -190,7 +190,7 @@ Example:
 ```json
 {
   "profile": "repo-inspector",
-  "runtime": "local-llm",
+  "runtime": "local_llm",
   "tools": ["fs.read", "git.diff", "ripgrep"],
   "cpu_quota": "50%",
   "memory_max": "2G",
@@ -256,8 +256,7 @@ R2 results should come back in machine-friendly form first. 3PO is what turns th
   "follow_up": [
     "Needs supervisor-side spawn policy",
     "Needs peer-attributed bus sender metadata"
-  ],
-  "needs_3po": false
+  ]
 }
 ```
 
