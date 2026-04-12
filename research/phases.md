@@ -30,7 +30,7 @@ The compositor is the hardest component and the least novel. Start with the coor
 
 **What gets built:**
 
-1. **Compositor Bridge Service (Go)** — gRPC client to Pinnacle (or a C++ plugin if Wayfire). Translates compositor events to event bus messages. Exposes compositor control (close/move surface, restrict input) to other services.
+1. **Compositor Bridge Service (Go)** — Wayfire bridge daemon speaking a Unix-socket protocol to a thin in-process Wayfire plugin. Translates compositor events to event bus messages and pushes policy/grant-cache updates down to the plugin. Exposes compositor control (close/move surface, restrict input) to other services.
 
 2. **Event Bus** — custom Unix socket broker. Services publish and subscribe to typed events. Compositor bridge, audit service, and isolation service all connect.
 
@@ -71,21 +71,20 @@ Things to add as the system matures, in rough priority order:
 ## Repository structure (suggested)
 
 ```
-agent-os/
+agora-os/
   cmd/
     isolation-service/    # main.go for the agent isolation daemon
     admin-agent/          # main.go for the admin agent daemon
     audit-service/        # main.go for the audit relay daemon
     event-bus/            # main.go for the event bus broker
-    compositor-bridge/    # main.go for the Pinnacle gRPC client
+    compositor-bridge/    # main.go for the Wayfire bridge daemon
     webview-launcher/     # main.go for the webview window launcher
   internal/
     agent/                # agent lifecycle types and management
     schema/               # shared request/response schemas
     bus/                  # event bus types and client library
   compositor/
-    pinnacle-bridge/      # Go gRPC client for Pinnacle
-    wayfire-plugin/       # C++ fallback plugin (if needed)
+    wayfire-plugin/       # thin C++ enforcement/data-extraction plugin
   shell/
     src/                  # TypeScript shell UI
   config/
