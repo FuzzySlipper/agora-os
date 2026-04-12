@@ -284,7 +284,7 @@ Suggested initial topics:
 - `admin.escalation.requested`
 - `admin.escalation.decided`
 
-Payloads should include task or session IDs. Identity should not be trusted from payload fields alone. The long-term requirement is for the bus broker to stamp sender metadata from `SO_PEERCRED` so recipients can treat claimed roles as advisory and kernel uid as authoritative.
+Payloads should include task or session IDs. Identity should not be trusted from payload fields alone. The bus broker should stamp sender metadata from `SO_PEERCRED` so recipients can treat claimed roles as advisory and kernel uid as authoritative.
 
 ---
 

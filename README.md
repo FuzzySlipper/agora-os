@@ -11,7 +11,7 @@ This repo is the system-services and bridge layer of that idea. The compositor w
 | **Agent isolation service** | Each agent is a Linux system user with its own uid. The service creates/destroys those uids, sets per-agent cgroup v2 limits via systemd transient slices, and applies per-uid `nft meta skuid` rules for network access control. |
 | **Admin agent daemon** | Privilege escalation gateway. A stateless LLM evaluator that receives structured requests over a Unix socket, evaluates each independently against an out-of-band system prompt, and returns approve/deny/escalate. No conversation history, no user-facing input channel, no in-band prompt updates. |
 | **Audit service** | fanotify watches on agent-writable paths; events are attributed by uid via `/proc/<pid>/status`, structured, and written to an append-only log. |
-| **Event bus** | Local Unix-socket pub/sub broker for typed events such as audit activity, agent lifecycle changes, and later compositor surface events. |
+| **Event bus** | Local Unix-socket pub/sub broker for typed events such as audit activity, agent lifecycle changes, and later compositor surface events. Subscriber-visible sender uids are broker-stamped from `SO_PEERCRED`, not trusted from payload claims. |
 | **Compositor bridge** | Not built yet. Phase 2 is planned around a Go bridge daemon plus a thin Wayfire plugin that handles credentials, events, and local enforcement. |
 
 The novel contribution isn't any one of these in isolation. It's the integration of all of them into a single OS-level coordination model rather than a stack of application-layer frameworks bolted onto an existing desktop.
