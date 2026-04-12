@@ -174,6 +174,13 @@ func TestGrantViewportRecordsAndUpdatesPolicy(t *testing.T) {
 	if !strings.Contains(string(data), "grant") || !strings.Contains(string(data), "view-root") {
 		t.Fatalf("grant log %q missing expected record", string(data))
 	}
+	info, err := os.Stat(grantLog)
+	if err != nil {
+		t.Fatalf("Stat(grantLog): %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0600 {
+		t.Fatalf("grant log perms = %o, want 600", got)
+	}
 }
 
 func TestCheckSurfaceAccessDeniesReadPixelsWithoutGrant(t *testing.T) {
@@ -227,6 +234,87 @@ func TestRevokeViewportRemovesPolicyAndAccess(t *testing.T) {
 	bridge.mu.RUnlock()
 	if containsUID(policy.AllowPointerUIDs, 60002) || containsUID(policy.AllowKeyboardUIDs, 60002) {
 		t.Fatalf("policy %+v still contains revoked uid 60002", policy)
+	}
+}
+
+func TestHandleSurfaceEventKeepsGrantUpdateOrderedWithPluginSync(t *testing.T) {
+	bridge, err := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	session := &pluginSession{conn: server, enc: json.NewEncoder(server)}
+	bridge.installPluginSession(session)
+	defer bridge.clearPluginSession(session)
+
+	eventDone := make(chan struct{})
+	go func() {
+		bridge.handleSurfaceEvent(schema.CompositorPluginEvent{
+			Type:    schema.PluginMessageSurfaceEvent,
+			Event:   schema.SurfaceEventMapped,
+			Surface: schema.CompositorSurface{ID: "view-race", WayfireViewID: 21},
+			Client:  schema.CompositorClientIdentity{UID: 0},
+		})
+		close(eventDone)
+	}()
+
+	// net.Pipe() keeps the mapped-event send blocked until the test starts reading,
+	// so a short sleep is enough to let handleSurfaceEvent reach plugin.Send().
+	time.Sleep(20 * time.Millisecond)
+
+	grantDone := make(chan error, 1)
+	go func() {
+		_, err := bridge.GrantViewport(0, schema.ViewportGrantRequest{SurfaceID: "view-race", AgentUID: 60002})
+		grantDone <- err
+	}()
+
+	select {
+	case err := <-grantDone:
+		t.Fatalf("GrantViewport completed before blocked mapped sync was released: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	dec := json.NewDecoder(client)
+	var ownerPolicy schema.CompositorPolicyUpsert
+	if err := dec.Decode(&ownerPolicy); err != nil {
+		t.Fatalf("decode owner policy: %v", err)
+	}
+	if ownerPolicy.Surface.SurfaceID != "view-race" || ownerPolicy.Surface.OwnerUID != 0 {
+		t.Fatalf("got owner policy %+v, want view-race owner 0", ownerPolicy.Surface)
+	}
+	if len(ownerPolicy.Surface.AllowPointerUIDs) != 0 || len(ownerPolicy.Surface.AllowKeyboardUIDs) != 0 {
+		t.Fatalf("expected owner-only policy before grant, got %+v", ownerPolicy.Surface)
+	}
+
+	select {
+	case <-eventDone:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("timed out waiting for mapped event sync to finish")
+	}
+
+	var grantPolicy schema.CompositorPolicyUpsert
+	if err := dec.Decode(&grantPolicy); err != nil {
+		t.Fatalf("decode grant policy: %v", err)
+	}
+	if !containsUID(grantPolicy.Surface.AllowPointerUIDs, 60002) || !containsUID(grantPolicy.Surface.AllowKeyboardUIDs, 60002) {
+		t.Fatalf("grant policy %+v missing agent uid 60002", grantPolicy.Surface)
+	}
+
+	select {
+	case err := <-grantDone:
+		if err != nil {
+			t.Fatalf("GrantViewport: %v", err)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("timed out waiting for GrantViewport")
+	}
+
+	if access := bridge.CheckSurfaceAccess("view-race", 60002, schema.AccessPointer); !access.Allowed {
+		t.Fatalf("expected pointer grant after ordered sync, got %+v", access)
 	}
 }
 

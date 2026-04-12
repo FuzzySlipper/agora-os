@@ -219,6 +219,7 @@ func (b *Bridge) CloseSurfacesByUID(ownerUID uint32) (int, error) {
 	return queued, nil
 }
 
+// GrantViewport records the operator approval immediately; if syncing the derived policy to the plugin fails, the grant remains durable in memory and the append-only log and will be re-sent on the next plugin reconnect.
 func (b *Bridge) GrantViewport(grantedByUID uint32, req schema.ViewportGrantRequest) (schema.SurfaceAccessGrant, error) {
 	actions := normalizeViewportActions(req.Actions)
 	if len(actions) == 0 {
@@ -425,48 +426,46 @@ func (b *Bridge) handleSurfaceEvent(msg schema.CompositorPluginEvent) {
 		UpdatedAt: time.Now(),
 	}
 
-	var (
-		topic   string
-		busBody schema.CompositorBusEvent
-		sendMsg any
-		session *pluginSession
-	)
+	topic := topicForSurfaceEvent(msg.Event)
+	busBody := schema.CompositorBusEvent{
+		Surface: msg.Surface,
+		Client:  msg.Client,
+		Event:   msg.Event,
+		Device:  msg.Device,
+	}
 
 	b.mu.Lock()
 	switch msg.Event {
-	case schema.SurfaceEventMapped, schema.SurfaceEventFocused, schema.SurfaceEventInputDenied:
+	case schema.SurfaceEventMapped:
 		b.surfaces[msg.Surface.ID] = tracked
-		policy := b.rebuildSurfacePolicyLocked(msg.Surface.ID)
-		sendMsg = schema.CompositorPolicyUpsert{Type: schema.PluginMessagePolicyUpsert, Surface: policy}
-		session = b.plugin
+		if err := b.syncDerivedPolicyLocked(msg.Surface.ID); err != nil {
+			log.Printf("sync compositor policy for %s: %v", msg.Surface.ID, err)
+		}
+	case schema.SurfaceEventFocused, schema.SurfaceEventInputDenied:
+		b.surfaces[msg.Surface.ID] = tracked
+		if _, ok := b.policies[msg.Surface.ID]; !ok {
+			if err := b.syncDerivedPolicyLocked(msg.Surface.ID); err != nil {
+				log.Printf("sync compositor policy for %s: %v", msg.Surface.ID, err)
+			}
+		}
 	case schema.SurfaceEventUnmapped:
 		delete(b.surfaces, msg.Surface.ID)
 		delete(b.policies, msg.Surface.ID)
 		delete(b.grants, msg.Surface.ID)
-		sendMsg = schema.CompositorPolicyRemove{Type: schema.PluginMessagePolicyRemove, SurfaceID: msg.Surface.ID}
-		session = b.plugin
+		if b.plugin != nil {
+			if err := b.plugin.Send(schema.CompositorPolicyRemove{Type: schema.PluginMessagePolicyRemove, SurfaceID: msg.Surface.ID}); err != nil {
+				log.Printf("sync compositor policy for %s: %v", msg.Surface.ID, err)
+			}
+		}
 	default:
 		b.mu.Unlock()
 		return
 	}
 	b.mu.Unlock()
 
-	topic = topicForSurfaceEvent(msg.Event)
 	if topic != "" {
-		busBody = schema.CompositorBusEvent{
-			Surface: msg.Surface,
-			Client:  msg.Client,
-			Event:   msg.Event,
-			Device:  msg.Device,
-		}
 		if err := b.bus.Publish(topic, busBody); err != nil {
 			log.Printf("publish compositor event %s: %v", topic, err)
-		}
-	}
-
-	if session != nil {
-		if err := session.Send(sendMsg); err != nil {
-			log.Printf("sync compositor policy for %s: %v", msg.Surface.ID, err)
 		}
 	}
 }
