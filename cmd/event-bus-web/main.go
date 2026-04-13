@@ -6,14 +6,18 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/patch/agora-os/internal/schema"
 	"github.com/patch/agora-os/internal/webbus"
 )
 
-const defaultListen = "127.0.0.1:7780"
-const defaultSecretFile = "/run/agent-os/event-bus-web.secret"
+const (
+	defaultListen     = "127.0.0.1:7780"
+	defaultSecretFile = "/run/agent-os/event-bus-web.secret"
+	allowedOriginsEnv = "AGORA_WEBBUS_ALLOWED_ORIGINS"
+)
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "mint-token" {
@@ -42,6 +46,15 @@ func serve(args []string) {
 	}
 
 	gateway := webbus.NewGateway(*busSocket, secret)
+	for _, origin := range parseAllowedOrigins(os.Getenv(allowedOriginsEnv)) {
+		gateway.AllowedOrigins[origin] = struct{}{}
+	}
+
+	if len(gateway.AllowedOrigins) == 0 {
+		log.Printf("event-bus-web origin policy: same-origin")
+	} else {
+		log.Printf("event-bus-web origin policy: allow-list from %s", allowedOriginsEnv)
+	}
 	log.Printf("event-bus-web listening on http://%s/ws", *listen)
 	log.Fatal(http.ListenAndServe(*listen, gateway))
 }
@@ -71,4 +84,20 @@ func mintToken(args []string) {
 		log.Fatal(err)
 	}
 	fmt.Println(token)
+}
+
+func parseAllowedOrigins(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	origins := make([]string, 0, len(parts))
+	for _, part := range parts {
+		origin := strings.TrimSpace(part)
+		if origin == "" {
+			continue
+		}
+		origins = append(origins, origin)
+	}
+	return origins
 }

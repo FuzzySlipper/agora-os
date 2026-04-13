@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -14,22 +15,25 @@ import (
 	"github.com/patch/agora-os/internal/bus"
 )
 
+const tokenSubprotocolPrefix = "agora.token."
+
 type Gateway struct {
-	BusSocket string
-	Secret    []byte
-	Now       func() time.Time
-	Upgrader  websocket.Upgrader
+	BusSocket      string
+	Secret         []byte
+	Now            func() time.Time
+	AllowedOrigins map[string]struct{}
+	Upgrader       websocket.Upgrader
 }
 
 func NewGateway(busSocket string, secret []byte) *Gateway {
-	return &Gateway{
-		BusSocket: busSocket,
-		Secret:    secret,
-		Now:       time.Now,
-		Upgrader: websocket.Upgrader{
-			CheckOrigin: func(r *http.Request) bool { return true },
-		},
+	g := &Gateway{
+		BusSocket:      busSocket,
+		Secret:         secret,
+		Now:            time.Now,
+		AllowedOrigins: make(map[string]struct{}),
 	}
+	g.Upgrader = websocket.Upgrader{CheckOrigin: g.checkOrigin}
+	return g
 }
 
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -37,12 +41,17 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	identity, err := g.authenticate(r)
+	identity, selectedSubprotocol, err := g.authenticate(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
-	conn, err := g.Upgrader.Upgrade(w, r, nil)
+
+	var responseHeader http.Header
+	if selectedSubprotocol != "" {
+		responseHeader = http.Header{"Sec-WebSocket-Protocol": []string{selectedSubprotocol}}
+	}
+	conn, err := g.Upgrader.Upgrade(w, r, responseHeader)
 	if err != nil {
 		return
 	}
@@ -72,22 +81,45 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (g *Gateway) authenticate(r *http.Request) (Identity, error) {
-	token := strings.TrimSpace(r.URL.Query().Get("token"))
+func (g *Gateway) authenticate(r *http.Request) (Identity, string, error) {
+	token, selectedSubprotocol := tokenFromRequest(r)
 	if token == "" {
-		authz := strings.TrimSpace(r.Header.Get("Authorization"))
-		if strings.HasPrefix(authz, "Bearer ") {
-			token = strings.TrimSpace(strings.TrimPrefix(authz, "Bearer "))
-		}
-	}
-	if token == "" {
-		return Identity{}, errors.New("missing token")
+		return Identity{}, "", errors.New("missing bearer token")
 	}
 	claims, err := VerifyToken(g.Secret, token, g.Now())
 	if err != nil {
-		return Identity{}, err
+		return Identity{}, "", err
 	}
-	return claims.Identity(), nil
+	return claims.Identity(), selectedSubprotocol, nil
+}
+
+func (g *Gateway) checkOrigin(r *http.Request) bool {
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		return true
+	}
+	if len(g.AllowedOrigins) > 0 {
+		_, ok := g.AllowedOrigins[origin]
+		return ok
+	}
+	parsed, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(parsed.Host, r.Host)
+}
+
+func tokenFromRequest(r *http.Request) (string, string) {
+	authz := strings.TrimSpace(r.Header.Get("Authorization"))
+	if strings.HasPrefix(authz, "Bearer ") {
+		return strings.TrimSpace(strings.TrimPrefix(authz, "Bearer ")), ""
+	}
+	for _, protocol := range websocket.Subprotocols(r) {
+		if strings.HasPrefix(protocol, tokenSubprotocolPrefix) {
+			return strings.TrimPrefix(protocol, tokenSubprotocolPrefix), protocol
+		}
+	}
+	return "", ""
 }
 
 func (g *Gateway) forwardInbound(ctx context.Context, conn *websocket.Conn, busClient *bus.Client, identity Identity) error {
