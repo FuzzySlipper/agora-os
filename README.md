@@ -61,6 +61,7 @@ research/
   phases.md            build phases and acceptance criteria
   research.md          literature review
   local-agents.md      3PO/R2 architecture for local-first sub-agents
+  agent-slot-inventory.md  deterministic vs. LLM slot inventory
   3po-r2.md            concrete 3PO/R2 system design
   agent-supervisor.md  deterministic supervisor between 3PO and isolation
   compositor-decision.md  Wayfire vs Pinnacle spike outcome
