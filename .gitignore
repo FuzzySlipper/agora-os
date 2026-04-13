@@ -38,6 +38,10 @@ coverage.html
 target/
 **/*.rs.bk
 
+# Python helper artifacts
+__pycache__/
+*.pyc
+
 # Node (for the eventual shell/ TypeScript app)
 node_modules/
 npm-debug.log*
