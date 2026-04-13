@@ -39,6 +39,7 @@ cmd/
   admin-agent/         stateless LLM evaluator over a Unix socket
   audit-service/       fanotify event collector with uid attribution
   event-bus/           local pub/sub broker over a Unix socket
+  event-bus-web/       WebSocket gateway for token-scoped webview and shell clients
   compositor-bridge/   Wayfire bridge daemon for surface events and policy/control
   compositorctl/       root-only CLI for viewport grants, access checks, and input context
   webview-launcher/    minimal WebKitGTK launcher for agent-owned windows
@@ -51,6 +52,7 @@ internal/
   compositor/          compositor-bridge state, protocol translation, and control handling
   peercred/            SO_PEERCRED helpers
   webview/             launcher orchestration and embedded WebKitGTK helper
+  webbus/              signed-token WebSocket gateway and topic policy
   schema/              shared socket paths, service contracts, and 3PO/R2 protocol types
 config/
   admin-agent-system-prompt.md   the out-of-band prompt — edited only outside the running system
@@ -114,6 +116,8 @@ scripts/vm.sh gui
 Use the headless VM path for Phase 1 and guest-side dependency setup. Use the graphical guest path when the task needs a real Wayfire session or `test/phase2.sh`. The goal is still to keep host interaction unprivileged after the one-time `scripts/vm.sh build` and do the risky compositor setup/testing inside the guest.
 
 Phase 3 also introduces `cmd/webview-launcher`, which opens a WebKitGTK window as a normal Wayland client and mirrors its own lifecycle onto the event bus. Example usage: `webview-launcher --url=https://example.com` or `webview-launcher --path=./index.html`. It expects `python3` plus GTK/WebKit GI bindings in the guest runtime. Those `compositor.surface.*` messages are advisory convenience signals for shell/UI work; when the compositor bridge is present, it remains the authoritative source of surface ownership and policy decisions.
+
+`cmd/event-bus-web` is the companion gateway for browser-style clients that cannot speak the Unix socket bus directly. It authenticates each WebSocket with a signed token, stamps published events with the authenticated uid via the trusted root-owned local bus connection, and filters subscriptions by identity. The reserved bridge namespaces are `webview.broadcast.*` for shared channels and `webview.inbox.<uid>.*` for uid-scoped inboxes; human-shell tokens get the full feed.
 
 **Don't run the privileged services on your host.** They create system users, modify nftables rules, and write under `/var/log/agent-os/`. The VM-first workflow is the intended development loop.
 
