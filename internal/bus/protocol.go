@@ -50,9 +50,10 @@ const (
 
 // ClientMsg is a message sent from a client to the broker.
 type ClientMsg struct {
-	Op    Op              `json:"op"`
-	Topic string          `json:"topic"`
-	Body  json.RawMessage `json:"body,omitempty"`
+	Op        Op              `json:"op"`
+	Topic     string          `json:"topic"`
+	Body      json.RawMessage `json:"body,omitempty"`
+	SenderUID *uint32         `json:"sender_uid,omitempty"`
 }
 
 // Sender identifies the Unix-socket peer that published an event.

@@ -37,13 +37,25 @@ func newClient(conn net.Conn) *Client {
 // Publish sends an event to the bus. All clients subscribed to a
 // matching topic pattern will receive it (except the sender).
 func (c *Client) Publish(topic string, body any) error {
+	return c.publish(topic, body, nil)
+}
+
+// PublishAs requests that the broker stamp the event with senderUID rather than
+// the Unix-socket peer uid of this connection. The broker only honors this for
+// trusted root-owned proxy connections; ordinary clients are treated the same as
+// Publish().
+func (c *Client) PublishAs(senderUID uint32, topic string, body any) error {
+	return c.publish(topic, body, &senderUID)
+}
+
+func (c *Client) publish(topic string, body any, senderUID *uint32) error {
 	b, err := json.Marshal(body)
 	if err != nil {
 		return err
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.enc.Encode(ClientMsg{Op: OpPub, Topic: topic, Body: b})
+	return c.enc.Encode(ClientMsg{Op: OpPub, Topic: topic, Body: b, SenderUID: senderUID})
 }
 
 // Subscribe registers a topic pattern with the broker. The pattern

@@ -85,12 +85,26 @@ func (b *Broker) Unsubscribe(id int, pattern string) {
 // captured at connection registration. Non-blocking: slow subscribers miss
 // events rather than stalling publishers.
 func (b *Broker) Publish(senderID int, ev Event) {
+	b.publishWithSender(senderID, nil, ev)
+}
+
+// PublishAs stamps the event as if it came from senderUID rather than the
+// registered uid of senderID. This is intended for trusted root-owned proxy
+// services that authenticate a subordinate client and need to preserve that
+// client's identity on the bus.
+func (b *Broker) PublishAs(senderID int, senderUID uint32, ev Event) {
+	b.publishWithSender(senderID, &senderUID, ev)
+}
+
+func (b *Broker) publishWithSender(senderID int, senderUID *uint32, ev Event) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	stamped := ev
 	stamped.Sender = nil
-	if sender, ok := b.clients[senderID]; ok {
+	if senderUID != nil {
+		stamped.Sender = &Sender{UID: *senderUID}
+	} else if sender, ok := b.clients[senderID]; ok {
 		stamped.Sender = &Sender{UID: sender.uid}
 	}
 
