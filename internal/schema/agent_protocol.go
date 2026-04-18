@@ -30,6 +30,8 @@ const (
 	TopicAgentWorkResult    = "agent.work.result"
 	TopicAgentWorkCancelled = "agent.work.cancelled"
 	TopicAgentWorkNeeds3PO  = "agent.work.needs_3po"
+	// TopicAgentMessagePrefix is declared in agent_message.go because the topic
+	// family also has parser/build helpers and a structured envelope type there.
 
 	TopicAdminEscalationRequested = "admin.escalation.requested"
 	TopicAdminEscalationDecided   = "admin.escalation.decided"

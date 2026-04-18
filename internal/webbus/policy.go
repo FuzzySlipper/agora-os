@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/patch/agora-os/internal/schema"
 )
 
 const (
@@ -21,6 +23,9 @@ func CanSubscribe(identity Identity, pattern string) bool {
 	if isOwnInboxTarget(identity.UID, pattern) {
 		return true
 	}
+	if isOwnAgentMessageSubscription(identity.UID, pattern) {
+		return true
+	}
 	if strings.HasPrefix(pattern, "compositor.surface.") {
 		return true
 	}
@@ -35,6 +40,9 @@ func CanPublish(identity Identity, topic string) bool {
 		return true
 	}
 	if isOwnInboxTarget(identity.UID, topic) {
+		return true
+	}
+	if isOwnAgentMessageTopic(identity.UID, topic) {
 		return true
 	}
 	return false
@@ -61,6 +69,23 @@ func inboxUID(subject string) (uint32, bool) {
 		return 0, false
 	}
 	return uint32(parsed), true
+}
+
+func isOwnAgentMessageSubscription(uid uint32, pattern string) bool {
+	parsed, ok := schema.ParseAgentMessagePattern(pattern)
+	if !ok {
+		return false
+	}
+	want := strconv.FormatUint(uint64(uid), 10)
+	return parsed.To == want
+}
+
+func isOwnAgentMessageTopic(uid uint32, topic string) bool {
+	parsed, ok := schema.ParseAgentMessageTopic(topic)
+	if !ok {
+		return false
+	}
+	return parsed.FromUID == uid
 }
 
 func DescribeIdentity(identity Identity) string {

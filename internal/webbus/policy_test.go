@@ -18,6 +18,12 @@ func TestCanSubscribe(t *testing.T) {
 	if CanSubscribe(agent, "webview.inbox.60002.chat") {
 		t.Fatal("agent should not be able to subscribe to another inbox")
 	}
+	if !CanSubscribe(agent, "agent.message.*.60001.chat") {
+		t.Fatal("agent should be able to subscribe to agent messages addressed to itself")
+	}
+	if CanSubscribe(agent, "agent.message.*.60002.chat") {
+		t.Fatal("agent should not be able to subscribe to agent messages addressed to another uid")
+	}
 	if !CanSubscribe(agent, "compositor.surface.*") {
 		t.Fatal("agent should be able to subscribe to compositor surface events")
 	}
@@ -44,6 +50,12 @@ func TestCanPublish(t *testing.T) {
 	}
 	if CanPublish(agent, "webview.inbox.00060001.chat") {
 		t.Fatal("agent should not be able to publish to a non-canonical inbox topic")
+	}
+	if !CanPublish(agent, "agent.message.60001.60002.chat") {
+		t.Fatal("agent should be able to publish messages from its own uid")
+	}
+	if CanPublish(agent, "agent.message.60002.60001.chat") {
+		t.Fatal("agent should not be able to publish messages claiming another uid")
 	}
 	if CanPublish(agent, "agent.work.result") {
 		t.Fatal("agent should not be able to publish arbitrary bus topics")

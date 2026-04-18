@@ -40,16 +40,22 @@ func ServeConn(conn net.Conn, broker *Broker) error {
 			}
 			switch msg.Op {
 			case OpPub:
-				if uid == 0 && msg.SenderUID != nil {
-					sender := Sender{UID: *msg.SenderUID}
-					if msg.SenderKind != nil {
-						sender.Kind = *msg.SenderKind
-					}
-					broker.PublishAs(id, sender, Event{Topic: msg.Topic, Body: msg.Body})
-				} else {
-					broker.Publish(id, Event{Topic: msg.Topic, Body: msg.Body})
+				sender, delegated, err := effectivePublishSender(uid, msg)
+				if err != nil {
+					return
 				}
+				if err := validateAgentMessagePublish(sender.UID, msg.Topic, msg.Body); err != nil {
+					return
+				}
+				if delegated {
+					broker.PublishAs(id, sender, Event{Topic: msg.Topic, Body: msg.Body})
+					continue
+				}
+				broker.Publish(id, Event{Topic: msg.Topic, Body: msg.Body})
 			case OpSub:
+				if err := validateAgentMessageSubscription(uid, msg.Topic); err != nil {
+					return
+				}
 				broker.Subscribe(id, msg.Topic)
 			case OpUnsub:
 				broker.Unsubscribe(id, msg.Topic)
@@ -64,4 +70,19 @@ func ServeConn(conn net.Conn, broker *Broker) error {
 		}
 	}
 	return nil
+}
+
+func effectivePublishSender(peerUID uint32, msg ClientMsg) (Sender, bool, error) {
+	if peerUID != 0 || msg.SenderUID == nil {
+		return Sender{UID: peerUID, Kind: SenderKindPeer}, false, nil
+	}
+
+	sender := Sender{UID: *msg.SenderUID, Kind: SenderKindDelegated}
+	if msg.SenderKind != nil {
+		if *msg.SenderKind != SenderKindDelegated {
+			return Sender{}, false, fmt.Errorf("invalid sender kind override %q", *msg.SenderKind)
+		}
+		sender.Kind = *msg.SenderKind
+	}
+	return sender, true, nil
 }

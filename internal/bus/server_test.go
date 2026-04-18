@@ -2,11 +2,15 @@ package bus
 
 import (
 	"encoding/json"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
+
+	"github.com/patch/agora-os/internal/schema"
 )
 
 func TestServeConnStampsPeerUID(t *testing.T) {
@@ -230,4 +234,230 @@ func TestServeConnAllowsSenderUIDOverrideForRoot(t *testing.T) {
 
 	ln.Close()
 	<-acceptDone
+}
+
+func TestServeConnPublishesAgentMessageForValidatedSender(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("requires non-root so the publisher uid behaves like an agent uid")
+	}
+
+	sock := filepath.Join(t.TempDir(), "bus.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	broker := NewBroker()
+	acceptDone := make(chan struct{})
+	go func() {
+		defer close(acceptDone)
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				_ = ServeConn(c, broker)
+			}(conn)
+		}
+	}()
+
+	subscriber, err := Dial(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer subscriber.Close()
+
+	publisher, err := Dial(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer publisher.Close()
+
+	uid := uint32(os.Getuid())
+	if err := subscriber.Subscribe(schema.AgentMessageTopic(uid, uid, "chat")); err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	body := schema.AgentMessageEnvelope{
+		FromUID: uid,
+		ToUID:   uid,
+		Kind:    "chat",
+		Body:    json.RawMessage(`{"text":"hello"}`),
+	}
+	if err := publisher.Publish(schema.AgentMessageTopic(uid, uid, "chat"), body); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	ev, err := subscriber.Receive()
+	if err != nil {
+		t.Fatalf("Receive: %v", err)
+	}
+	if ev.Sender == nil {
+		t.Fatal("got nil sender metadata, want broker-stamped sender")
+	}
+	if ev.Sender.UID != uid {
+		t.Fatalf("got sender uid %d, want %d", ev.Sender.UID, uid)
+	}
+	if ev.Topic != schema.AgentMessageTopic(uid, uid, "chat") {
+		t.Fatalf("got topic %q", ev.Topic)
+	}
+
+	ln.Close()
+	<-acceptDone
+}
+
+func TestServeConnRejectsForgedAgentMessagePublish(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("requires non-root so the forged sender differs from the peer uid")
+	}
+
+	sock := filepath.Join(t.TempDir(), "bus.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	broker := NewBroker()
+	acceptDone := make(chan struct{})
+	go func() {
+		defer close(acceptDone)
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				_ = ServeConn(c, broker)
+			}(conn)
+		}
+	}()
+
+	subscriber, err := Dial(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer subscriber.Close()
+
+	uid := uint32(os.Getuid())
+	if err := subscriber.Subscribe("agent.message.*." + strconv.FormatUint(uint64(uid), 10) + ".*"); err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	rawConn, err := net.Dial("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rawConn.Close()
+
+	enc := json.NewEncoder(rawConn)
+	forgedTopic := schema.AgentMessageTopic(uid+1, uid, "chat")
+	forgedBody := schema.AgentMessageEnvelope{
+		FromUID: uid + 1,
+		ToUID:   uid,
+		Kind:    "chat",
+	}
+	if err := enc.Encode(ClientMsg{Op: OpPub, Topic: forgedTopic, Body: mustJSONRaw(t, forgedBody)}); err != nil {
+		t.Fatalf("Encode forged publish: %v", err)
+	}
+
+	rawConn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	var msg ClientMsg
+	err = json.NewDecoder(rawConn).Decode(&msg)
+	if err == nil {
+		t.Fatal("expected forged publish connection to close")
+	}
+	var netErr net.Error
+	if !errors.Is(err, net.ErrClosed) && !errors.As(err, &netErr) && err.Error() != "EOF" {
+		t.Fatalf("got error %v, want EOF/closed connection", err)
+	}
+
+	rawConn.SetReadDeadline(time.Time{})
+	select {
+	case ev := <-receiveEvent(t, subscriber):
+		t.Fatalf("unexpected event published despite forged sender: %+v", ev)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	ln.Close()
+	<-acceptDone
+}
+
+func TestServeConnRejectsCrossRecipientAgentMessageSubscription(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("requires non-root so the subscriber uid behaves like an agent uid")
+	}
+
+	sock := filepath.Join(t.TempDir(), "bus.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	broker := NewBroker()
+	acceptDone := make(chan struct{})
+	go func() {
+		defer close(acceptDone)
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				_ = ServeConn(c, broker)
+			}(conn)
+		}
+	}()
+
+	rawConn, err := net.Dial("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rawConn.Close()
+
+	enc := json.NewEncoder(rawConn)
+	uid := uint32(os.Getuid())
+	if err := enc.Encode(ClientMsg{Op: OpSub, Topic: "agent.message.*." + strconv.FormatUint(uint64(uid+1), 10) + ".*"}); err != nil {
+		t.Fatalf("Encode subscribe: %v", err)
+	}
+
+	rawConn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	var msg ClientMsg
+	err = json.NewDecoder(rawConn).Decode(&msg)
+	if err == nil {
+		t.Fatal("expected invalid subscription connection to close")
+	}
+	var netErr net.Error
+	if !errors.Is(err, net.ErrClosed) && !errors.As(err, &netErr) && err.Error() != "EOF" {
+		t.Fatalf("got error %v, want EOF/closed connection", err)
+	}
+
+	ln.Close()
+	<-acceptDone
+}
+
+func receiveEvent(t *testing.T, client *Client) <-chan Event {
+	t.Helper()
+	ch := make(chan Event, 1)
+	go func() {
+		ev, err := client.Receive()
+		if err == nil {
+			ch <- ev
+		}
+	}()
+	return ch
+}
+
+func mustJSONRaw(t *testing.T, value any) json.RawMessage {
+	t.Helper()
+	b, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }

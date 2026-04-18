@@ -14,6 +14,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/patch/agora-os/internal/bus"
+	"github.com/patch/agora-os/internal/schema"
 )
 
 func TestGatewayPublishesAuthenticatedUID(t *testing.T) {
@@ -232,6 +233,137 @@ func TestGatewayRejectsNonCanonicalInboxPublish(t *testing.T) {
 	}
 	if closeErr.Code != websocket.ClosePolicyViolation {
 		t.Fatalf("got close code %d, want %d", closeErr.Code, websocket.ClosePolicyViolation)
+	}
+}
+
+func TestGatewayPublishesAgentMessageWithAuthenticatedUID(t *testing.T) {
+	t.Parallel()
+
+	if os.Getuid() != 0 {
+		t.Skip("requires root because the gateway publishes through a trusted root-owned bus proxy")
+	}
+
+	sock := startTestBus(t)
+	secret := []byte("01234567890123456789012345678901")
+	now := time.Now().UTC().Truncate(time.Second)
+	token, err := MintToken(secret, Claims{Role: RoleAgent, UID: 60001, Exp: now.Add(time.Hour).Unix()})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	gateway := NewGateway(sock, secret)
+	gateway.Now = func() time.Time { return now }
+	server := httptest.NewServer(gateway)
+	defer server.Close()
+
+	subscriber, err := bus.Dial(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer subscriber.Close()
+	if err := subscriber.Subscribe("agent.message.*.60002.chat"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	conn := dialGatewayWithHeader(t, server.URL, token, "")
+	defer conn.Close()
+
+	body, err := json.Marshal(schema.AgentMessageEnvelope{
+		FromUID: 60001,
+		ToUID:   60002,
+		Kind:    "chat",
+		Body:    json.RawMessage(`{"text":"hello"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg := bus.ClientMsg{Op: bus.OpPub, Topic: schema.AgentMessageTopic(60001, 60002, "chat"), Body: body}
+	if err := conn.WriteJSON(msg); err != nil {
+		t.Fatal(err)
+	}
+
+	ev, err := subscriber.Receive()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ev.Sender == nil {
+		t.Fatal("got nil sender metadata, want delegated sender")
+	}
+	if ev.Sender.UID != 60001 {
+		t.Fatalf("got sender uid %d, want 60001", ev.Sender.UID)
+	}
+	if ev.Sender.Kind != bus.SenderKindDelegated {
+		t.Fatalf("got sender kind %q, want %q", ev.Sender.Kind, bus.SenderKindDelegated)
+	}
+	if ev.Topic != schema.AgentMessageTopic(60001, 60002, "chat") {
+		t.Fatalf("got topic %q", ev.Topic)
+	}
+}
+
+func TestGatewayRejectsForgedAgentMessagePayload(t *testing.T) {
+	t.Parallel()
+
+	if os.Getuid() != 0 {
+		t.Skip("requires root because the gateway publishes through a trusted root-owned bus proxy")
+	}
+
+	sock := startTestBus(t)
+	secret := []byte("01234567890123456789012345678901")
+	now := time.Now().UTC().Truncate(time.Second)
+	token, err := MintToken(secret, Claims{Role: RoleAgent, UID: 60001, Exp: now.Add(time.Hour).Unix()})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	gateway := NewGateway(sock, secret)
+	gateway.Now = func() time.Time { return now }
+	server := httptest.NewServer(gateway)
+	defer server.Close()
+
+	subscriber, err := bus.Dial(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer subscriber.Close()
+	if err := subscriber.Subscribe("agent.message.*.60001.chat"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	conn := dialGatewayWithHeader(t, server.URL, token, "")
+	defer conn.Close()
+
+	body, err := json.Marshal(schema.AgentMessageEnvelope{
+		FromUID: 60002,
+		ToUID:   60001,
+		Kind:    "chat",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg := bus.ClientMsg{Op: bus.OpPub, Topic: schema.AgentMessageTopic(60001, 60001, "chat"), Body: body}
+	if err := conn.WriteJSON(msg); err != nil {
+		t.Fatal(err)
+	}
+
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, _, err = conn.ReadMessage()
+	if err == nil {
+		t.Fatal("expected forged agent message publish to close the websocket")
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, recvErr := subscriber.Receive()
+		errCh <- recvErr
+	}()
+	select {
+	case <-time.After(200 * time.Millisecond):
+	case recvErr := <-errCh:
+		if recvErr == nil {
+			t.Fatal("unexpected agent message delivered despite forged payload")
+		}
 	}
 }
 
