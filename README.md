@@ -20,16 +20,22 @@ The longer literature review is in [`research/research.md`](research/research.md
 
 ## Status
 
-Phase 1 is now real enough to exercise end-to-end in the disposable VM:
-- spawn an agent with per-uid isolation and resource limits
-- prove nftables blocks its network access
-- prove audit events are attributed to its uid
-- submit a privilege escalation request and observe the append-only admin log
+This repo is past the "just sketches" stage, but it is still infrastructure-first rather than a usable desktop.
 
-Phase 2 planning is also more concrete now:
-- the compositor spike concluded that Pinnacle's current gRPC API does not expose the enforcement primitives this project needs
-- the first compositor-facing slice is now in place as a Wayfire plugin plus a Go bridge daemon speaking a typed Unix-socket protocol
-- a minimal root-only `compositorctl` flow now records explicit viewport grants and drives compositor input context for Phase 2 testing before an agent may interact with a human-owned surface
+Phase 1 is implemented and VM-validated:
+- the isolation, admin-agent, audit, and event-bus services all build on `main`
+- the disposable Arch VM flow can prove agent spawn, per-uid network deny, audit attribution, and append-only admin logging end-to-end
+
+Phase 2 is now a real Wayfire-based vertical slice on `main`:
+- the compositor direction has settled on a thin Wayfire plugin plus a root-owned Go bridge, not Pinnacle
+- the repo now has the Wayfire plugin, compositor bridge, root-only `compositorctl`, explicit viewport grants with append-only logging, and `test/phase2.sh` for end-to-end validation
+- recent VM work added guest provisioning and a graphical VM mode so Phase 2 validation can run in the disposable guest instead of assuming a preconfigured host
+
+Phase 3 has early shell-facing pieces, but not the full shell yet:
+- `webview-launcher` can start minimal WebKitGTK Wayland clients
+- `event-bus-web` exposes the local event bus to token-scoped WebSocket clients for future shell/webview work
+
+The architecture is still evolving around those foundations. There is not yet an integrated shell UI, a running supervisor-mediated desktop loop, or a polished human-facing environment.
 
 ## Repo layout
 
