@@ -34,7 +34,7 @@ func CanPublish(identity Identity, topic string) bool {
 	if strings.HasPrefix(topic, TopicWebviewBroadcastPrefix) {
 		return true
 	}
-	if isInboxTopic(topic) {
+	if isOwnInboxTopic(identity.UID, topic) {
 		return true
 	}
 	return false
@@ -52,7 +52,7 @@ func isOwnInboxPattern(uid uint32, pattern string) bool {
 	return parts[2] == want
 }
 
-func isInboxTopic(topic string) bool {
+func isOwnInboxTopic(uid uint32, topic string) bool {
 	parts := strings.Split(topic, ".")
 	if len(parts) < 4 {
 		return false
@@ -60,8 +60,8 @@ func isInboxTopic(topic string) bool {
 	if parts[0] != "webview" || parts[1] != "inbox" {
 		return false
 	}
-	_, err := strconv.ParseUint(parts[2], 10, 32)
-	return err == nil
+	want := strconv.FormatUint(uint64(uid), 10)
+	return parts[2] == want
 }
 
 func DescribeIdentity(identity Identity) string {

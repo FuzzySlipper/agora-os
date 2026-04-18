@@ -54,7 +54,7 @@ func TestGatewayPublishesAuthenticatedUID(t *testing.T) {
 
 	payload := map[string]any{"hello": "world"}
 	body, _ := json.Marshal(payload)
-	msg := bus.ClientMsg{Op: bus.OpPub, Topic: "webview.inbox.60002.chat", Body: body}
+	msg := bus.ClientMsg{Op: bus.OpPub, Topic: "webview.inbox.60001.chat", Body: body}
 	if err := conn.WriteJSON(msg); err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestGatewayPublishesAuthenticatedUID(t *testing.T) {
 	if ev.Sender == nil || ev.Sender.UID != 60001 {
 		t.Fatalf("got sender %+v, want uid 60001", ev.Sender)
 	}
-	if ev.Topic != "webview.inbox.60002.chat" {
+	if ev.Topic != "webview.inbox.60001.chat" {
 		t.Fatalf("got topic %q", ev.Topic)
 	}
 }
@@ -97,6 +97,42 @@ func TestGatewayRejectsUnauthorizedSubscription(t *testing.T) {
 	_, _, err = conn.ReadMessage()
 	if err == nil {
 		t.Fatal("expected unauthorized subscription to close the websocket")
+	}
+	var closeErr *websocket.CloseError
+	if !errors.As(err, &closeErr) {
+		t.Fatalf("got error %v, want websocket close error", err)
+	}
+	if closeErr.Code != websocket.ClosePolicyViolation {
+		t.Fatalf("got close code %d, want %d", closeErr.Code, websocket.ClosePolicyViolation)
+	}
+}
+
+func TestGatewayRejectsCrossAgentInboxPublish(t *testing.T) {
+	t.Parallel()
+
+	sock := startTestBus(t)
+	secret := []byte("01234567890123456789012345678901")
+	now := time.Now().UTC().Truncate(time.Second)
+	token, err := MintToken(secret, Claims{Role: RoleAgent, UID: 60001, Exp: now.Add(time.Hour).Unix()})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	gateway := NewGateway(sock, secret)
+	gateway.Now = func() time.Time { return now }
+	server := httptest.NewServer(gateway)
+	defer server.Close()
+
+	conn := dialGatewayWithHeader(t, server.URL, token, "")
+	defer conn.Close()
+
+	if err := conn.WriteJSON(bus.ClientMsg{Op: bus.OpPub, Topic: "webview.inbox.60002.chat"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, _, err = conn.ReadMessage()
+	if err == nil {
+		t.Fatal("expected unauthorized publish to close the websocket")
 	}
 	var closeErr *websocket.CloseError
 	if !errors.As(err, &closeErr) {

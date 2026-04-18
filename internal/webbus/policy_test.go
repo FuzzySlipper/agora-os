@@ -33,8 +33,14 @@ func TestCanPublish(t *testing.T) {
 	if !CanPublish(agent, "webview.broadcast.chat") {
 		t.Fatal("agent should be able to publish broadcast topics")
 	}
-	if !CanPublish(agent, "webview.inbox.60002.chat") {
-		t.Fatal("agent should be able to publish to another inbox")
+	if !CanPublish(agent, "webview.inbox.60001.chat") {
+		t.Fatal("agent should be able to publish to its own inbox")
+	}
+	if CanPublish(agent, "webview.inbox.60002.chat") {
+		t.Fatal("agent should not be able to publish to another inbox")
+	}
+	if CanPublish(agent, "webview.inbox.00060001.chat") {
+		t.Fatal("agent should not be able to publish to a non-canonical inbox topic")
 	}
 	if CanPublish(agent, "agent.work.result") {
 		t.Fatal("agent should not be able to publish arbitrary bus topics")
