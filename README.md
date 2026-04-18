@@ -31,11 +31,14 @@ Phase 2 is now a real Wayfire-based vertical slice on `main`:
 - the repo now has the Wayfire plugin, compositor bridge, root-only `compositorctl`, explicit viewport grants with append-only logging, and `test/phase2.sh` for end-to-end validation
 - recent VM work added guest provisioning and a graphical VM mode so Phase 2 validation can run in the disposable guest instead of assuming a preconfigured host
 
-Phase 3 has early shell-facing pieces, but not the full shell yet:
-- `webview-launcher` can start minimal WebKitGTK Wayland clients
-- `event-bus-web` exposes the local event bus to token-scoped WebSocket clients for future shell/webview work
+Phase 3 now has a real shell-facing vertical slice on `main`:
+- `webview-launcher` starts WebKitGTK Wayland clients as real surfaces in the guest session
+- `event-bus-web` exposes the local event bus and serves the human shell UI
+- the shell UI can see agents, compositor-tracked surfaces, pending escalations, and live audit activity
+- the structured `agent.message.*` protocol now works through both the raw bus and the web bridge
+- `test/phase3.sh` proves the full flow with two agent-owned webviews, the shell, and recent audit activity
 
-The architecture is still evolving around those foundations. There is not yet an integrated shell UI, a running supervisor-mediated desktop loop, or a polished human-facing environment.
+The architecture is still evolving around those foundations. There is still no supervisor-mediated desktop loop, polished operator UX, or final compositor architecture, but the repo now has end-to-end Phase 3 proof rather than only isolated pieces.
 
 ## Repo layout
 
@@ -75,13 +78,17 @@ research/
   compositor-decision.md  Wayfire vs Pinnacle spike outcome
 scripts/
   vm.sh                disposable Arch VM workflow
-  provision-phase2-vm.sh  guest-side Wayfire/plugin dependency installer
+  provision-phase2-vm.sh  guest-side Wayfire/plugin/webview dependency installer
 compositor/
   wayfire-plugin/      thin C++ plugin for credential extraction and local input deny
+shell/
+  dist/                built shell assets served by event-bus-web
+  src/                 editable shell UI source
 test/
   phase1.sh            end-to-end Phase 1 VM proof
   phase1-peercred.sh   focused SO_PEERCRED and authorization proof
   phase2.sh            end-to-end Phase 2 Wayfire proof
+  phase3.sh            end-to-end Phase 3 shell/webview proof
 ```
 
 ## Build and test
@@ -119,9 +126,23 @@ scripts/vm.sh restore phase2-deps
 scripts/vm.sh gui
 ```
 
-Use the headless VM path for Phase 1 and guest-side dependency setup. Use the graphical guest path when the task needs a real Wayfire session or `test/phase2.sh`. The goal is still to keep host interaction unprivileged after the one-time `scripts/vm.sh build` and do the risky compositor setup/testing inside the guest.
+Use the headless VM path for Phase 1 and guest-side dependency setup. Use the graphical guest path when the task needs a real Wayfire session or `test/phase2.sh` / `test/phase3.sh`. The goal is still to keep host interaction unprivileged after the one-time `scripts/vm.sh build` and do the risky compositor setup/testing inside the guest.
 
-Phase 3 also introduces `cmd/webview-launcher`, which opens a WebKitGTK window as a normal Wayland client and mirrors its own lifecycle onto the event bus. Example usage: `webview-launcher --url=https://example.com` or `webview-launcher --path=./index.html`. It expects `python3` plus GTK/WebKit GI bindings in the guest runtime. Those `compositor.surface.*` messages are advisory convenience signals for shell/UI work; when the compositor bridge is present, it remains the authoritative source of surface ownership and policy decisions.
+Phase 3 validation uses the same graphical guest. After launching the root-owned Wayfire session, run the automated shell/webview proof:
+
+```sh
+scripts/vm.sh ssh -- 'cd /repo && sudo env XDG_RUNTIME_DIR=/run/user/0 WAYLAND_DISPLAY=$(basename $(ls /run/user/0/wayland-* | head -n1)) test/phase3.sh'
+```
+
+If you want the same proof to stay running for manual clicking and inspection after the probe passes, open an interactive guest shell or console and run:
+
+```sh
+sudo --preserve-env=XDG_RUNTIME_DIR,WAYLAND_DISPLAY env AGORA_PHASE3_HOLD=1 test/phase3.sh
+```
+
+That launches the human shell webview plus two agent-owned WebKitGTK windows, proves agent-to-agent chat over `event-bus-web`, then leaves the stack up until you press Enter or interrupt it. The script prints the shell URL and log paths so you can keep exploring manually without making manual testing a prerequisite for closing the task.
+
+`cmd/webview-launcher` is the Phase 3 client-side piece that opens a WebKitGTK window as a normal Wayland client and mirrors its own lifecycle onto the event bus. Example usage: `webview-launcher --url=https://example.com` or `webview-launcher --path=./index.html`. It expects `python3` plus GTK/WebKit GI bindings in the guest runtime. Those `compositor.surface.*` messages are advisory convenience signals for shell/UI work; when the compositor bridge is present, it remains the authoritative source of surface ownership and policy decisions.
 
 `cmd/event-bus-web` is the companion gateway for browser-style clients that cannot speak the Unix socket bus directly. It authenticates each WebSocket with a signed token, stamps published events with the authenticated uid via the trusted root-owned local bus connection, and filters subscriptions by identity. Programmatic clients should use `Authorization: Bearer <token>`; browser WebSocket clients should use `Sec-WebSocket-Protocol: agora.token.<token>`. Query-parameter tokens are intentionally unsupported. Origins default to strict same-origin, or can be overridden with the comma-separated `AGORA_WEBBUS_ALLOWED_ORIGINS` allow-list. The reserved bridge namespaces are `webview.broadcast.*` for shared channels and `webview.inbox.<uid>.*` for uid-scoped inboxes; human-shell tokens get the full feed.
 

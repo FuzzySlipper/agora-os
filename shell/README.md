@@ -29,6 +29,11 @@ webview-launcher --url=http://127.0.0.1:7780/shell/#token=<human-token>
 The token is read from the URL fragment, stored in local storage, and never
 sent to the server as a query parameter.
 
+For the most realistic current manual loop, run `test/phase3.sh` inside the
+graphical guest Wayfire session. If you set `AGORA_PHASE3_HOLD=1`, the script
+keeps the shell and two agent-owned webviews running after the automated probe
+passes so you can inspect the live UI before cleanup.
+
 ## Frontend build
 
 The checked-in assets served by Go live under `shell/dist/`. The editable

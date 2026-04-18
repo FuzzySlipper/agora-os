@@ -8,6 +8,9 @@ Phase 2 testing is **Wayfire-session-first**. The authoritative proof now needs
 a live compositor session with the Agora Wayfire plugin loaded, because the
 important behavior is in-process input mediation rather than just Go-side state.
 
+Phase 3 testing uses the same graphical guest setup, but now the acceptance
+target is the full shell/webview loop rather than only the grant path.
+
 ## Use the VM for authoritative Phase 1 checks
 
 - Validate `SO_PEERCRED` behavior in the disposable VM.
@@ -20,7 +23,7 @@ The local sandbox may block socket creation or other privileged operations, so
 `go test ./...` on the host can produce false negatives for Phase 1 system
 behavior.
 
-## Use the graphical VM guest for authoritative Phase 2 checks
+## Use the graphical VM guest for authoritative Phase 2 and Phase 3 checks
 
 - Restore the `phase2-deps` snapshot and boot the VM with `scripts/vm.sh gui`.
 - Run `test/phase2.sh` inside a root-owned Wayfire session with the
@@ -34,6 +37,8 @@ behavior.
 - Treat the guest Wayfire session as disposable: `test/phase2.sh`
   temporarily relaxes the compositor socket permissions so a spawned agent uid
   can connect to the session.
+- Install the GTK/WebKit runtime used by `cmd/webview-launcher`; the current
+  `scripts/vm.sh phase2-deps` guest provisioning step now includes it.
 
 ## Integration tests
 
@@ -62,6 +67,16 @@ behavior.
   records a grant via `compositorctl` and verifies the denial stops. Requires a
   running Wayfire session with the plugin loaded, root, `python3`, `wtype`,
   and one supported native Wayland terminal client.
+
+- **`test/phase3.sh`**: end-to-end Phase 3 shell/webview proof. Starts the
+  event bus, audit service, isolation service, compositor bridge, and
+  `event-bus-web`; launches the human shell webview plus two agent-owned
+  WebKitGTK windows; verifies an `agent.message.<from>.<to>.chat` event crosses
+  the web bridge, the receiver acknowledges on `webview.broadcast.phase3.ack`,
+  the shell state API shows both agents and their surfaces, and the shell audit
+  websocket sees recent activity from both agent uids. Requires a running
+  Wayfire session with the plugin loaded, root, `python3`, `curl`, and the
+  GTK/WebKit runtime used by `cmd/webview-launcher`.
 
 ## Typical loop
 
@@ -96,3 +111,38 @@ From another host terminal, run the Phase 2 proof against that guest session:
 ```sh
 scripts/vm.sh ssh -- 'cd /repo && sudo env XDG_RUNTIME_DIR=/run/user/0 WAYLAND_DISPLAY=$(basename $(ls /run/user/0/wayland-* | head -n1)) test/phase2.sh'
 ```
+
+### Phase 3
+
+Use the same guest session shape, but run the Phase 3 proof:
+
+```sh
+scripts/vm.sh restore phase2-deps
+scripts/vm.sh gui
+```
+
+Then, in the guest console, launch the compositor session:
+
+```sh
+sudo systemctl start seatd
+sudo install -d -m 0700 /run/user/0
+# Keep /run/user/0 root-owned: Phase 3 still models the human session as uid 0.
+sudo dbus-run-session env XDG_RUNTIME_DIR=/run/user/0 wayfire
+```
+
+From another host terminal, run the Phase 3 proof against that guest session:
+
+```sh
+scripts/vm.sh ssh -- 'cd /repo && sudo env XDG_RUNTIME_DIR=/run/user/0 WAYLAND_DISPLAY=$(basename $(ls /run/user/0/wayland-* | head -n1)) test/phase3.sh'
+```
+
+For optional manual inspection after the probe passes, run the script from an
+interactive guest shell or console instead:
+
+```sh
+sudo --preserve-env=XDG_RUNTIME_DIR,WAYLAND_DISPLAY env AGORA_PHASE3_HOLD=1 test/phase3.sh
+```
+
+That leaves the shell UI and both agent webviews running until you press Enter
+or interrupt the script, which is handy for manual clicking and shell checks
+without making that manual pass a merge blocker.

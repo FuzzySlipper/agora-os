@@ -3,7 +3,7 @@
 # provision-phase2-vm.sh
 # ----------------------
 # Install the guest-side runtime and build dependencies needed for
-# Phase 2 compositor development inside the Agora OS dev VM.
+# Phase 2 and Phase 3 guest validation inside the Agora OS dev VM.
 #
 # Run inside the guest as root, or from the host via:
 #   scripts/vm.sh start
@@ -24,6 +24,8 @@ REQUIRED_PACKAGES=(
     pkgconf
     wtype
     foot
+    python-gobject
+    webkit2gtk-4.1
     # Keep Xwayland available for mixed-client debugging and future bridge checks.
     xorg-xwayland
     seatd
@@ -41,14 +43,14 @@ require_pacman() {
 }
 
 install_packages() {
-    info "Installing Phase 2 guest packages"
+    info "Installing Phase 2/3 guest packages"
     pacman -S --needed --noconfirm "${REQUIRED_PACKAGES[@]}"
 }
 
 print_next_steps() {
     cat <<'STEPS'
 
-:: Phase 2 guest packages installed.
+:: Phase 2/3 guest packages installed.
 :: Suggested next steps:
 ::   1. Build the Go services inside the guest:
 ::        cd /repo && go build ./cmd/...
@@ -61,9 +63,10 @@ print_next_steps() {
 ::        scripts/vm.sh snap phase2-deps
 ::
 :: Notes:
-::   - This installs the current known runtime needs for test/phase2.sh:
-::     Wayfire, wtype, one supported terminal client (foot), and the plugin
-::     build dependencies.
+::   - This installs the current known runtime needs for test/phase2.sh and
+::     test/phase3.sh: Wayfire, wtype, one supported terminal client (foot),
+::     the plugin build dependencies, and the GTK/WebKit runtime used by
+::     cmd/webview-launcher.
 ::   - After provisioning, use scripts/vm.sh gui on the host to boot the
 ::     guest with a local graphics window for live Wayfire validation.
 STEPS

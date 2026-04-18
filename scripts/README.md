@@ -26,7 +26,7 @@ scripts/vm.sh start             # boot headless, SSH on port 2222
 scripts/vm.sh gui               # boot with a local graphics window
 scripts/vm.sh ssh               # open a shell inside the VM
 scripts/vm.sh ssh 'cd /repo && go build ./cmd/...'  # one-shot command
-scripts/vm.sh phase2-deps      # install Wayfire/plugin/test deps inside the guest
+scripts/vm.sh phase2-deps      # install Wayfire/plugin/webview test deps inside the guest
 scripts/vm.sh snap clean-base   # save a snapshot (VM must be stopped)
 scripts/vm.sh restore clean-base
 scripts/vm.sh stop
@@ -39,7 +39,7 @@ scripts/vm.sh destroy           # delete everything
 |---|---|---|
 | `clean-base` | After first `build` + `start` + verify SSH works | Pristine Arch install |
 | `phase1-deps` | After first `go build ./cmd/...` inside the VM | Fast Phase 1 test iteration |
-| `phase2-deps` | After `scripts/vm.sh phase2-deps` + plugin build sanity-check | Reusable Wayfire/plugin dev environment |
+| `phase2-deps` | After `scripts/vm.sh phase2-deps` + plugin build sanity-check | Reusable Wayfire/plugin/webview dev environment |
 
 Phase 1 restores from `phase1-deps`:
 
@@ -50,7 +50,7 @@ scripts/vm.sh ssh -- 'sudo /repo/test/phase1.sh'
 scripts/vm.sh stop
 ```
 
-Phase 2 guest setup uses the same pattern:
+Phase 2 and Phase 3 guest setup use the same pattern:
 
 ```sh
 scripts/vm.sh start
@@ -69,10 +69,11 @@ scripts/vm.sh gui
 
 That opens a local QEMU window with a virtual GPU while keeping the host
 workflow unprivileged. Log into the guest console, start `seatd`, and launch a
-root-owned Wayfire session there when you need to run `test/phase2.sh`.
-Use `start` for Phase 1 and headless guest setup; use `gui` when the task needs
-a real guest compositor session. If GTK is unavailable on the host, override
-`AGORA_VM_GUI_DISPLAY` to another supported backend such as `sdl`.
+root-owned Wayfire session there when you need to run `test/phase2.sh` or
+`test/phase3.sh`. Use `start` for Phase 1 and headless guest setup; use `gui`
+when the task needs a real guest compositor session. If GTK is unavailable on
+the host, override `AGORA_VM_GUI_DISPLAY` to another supported backend such as
+`sdl`.
 
 ### Where state lives
 
