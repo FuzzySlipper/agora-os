@@ -18,7 +18,7 @@ func CanSubscribe(identity Identity, pattern string) bool {
 	if strings.HasPrefix(pattern, TopicWebviewBroadcastPrefix) {
 		return true
 	}
-	if isOwnInboxPattern(identity.UID, pattern) {
+	if isOwnInboxTarget(identity.UID, pattern) {
 		return true
 	}
 	if strings.HasPrefix(pattern, "compositor.surface.") {
@@ -34,34 +34,33 @@ func CanPublish(identity Identity, topic string) bool {
 	if strings.HasPrefix(topic, TopicWebviewBroadcastPrefix) {
 		return true
 	}
-	if isOwnInboxTopic(identity.UID, topic) {
+	if isOwnInboxTarget(identity.UID, topic) {
 		return true
 	}
 	return false
 }
 
-func isOwnInboxPattern(uid uint32, pattern string) bool {
-	parts := strings.Split(pattern, ".")
-	if len(parts) < 4 {
-		return false
-	}
-	if parts[0] != "webview" || parts[1] != "inbox" {
-		return false
-	}
-	want := strconv.FormatUint(uint64(uid), 10)
-	return parts[2] == want
+func isOwnInboxTarget(uid uint32, subject string) bool {
+	targetUID, ok := inboxUID(subject)
+	return ok && targetUID == uid
 }
 
-func isOwnInboxTopic(uid uint32, topic string) bool {
-	parts := strings.Split(topic, ".")
+func inboxUID(subject string) (uint32, bool) {
+	parts := strings.Split(subject, ".")
 	if len(parts) < 4 {
-		return false
+		return 0, false
 	}
 	if parts[0] != "webview" || parts[1] != "inbox" {
-		return false
+		return 0, false
 	}
-	want := strconv.FormatUint(uint64(uid), 10)
-	return parts[2] == want
+	parsed, err := strconv.ParseUint(parts[2], 10, 32)
+	if err != nil {
+		return 0, false
+	}
+	if parts[2] != strconv.FormatUint(parsed, 10) {
+		return 0, false
+	}
+	return uint32(parsed), true
 }
 
 func DescribeIdentity(identity Identity) string {

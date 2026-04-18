@@ -12,6 +12,9 @@ func TestCanSubscribe(t *testing.T) {
 	if !CanSubscribe(agent, "webview.inbox.60001.chat") {
 		t.Fatal("agent should be able to subscribe to its own inbox")
 	}
+	if CanSubscribe(agent, "webview.inbox.00060001.chat") {
+		t.Fatal("agent should not be able to subscribe to a non-canonical inbox topic")
+	}
 	if CanSubscribe(agent, "webview.inbox.60002.chat") {
 		t.Fatal("agent should not be able to subscribe to another inbox")
 	}

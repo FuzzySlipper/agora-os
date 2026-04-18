@@ -143,6 +143,42 @@ func TestGatewayRejectsCrossAgentInboxPublish(t *testing.T) {
 	}
 }
 
+func TestGatewayRejectsNonCanonicalInboxPublish(t *testing.T) {
+	t.Parallel()
+
+	sock := startTestBus(t)
+	secret := []byte("01234567890123456789012345678901")
+	now := time.Now().UTC().Truncate(time.Second)
+	token, err := MintToken(secret, Claims{Role: RoleAgent, UID: 60001, Exp: now.Add(time.Hour).Unix()})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	gateway := NewGateway(sock, secret)
+	gateway.Now = func() time.Time { return now }
+	server := httptest.NewServer(gateway)
+	defer server.Close()
+
+	conn := dialGatewayWithHeader(t, server.URL, token, "")
+	defer conn.Close()
+
+	if err := conn.WriteJSON(bus.ClientMsg{Op: bus.OpPub, Topic: "webview.inbox.00060001.chat"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, _, err = conn.ReadMessage()
+	if err == nil {
+		t.Fatal("expected non-canonical inbox publish to close the websocket")
+	}
+	var closeErr *websocket.CloseError
+	if !errors.As(err, &closeErr) {
+		t.Fatalf("got error %v, want websocket close error", err)
+	}
+	if closeErr.Code != websocket.ClosePolicyViolation {
+		t.Fatalf("got close code %d, want %d", closeErr.Code, websocket.ClosePolicyViolation)
+	}
+}
+
 func TestGatewayAllowsConfiguredOrigin(t *testing.T) {
 	t.Parallel()
 
