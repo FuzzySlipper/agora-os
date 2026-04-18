@@ -92,20 +92,24 @@ func (b *Broker) Publish(senderID int, ev Event) {
 // registered uid of senderID. This is intended for trusted root-owned proxy
 // services that authenticate a subordinate client and need to preserve that
 // client's identity on the bus.
-func (b *Broker) PublishAs(senderID int, senderUID uint32, ev Event) {
-	b.publishWithSender(senderID, &senderUID, ev)
+func (b *Broker) PublishAs(senderID int, sender Sender, ev Event) {
+	if sender.Kind == "" {
+		sender.Kind = SenderKindDelegated
+	}
+	b.publishWithSender(senderID, &sender, ev)
 }
 
-func (b *Broker) publishWithSender(senderID int, senderUID *uint32, ev Event) {
+func (b *Broker) publishWithSender(senderID int, sender *Sender, ev Event) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	stamped := ev
 	stamped.Sender = nil
-	if senderUID != nil {
-		stamped.Sender = &Sender{UID: *senderUID}
-	} else if sender, ok := b.clients[senderID]; ok {
-		stamped.Sender = &Sender{UID: sender.uid}
+	if sender != nil {
+		override := *sender
+		stamped.Sender = &override
+	} else if peer, ok := b.clients[senderID]; ok {
+		stamped.Sender = &Sender{UID: peer.uid, Kind: SenderKindPeer}
 	}
 
 	for id, sub := range b.clients {

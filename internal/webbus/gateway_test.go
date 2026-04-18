@@ -66,8 +66,64 @@ func TestGatewayPublishesAuthenticatedUID(t *testing.T) {
 	if ev.Sender == nil || ev.Sender.UID != 60001 {
 		t.Fatalf("got sender %+v, want uid 60001", ev.Sender)
 	}
+	if ev.Sender.Kind != bus.SenderKindDelegated {
+		t.Fatalf("got sender kind %q, want %q", ev.Sender.Kind, bus.SenderKindDelegated)
+	}
 	if ev.Topic != "webview.inbox.60001.chat" {
 		t.Fatalf("got topic %q", ev.Topic)
+	}
+}
+
+func TestGatewayPublishesHumanSenderAsDelegatedRoot(t *testing.T) {
+	t.Parallel()
+
+	if os.Getuid() != 0 {
+		t.Skip("requires root because the gateway publishes through a trusted root-owned bus proxy")
+	}
+
+	sock := startTestBus(t)
+	secret := []byte("01234567890123456789012345678901")
+	now := time.Now().UTC().Truncate(time.Second)
+	token, err := MintToken(secret, Claims{Role: RoleHuman, UID: 0, Exp: now.Add(time.Hour).Unix()})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	gateway := NewGateway(sock, secret)
+	gateway.Now = func() time.Time { return now }
+	server := httptest.NewServer(gateway)
+	defer server.Close()
+
+	subscriber, err := bus.Dial(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer subscriber.Close()
+	if err := subscriber.Subscribe("agent.work.*"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	conn := dialGatewayWithHeader(t, server.URL, token, "")
+	defer conn.Close()
+
+	msg := bus.ClientMsg{Op: bus.OpPub, Topic: "agent.work.result", Body: json.RawMessage(`{"kind":"human-shell"}`)}
+	if err := conn.WriteJSON(msg); err != nil {
+		t.Fatal(err)
+	}
+
+	ev, err := subscriber.Receive()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ev.Sender == nil {
+		t.Fatal("got nil sender metadata, want delegated sender")
+	}
+	if ev.Sender.UID != 0 {
+		t.Fatalf("got sender uid %d, want 0", ev.Sender.UID)
+	}
+	if ev.Sender.Kind != bus.SenderKindDelegated {
+		t.Fatalf("got sender kind %q, want %q", ev.Sender.Kind, bus.SenderKindDelegated)
 	}
 }
 

@@ -193,6 +193,39 @@ func TestBrokerPublishStampsSenderUID(t *testing.T) {
 	if ev.Sender.UID != 60001 {
 		t.Fatalf("got sender uid %d, want 60001", ev.Sender.UID)
 	}
+	if ev.Sender.Kind != SenderKindPeer {
+		t.Fatalf("got sender kind %q, want %q", ev.Sender.Kind, SenderKindPeer)
+	}
+
+	b.Unregister(publisherID)
+	b.Unregister(subscriberID)
+}
+
+func TestBrokerPublishAsStampsDelegatedSender(t *testing.T) {
+	b := NewBroker()
+
+	publisherID, _ := b.Register(0)
+	subscriberID, ch := b.Register(60002)
+	b.Subscribe(subscriberID, "agent.work.*")
+
+	b.PublishAs(publisherID, Sender{UID: 0, Kind: SenderKindDelegated}, Event{
+		Topic: "agent.work.result",
+		Body:  body("human-shell"),
+	})
+
+	ev, ok := recv(ch, 100*time.Millisecond)
+	if !ok {
+		t.Fatal("subscriber did not receive delegated event")
+	}
+	if ev.Sender == nil {
+		t.Fatal("got nil sender metadata, want delegated sender")
+	}
+	if ev.Sender.UID != 0 {
+		t.Fatalf("got sender uid %d, want 0", ev.Sender.UID)
+	}
+	if ev.Sender.Kind != SenderKindDelegated {
+		t.Fatalf("got sender kind %q, want %q", ev.Sender.Kind, SenderKindDelegated)
+	}
 
 	b.Unregister(publisherID)
 	b.Unregister(subscriberID)

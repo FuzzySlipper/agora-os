@@ -11,12 +11,15 @@
 //
 // Server → Client (matching events only):
 //
-//	{"topic":"audit.file.modify","body":{...},"sender":{"uid":60001}}
+//	{"topic":"audit.file.modify","body":{...},"sender":{"uid":60001,"kind":"peer"}}
 //
-// The sender uid is stamped by the broker from the client's Unix-socket peer
-// credentials (SO_PEERCRED). Payload fields may still contain claimed roles or
-// identities, but subscribers should treat sender metadata as authoritative and
-// payload identity fields as advisory only.
+// The broker stamps sender metadata onto events. Direct Unix-socket publishers
+// get sender.kind="peer" from kernel peer credentials (SO_PEERCRED). Trusted
+// root-owned proxy services may stamp sender.kind="delegated" when they have
+// authenticated a subordinate caller and need to preserve that caller's uid on
+// the bus. Payload fields may still contain claimed roles or identities, but
+// subscribers should treat sender metadata as authoritative and payload
+// identity fields as advisory only.
 //
 // # Topic conventions
 //
@@ -50,16 +53,26 @@ const (
 
 // ClientMsg is a message sent from a client to the broker.
 type ClientMsg struct {
-	Op        Op              `json:"op"`
-	Topic     string          `json:"topic"`
-	Body      json.RawMessage `json:"body,omitempty"`
-	SenderUID *uint32         `json:"sender_uid,omitempty"`
+	Op         Op              `json:"op"`
+	Topic      string          `json:"topic"`
+	Body       json.RawMessage `json:"body,omitempty"`
+	SenderUID  *uint32         `json:"sender_uid,omitempty"`
+	SenderKind *SenderKind     `json:"sender_kind,omitempty"`
 }
 
+type SenderKind string
+
+const (
+	SenderKindPeer      SenderKind = "peer"
+	SenderKindDelegated SenderKind = "delegated"
+)
+
 // Sender identifies the Unix-socket peer that published an event.
-// Its values are broker-stamped from kernel peer credentials.
+// Its values are broker-stamped from either kernel peer credentials or a
+// trusted root-owned proxy's delegated identity override.
 type Sender struct {
-	UID uint32 `json:"uid"`
+	UID  uint32     `json:"uid"`
+	Kind SenderKind `json:"kind"`
 }
 
 // Event is a published event delivered to matching subscribers.

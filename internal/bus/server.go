@@ -41,7 +41,11 @@ func ServeConn(conn net.Conn, broker *Broker) error {
 			switch msg.Op {
 			case OpPub:
 				if uid == 0 && msg.SenderUID != nil {
-					broker.PublishAs(id, *msg.SenderUID, Event{Topic: msg.Topic, Body: msg.Body})
+					sender := Sender{UID: *msg.SenderUID}
+					if msg.SenderKind != nil {
+						sender.Kind = *msg.SenderKind
+					}
+					broker.PublishAs(id, sender, Event{Topic: msg.Topic, Body: msg.Body})
 				} else {
 					broker.Publish(id, Event{Topic: msg.Topic, Body: msg.Body})
 				}

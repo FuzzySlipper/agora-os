@@ -165,7 +165,7 @@ func (g *Gateway) forwardInbound(ctx context.Context, conn *websocket.Conn, busC
 					return fmt.Errorf("decode publish body: %w", err)
 				}
 			}
-			if err := busClient.PublishAs(identity.UID, msg.Topic, body); err != nil {
+			if err := busClient.PublishAs(bus.Sender{UID: identity.UID, Kind: bus.SenderKindDelegated}, msg.Topic, body); err != nil {
 				_ = closeInternalError(conn, "publish failed")
 				return fmt.Errorf("publish %q: %w", msg.Topic, err)
 			}

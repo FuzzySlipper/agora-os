@@ -79,6 +79,9 @@ func TestServeConnStampsPeerUID(t *testing.T) {
 		if ev.Sender.UID != wantUID {
 			t.Fatalf("got sender uid %d, want %d", ev.Sender.UID, wantUID)
 		}
+		if ev.Sender.Kind != SenderKindPeer {
+			t.Fatalf("got sender kind %q, want %q", ev.Sender.Kind, SenderKindPeer)
+		}
 
 		var body map[string]string
 		if err := json.Unmarshal(ev.Body, &body); err != nil {
@@ -139,7 +142,7 @@ func TestServeConnIgnoresSenderUIDOverrideForNonRoot(t *testing.T) {
 	}
 	time.Sleep(50 * time.Millisecond)
 
-	if err := publisher.PublishAs(12345, "agent.work.result", map[string]any{"kind": "override-attempt"}); err != nil {
+	if err := publisher.PublishAs(Sender{UID: 12345, Kind: SenderKindDelegated}, "agent.work.result", map[string]any{"kind": "override-attempt"}); err != nil {
 		t.Fatalf("PublishAs: %v", err)
 	}
 
@@ -153,6 +156,9 @@ func TestServeConnIgnoresSenderUIDOverrideForNonRoot(t *testing.T) {
 	wantUID := uint32(os.Getuid())
 	if ev.Sender.UID != wantUID {
 		t.Fatalf("got sender uid %d, want %d", ev.Sender.UID, wantUID)
+	}
+	if ev.Sender.Kind != SenderKindPeer {
+		t.Fatalf("got sender kind %q, want %q", ev.Sender.Kind, SenderKindPeer)
 	}
 
 	ln.Close()
@@ -204,7 +210,7 @@ func TestServeConnAllowsSenderUIDOverrideForRoot(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	const delegatedUID uint32 = 60042
-	if err := publisher.PublishAs(delegatedUID, "agent.work.result", map[string]any{"kind": "delegated"}); err != nil {
+	if err := publisher.PublishAs(Sender{UID: delegatedUID, Kind: SenderKindDelegated}, "agent.work.result", map[string]any{"kind": "delegated"}); err != nil {
 		t.Fatalf("PublishAs: %v", err)
 	}
 
@@ -217,6 +223,9 @@ func TestServeConnAllowsSenderUIDOverrideForRoot(t *testing.T) {
 	}
 	if ev.Sender.UID != delegatedUID {
 		t.Fatalf("got sender uid %d, want %d", ev.Sender.UID, delegatedUID)
+	}
+	if ev.Sender.Kind != SenderKindDelegated {
+		t.Fatalf("got sender kind %q, want %q", ev.Sender.Kind, SenderKindDelegated)
 	}
 
 	ln.Close()

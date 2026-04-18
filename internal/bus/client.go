@@ -40,22 +40,38 @@ func (c *Client) Publish(topic string, body any) error {
 	return c.publish(topic, body, nil)
 }
 
-// PublishAs requests that the broker stamp the event with senderUID rather than
-// the Unix-socket peer uid of this connection. The broker only honors this for
-// trusted root-owned proxy connections; ordinary clients are treated the same as
-// Publish().
-func (c *Client) PublishAs(senderUID uint32, topic string, body any) error {
-	return c.publish(topic, body, &senderUID)
+// PublishAs requests that the broker stamp the event with sender metadata
+// rather than the Unix-socket peer identity of this connection. The broker
+// only honors this for trusted root-owned proxy connections; ordinary clients
+// are treated the same as Publish().
+func (c *Client) PublishAs(sender Sender, topic string, body any) error {
+	return c.publish(topic, body, &sender)
 }
 
-func (c *Client) publish(topic string, body any, senderUID *uint32) error {
+func (c *Client) publish(topic string, body any, sender *Sender) error {
 	b, err := json.Marshal(body)
 	if err != nil {
 		return err
 	}
+	var senderUID *uint32
+	var senderKind *SenderKind
+	if sender != nil {
+		uid := sender.UID
+		senderUID = &uid
+		if sender.Kind != "" {
+			kind := sender.Kind
+			senderKind = &kind
+		}
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.enc.Encode(ClientMsg{Op: OpPub, Topic: topic, Body: b, SenderUID: senderUID})
+	return c.enc.Encode(ClientMsg{
+		Op:         OpPub,
+		Topic:      topic,
+		Body:       b,
+		SenderUID:  senderUID,
+		SenderKind: senderKind,
+	})
 }
 
 // Subscribe registers a topic pattern with the broker. The pattern
