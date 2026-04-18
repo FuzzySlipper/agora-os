@@ -1,8 +1,122 @@
-// @ts-nocheck
 const defaultConstraints = "pointer,keyboard,read_pixels";
-const state = {
+
+type AgentStatus = "running" | "exited" | "stopped" | string;
+type ConnectionStatus = "Disconnected" | "Connecting" | "Live";
+type EscalationDecision = "approve" | "deny" | "escalate" | string;
+type HumanDecision = "approve" | "deny";
+type SurfaceEventName = "mapped" | "unmapped" | "focused" | "input_denied" | string;
+
+interface AgentInfo {
+    name: string;
+    uid: number;
+    status: AgentStatus;
+    slice: string;
+    cpu_quota?: string;
+    memory_max?: string;
+    net_access?: string;
+    created_at: string;
+}
+
+interface CompositorSurface {
+    id: string;
+    wayfire_view_id?: number;
+    app_id?: string;
+    title?: string;
+    role?: string;
+}
+
+interface CompositorClientIdentity {
+    pid: number;
+    uid: number;
+    gid: number;
+}
+
+interface TrackedSurface {
+    surface: CompositorSurface;
+    client: CompositorClientIdentity;
+    last_event: SurfaceEventName;
+    device?: string;
+    updated_at: string;
+}
+
+interface EscalationRequest {
+    agent_uid: number;
+    task_context: string;
+    requested_action: string;
+    requested_resource: string;
+    justification: string;
+}
+
+interface EscalationResponse {
+    decision: EscalationDecision;
+    reasoning?: string;
+    constraints?: string[];
+    error?: string;
+}
+
+interface AdminEscalationEvent {
+    id: string;
+    timestamp: string;
+    request: EscalationRequest;
+    response: EscalationResponse;
+}
+
+interface AuditEvent {
+    timestamp: string;
+    agent_uid: number;
+    agent_name?: string;
+    action: string;
+    resource: string;
+    outcome: string;
+}
+
+interface ShellStateSnapshot {
+    agents: AgentInfo[];
+    surfaces: TrackedSurface[];
+    pending_escalations: AdminEscalationEvent[];
+}
+
+interface LifecycleEventMessage {
+    topic: string;
+    body?: {
+        agent?: AgentInfo;
+    };
+}
+
+interface SurfaceEventMessage {
+    topic: string;
+    body?: {
+        surface?: CompositorSurface;
+        client?: CompositorClientIdentity;
+        event?: SurfaceEventName;
+        device?: string;
+    };
+}
+
+interface EscalationDecisionMessage {
+    topic: string;
+    body?: {
+        id?: string;
+    };
+}
+
+type BusEnvelope = LifecycleEventMessage | SurfaceEventMessage | EscalationDecisionMessage;
+
+interface AppState {
+    token: string;
+    shellState: ShellStateSnapshot;
+    auditEvents: AuditEvent[];
+    bus: WebSocket | null;
+    auditSocket: WebSocket | null;
+    selectedAgent: string;
+    busStatus: ConnectionStatus;
+    auditStatus: ConnectionStatus;
+    refreshHandle: number | null;
+}
+
+const state: AppState = {
     token: "",
-    shellState: { agents: [], surfaces: [], pending_escalations: [] },
+    shellState: emptyShellState(),
     auditEvents: [],
     bus: null,
     auditSocket: null,
@@ -11,9 +125,12 @@ const state = {
     auditStatus: "Disconnected",
     refreshHandle: null,
 };
-const app = document.getElementById("app");
+
+const app = requireElement("app");
+
 bootstrap();
-function bootstrap() {
+
+function bootstrap(): void {
     const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
     const tokenFromHash = hash.get("token");
     if (tokenFromHash) {
@@ -26,13 +143,15 @@ function bootstrap() {
         void connectAll();
     }
 }
-async function connectAll() {
+
+async function connectAll(): Promise<void> {
     await refreshState();
     connectBus();
     connectAudit();
     scheduleRefresh();
 }
-function scheduleRefresh() {
+
+function scheduleRefresh(): void {
     if (state.refreshHandle) {
         window.clearInterval(state.refreshHandle);
     }
@@ -40,7 +159,8 @@ function scheduleRefresh() {
         void refreshState();
     }, 15000);
 }
-async function refreshState() {
+
+async function refreshState(): Promise<void> {
     if (!state.token) {
         return;
     }
@@ -50,13 +170,14 @@ async function refreshState() {
     if (!response.ok) {
         throw new Error(`shell state failed: ${response.status}`);
     }
-    state.shellState = await response.json();
+    state.shellState = toShellState(await response.json());
     if (!state.selectedAgent && state.shellState.agents.length > 0) {
         state.selectedAgent = String(state.shellState.agents[0].uid);
     }
     render();
 }
-function connectBus() {
+
+function connectBus(): void {
     if (!state.token) {
         return;
     }
@@ -65,7 +186,7 @@ function connectBus() {
     }
     const url = new URL("/ws", window.location.href);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-    const socket = new WebSocket(url, [`agora.token.${state.token}`]);
+    const socket = new WebSocket(url.toString(), [`agora.token.${state.token}`]);
     state.bus = socket;
     state.busStatus = "Connecting";
     render();
@@ -77,19 +198,25 @@ function connectBus() {
         render();
     });
     socket.addEventListener("message", (event) => {
-        const payload = JSON.parse(event.data);
-        if (payload.topic?.startsWith("agent.lifecycle.")) {
-            applyLifecycleEvent(payload);
+        const payload = parseJSON<BusEnvelope>(messageText(event.data));
+        if (!payload || typeof payload.topic !== "string") {
+            return;
+        }
+        if (payload.topic.startsWith("agent.lifecycle.")) {
+            applyLifecycleEvent(payload as LifecycleEventMessage);
             render();
             return;
         }
-        if (payload.topic?.startsWith("compositor.surface.")) {
-            applySurfaceEvent(payload);
+        if (payload.topic.startsWith("compositor.surface.")) {
+            applySurfaceEvent(payload as SurfaceEventMessage);
             render();
             return;
         }
         if (payload.topic === "admin.escalation.decided") {
-            const decision = payload.body;
+            const decision = (payload as EscalationDecisionMessage).body;
+            if (!decision?.id) {
+                return;
+            }
             state.shellState.pending_escalations = state.shellState.pending_escalations.filter((entry) => entry.id !== decision.id);
             render();
         }
@@ -100,7 +227,8 @@ function connectBus() {
         window.setTimeout(() => connectBus(), 2000);
     });
 }
-function connectAudit() {
+
+function connectAudit(): void {
     if (!state.token) {
         return;
     }
@@ -109,7 +237,7 @@ function connectAudit() {
     }
     const url = new URL("/api/shell/audit/ws", window.location.href);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-    const socket = new WebSocket(url, [`agora.token.${state.token}`]);
+    const socket = new WebSocket(url.toString(), [`agora.token.${state.token}`]);
     state.auditSocket = socket;
     state.auditStatus = "Connecting";
     render();
@@ -118,7 +246,10 @@ function connectAudit() {
         render();
     });
     socket.addEventListener("message", (event) => {
-        const payload = JSON.parse(event.data);
+        const payload = parseJSON<AuditEvent>(messageText(event.data));
+        if (!payload) {
+            return;
+        }
         state.auditEvents.unshift(payload);
         state.auditEvents = state.auditEvents.slice(0, 80);
         render();
@@ -129,9 +260,10 @@ function connectAudit() {
         window.setTimeout(() => connectAudit(), 2500);
     });
 }
-function applyLifecycleEvent(message) {
+
+function applyLifecycleEvent(message: LifecycleEventMessage): void {
     const incoming = message.body?.agent;
-    if (!incoming?.uid) {
+    if (!incoming || incoming.uid === 0) {
         return;
     }
     const agents = [...state.shellState.agents];
@@ -139,30 +271,26 @@ function applyLifecycleEvent(message) {
     if (message.topic === "agent.lifecycle.terminated") {
         if (index >= 0) {
             agents[index] = { ...agents[index], ...incoming, status: "stopped" };
+        } else {
+            agents.push({ ...incoming, status: "stopped" });
         }
-        else {
-            agents.push(incoming);
-        }
-    }
-    else {
-        if (index >= 0) {
-            agents[index] = { ...agents[index], ...incoming };
-        }
-        else {
-            agents.push(incoming);
-        }
+    } else if (index >= 0) {
+        agents[index] = { ...agents[index], ...incoming };
+    } else {
+        agents.push(incoming);
     }
     agents.sort((left, right) => left.uid - right.uid);
     state.shellState.agents = agents;
 }
-function applySurfaceEvent(message) {
+
+function applySurfaceEvent(message: SurfaceEventMessage): void {
     const body = message.body;
-    if (!body?.surface?.id) {
+    if (!body?.surface?.id || !body.client || !body.event) {
         return;
     }
     const surfaces = [...state.shellState.surfaces];
     const index = surfaces.findIndex((entry) => entry.surface.id === body.surface.id);
-    const next = {
+    const next: TrackedSurface = {
         surface: body.surface,
         client: body.client,
         last_event: body.event,
@@ -173,28 +301,27 @@ function applySurfaceEvent(message) {
         if (index >= 0) {
             surfaces.splice(index, 1);
         }
-    }
-    else if (index >= 0) {
+    } else if (index >= 0) {
         surfaces[index] = { ...surfaces[index], ...next };
-    }
-    else {
+    } else {
         surfaces.push(next);
     }
     surfaces.sort((left, right) => right.updated_at.localeCompare(left.updated_at));
     state.shellState.surfaces = surfaces;
 }
-function setToken(nextToken) {
+
+function setToken(nextToken: string): void {
     state.token = nextToken.trim();
     if (state.token) {
         localStorage.setItem("agora.shell.token", state.token);
         void connectAll();
-    }
-    else {
+    } else {
         localStorage.removeItem("agora.shell.token");
     }
     render();
 }
-async function grantViewport(surfaceId, agentUid) {
+
+async function grantViewport(surfaceId: string, agentUid: number): Promise<void> {
     const response = await fetch("/api/shell/grants", {
         method: "POST",
         headers: {
@@ -211,7 +338,8 @@ async function grantViewport(surfaceId, agentUid) {
         throw new Error(`grant failed: ${response.status}`);
     }
 }
-async function decideEscalation(id, decision, notes, constraints) {
+
+async function decideEscalation(id: string, decision: HumanDecision, notes: string, constraints: string[]): Promise<void> {
     const response = await fetch("/api/shell/escalations/decide", {
         method: "POST",
         headers: {
@@ -231,19 +359,23 @@ async function decideEscalation(id, decision, notes, constraints) {
     state.shellState.pending_escalations = state.shellState.pending_escalations.filter((entry) => entry.id !== id);
     render();
 }
-function render() {
+
+function render(): void {
     const selectedUid = Number.parseInt(state.selectedAgent || "0", 10) || 0;
-    const agents = state.shellState.agents || [];
+    const agents = state.shellState.agents;
+    const surfaces = state.shellState.surfaces;
+    const pendingEscalations = state.shellState.pending_escalations;
     const filteredAudit = selectedUid
         ? state.auditEvents.filter((event) => event.agent_uid === selectedUid)
         : state.auditEvents;
-    const surfacesByUid = new Map();
-    for (const surface of state.shellState.surfaces || []) {
-        const uid = surface.client?.uid || 0;
-        if (!surfacesByUid.has(uid)) {
-            surfacesByUid.set(uid, []);
+    const surfacesByUid = new Map<number, TrackedSurface[]>();
+    for (const surface of surfaces) {
+        const agentSurfaces = surfacesByUid.get(surface.client.uid);
+        if (agentSurfaces) {
+            agentSurfaces.push(surface);
+            continue;
         }
-        surfacesByUid.get(uid).push(surface);
+        surfacesByUid.set(surface.client.uid, [surface]);
     }
     app.innerHTML = `
     <main class="shell">
@@ -263,11 +395,11 @@ function render() {
               </div>
               <div class="stat">
                 <span class="stat-label">Surfaces</span>
-                <span class="stat-value">${(state.shellState.surfaces || []).length}</span>
+                <span class="stat-value">${surfaces.length}</span>
               </div>
               <div class="stat">
                 <span class="stat-label">Pending Escalations</span>
-                <span class="stat-value">${(state.shellState.pending_escalations || []).length}</span>
+                <span class="stat-value">${pendingEscalations.length}</span>
               </div>
               <div class="stat">
                 <span class="stat-label">Audit Backlog</span>
@@ -318,7 +450,7 @@ function render() {
             </div>
             <div class="panel-body">
               <div class="surface-list">
-                ${(state.shellState.surfaces || []).length === 0 ? `<div class="surface-empty">No tracked compositor surfaces yet.</div>` : (state.shellState.surfaces || []).map((surface) => renderSurfaceCard(surface)).join("")}
+                ${surfaces.length === 0 ? `<div class="surface-empty">No tracked compositor surfaces yet.</div>` : surfaces.map((surface) => renderSurfaceCard(surface)).join("")}
               </div>
             </div>
           </section>
@@ -348,7 +480,7 @@ function render() {
             </div>
             <div class="panel-body">
               <div class="escalation-list">
-                ${(state.shellState.pending_escalations || []).length === 0 ? `<div class="escalation-empty">No pending escalation reviews right now.</div>` : (state.shellState.pending_escalations || []).map(renderEscalationCard).join("")}
+                ${pendingEscalations.length === 0 ? `<div class="escalation-empty">No pending escalation reviews right now.</div>` : pendingEscalations.map(renderEscalationCard).join("")}
               </div>
               <p class="footer-note">Constraints can be entered one per line. The current shell records human decisions and broadcasts them on the event bus for downstream consumers.</p>
             </div>
@@ -357,59 +489,84 @@ function render() {
       </section>
     </main>
   `;
-    document.getElementById("connect-button")?.addEventListener("click", () => {
-        const value = document.getElementById("shell-token")?.value || "";
-        setToken(value);
-    });
-    document.getElementById("clear-token-button")?.addEventListener("click", () => {
-        setToken("");
-    });
-    document.getElementById("refresh-button")?.addEventListener("click", () => {
-        void refreshState();
-    });
-    document.getElementById("agent-filter")?.addEventListener("change", (event) => {
-        state.selectedAgent = event.target.value;
-        render();
-    });
-    document.querySelectorAll("[data-grant-surface]").forEach((button) => {
-        button.addEventListener("click", async (event) => {
-            const target = event.currentTarget;
-            target.disabled = true;
+    const connectButton = document.getElementById("connect-button");
+    if (connectButton instanceof HTMLButtonElement) {
+        connectButton.addEventListener("click", () => {
+            setToken(getInputValue("shell-token"));
+        });
+    }
+
+    const clearTokenButton = document.getElementById("clear-token-button");
+    if (clearTokenButton instanceof HTMLButtonElement) {
+        clearTokenButton.addEventListener("click", () => {
+            setToken("");
+        });
+    }
+
+    const refreshButton = document.getElementById("refresh-button");
+    if (refreshButton instanceof HTMLButtonElement) {
+        refreshButton.addEventListener("click", () => {
+            void refreshState();
+        });
+    }
+
+    const agentFilter = document.getElementById("agent-filter");
+    if (agentFilter instanceof HTMLSelectElement) {
+        agentFilter.addEventListener("change", () => {
+            state.selectedAgent = agentFilter.value;
+            render();
+        });
+    }
+
+    for (const button of queryButtons("[data-grant-surface]")) {
+        button.addEventListener("click", async () => {
+            const surfaceId = button.dataset.grantSurface ?? "";
+            const grantUID = Number.parseInt(button.dataset.grantUid ?? "0", 10);
+            if (!surfaceId || Number.isNaN(grantUID) || grantUID === 0) {
+                return;
+            }
+            button.disabled = true;
             try {
-                await grantViewport(target.dataset.grantSurface, Number.parseInt(target.dataset.grantUid, 10));
+                await grantViewport(surfaceId, grantUID);
                 await refreshState();
-            }
-            catch (error) {
-                alert(error.message);
-            }
-            finally {
-                target.disabled = false;
+            } catch (error) {
+                alert(toErrorMessage(error));
+            } finally {
+                button.disabled = false;
             }
         });
-    });
-    document.querySelectorAll("[data-escalation-action]").forEach((button) => {
-        button.addEventListener("click", async (event) => {
-            const target = event.currentTarget;
-            const id = target.dataset.escalationId;
-            const notesField = document.querySelector(`[data-escalation-notes="${id}"]`);
-            const constraintsField = document.querySelector(`[data-escalation-constraints="${id}"]`);
-            target.disabled = true;
+    }
+
+    for (const button of queryButtons("[data-escalation-action]")) {
+        button.addEventListener("click", async () => {
+            const id = button.dataset.escalationId ?? "";
+            const action = button.dataset.escalationAction;
+            if (!id || !isHumanDecision(action)) {
+                return;
+            }
+            const notesField = queryTextarea(`[data-escalation-notes="${id}"]`);
+            const constraintsField = queryTextarea(`[data-escalation-constraints="${id}"]`);
+            button.disabled = true;
             try {
-                await decideEscalation(id, target.dataset.escalationAction, notesField?.value || "", (constraintsField?.value || "")
-                    .split(/\n+/)
-                    .map((line) => line.trim())
-                    .filter(Boolean));
-            }
-            catch (error) {
-                alert(error.message);
-            }
-            finally {
-                target.disabled = false;
+                await decideEscalation(
+                    id,
+                    action,
+                    notesField?.value ?? "",
+                    (constraintsField?.value ?? "")
+                        .split(/\n+/)
+                        .map((line) => line.trim())
+                        .filter(Boolean),
+                );
+            } catch (error) {
+                alert(toErrorMessage(error));
+            } finally {
+                button.disabled = false;
             }
         });
-    });
+    }
 }
-function renderAgentCard(agent, surfaces) {
+
+function renderAgentCard(agent: AgentInfo, surfaces: TrackedSurface[]): string {
     const selected = String(agent.uid) === state.selectedAgent;
     return `
     <article class="agent-card ${selected ? "is-selected" : ""}">
@@ -442,7 +599,8 @@ function renderAgentCard(agent, surfaces) {
     </article>
   `;
 }
-function renderSurfaceCard(surface) {
+
+function renderSurfaceCard(surface: TrackedSurface): string {
     const grantTarget = Number.parseInt(state.selectedAgent || "0", 10) || surface.client.uid;
     return `
     <article class="surface-card ${String(surface.client?.uid || "") === state.selectedAgent ? "is-selected" : ""}">
@@ -462,7 +620,8 @@ function renderSurfaceCard(surface) {
     </article>
   `;
 }
-function renderAuditCard(event) {
+
+function renderAuditCard(event: AuditEvent): string {
     return `
     <article class="audit-card">
       <div class="card-top">
@@ -477,7 +636,8 @@ function renderAuditCard(event) {
     </article>
   `;
 }
-function renderEscalationCard(event) {
+
+function renderEscalationCard(event: AdminEscalationEvent): string {
     return `
     <article class="escalation-card">
       <div class="card-top">
@@ -499,13 +659,15 @@ function renderEscalationCard(event) {
     </article>
   `;
 }
-function formatTime(value) {
+
+function formatTime(value: string | null | undefined): string {
     if (!value) {
         return "unknown";
     }
     return new Date(value).toLocaleString();
 }
-function statusClass(status) {
+
+function statusClass(status: AgentStatus): string {
     if (status === "running") {
         return "success";
     }
@@ -514,13 +676,79 @@ function statusClass(status) {
     }
     return "danger";
 }
-function escapeHtml(value) {
+
+function escapeHtml(value: unknown): string {
     return String(value ?? "")
         .replaceAll("&", "&amp;")
         .replaceAll("<", "&lt;")
         .replaceAll(">", "&gt;")
         .replaceAll('"', "&quot;");
 }
-function escapeAttr(value) {
+
+function escapeAttr(value: unknown): string {
     return escapeHtml(value).replaceAll("'", "&#39;");
+}
+
+function emptyShellState(): ShellStateSnapshot {
+    return {
+        agents: [],
+        surfaces: [],
+        pending_escalations: [],
+    };
+}
+
+function toShellState(payload: unknown): ShellStateSnapshot {
+    const snapshot = payload as Partial<ShellStateSnapshot> | null;
+    return {
+        agents: snapshot?.agents ?? [],
+        surfaces: snapshot?.surfaces ?? [],
+        pending_escalations: snapshot?.pending_escalations ?? [],
+    };
+}
+
+function requireElement(id: string): HTMLElement {
+    const element = document.getElementById(id);
+    if (!(element instanceof HTMLElement)) {
+        throw new Error(`missing #${id}`);
+    }
+    return element;
+}
+
+function getInputValue(id: string): string {
+    const input = document.getElementById(id);
+    return input instanceof HTMLInputElement ? input.value : "";
+}
+
+function queryButtons(selector: string): HTMLButtonElement[] {
+    return Array.from(document.querySelectorAll(selector)).filter(
+        (element): element is HTMLButtonElement => element instanceof HTMLButtonElement,
+    );
+}
+
+function queryTextarea(selector: string): HTMLTextAreaElement | null {
+    const element = document.querySelector(selector);
+    return element instanceof HTMLTextAreaElement ? element : null;
+}
+
+function isHumanDecision(value: string | undefined): value is HumanDecision {
+    return value === "approve" || value === "deny";
+}
+
+function messageText(data: unknown): string {
+    return typeof data === "string" ? data : "";
+}
+
+function parseJSON<T>(text: string): T | null {
+    if (!text) {
+        return null;
+    }
+    try {
+        return JSON.parse(text) as T;
+    } catch {
+        return null;
+    }
+}
+
+function toErrorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
 }

@@ -57,7 +57,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	busClient, err := bus.Dial(g.BusSocket)
 	if err != nil {
-		_ = closeInternalError(conn, "connect event bus failed")
+		_ = WriteCloseInternalError(conn, "connect event bus failed")
 		log.Printf("event-bus-web %s: connect event bus: %v", DescribeIdentity(identity), err)
 		return
 	}
@@ -100,42 +100,42 @@ func (g *Gateway) forwardInbound(ctx context.Context, conn *websocket.Conn, busC
 		}
 		var msg bus.ClientMsg
 		if err := json.Unmarshal(data, &msg); err != nil {
-			_ = closePolicyViolation(conn, "invalid message")
+			_ = WriteClosePolicyViolation(conn, "invalid message")
 			return fmt.Errorf("decode websocket message: %w", err)
 		}
 		switch msg.Op {
 		case bus.OpSub:
 			if !CanSubscribe(identity, msg.Topic) {
-				_ = closePolicyViolation(conn, fmt.Sprintf("subscribe not allowed on %q", msg.Topic))
+				_ = WriteClosePolicyViolation(conn, fmt.Sprintf("subscribe not allowed on %q", msg.Topic))
 				return fmt.Errorf("subscribe not allowed for %s on %q", DescribeIdentity(identity), msg.Topic)
 			}
 			if err := busClient.Subscribe(msg.Topic); err != nil {
-				_ = closeInternalError(conn, "subscribe failed")
+				_ = WriteCloseInternalError(conn, "subscribe failed")
 				return fmt.Errorf("subscribe %q: %w", msg.Topic, err)
 			}
 		case bus.OpUnsub:
 			if err := busClient.Unsubscribe(msg.Topic); err != nil {
-				_ = closeInternalError(conn, "unsubscribe failed")
+				_ = WriteCloseInternalError(conn, "unsubscribe failed")
 				return fmt.Errorf("unsubscribe %q: %w", msg.Topic, err)
 			}
 		case bus.OpPub:
 			if !CanPublish(identity, msg.Topic) {
-				_ = closePolicyViolation(conn, fmt.Sprintf("publish not allowed on %q", msg.Topic))
+				_ = WriteClosePolicyViolation(conn, fmt.Sprintf("publish not allowed on %q", msg.Topic))
 				return fmt.Errorf("publish not allowed for %s on %q", DescribeIdentity(identity), msg.Topic)
 			}
 			var body any
 			if len(msg.Body) != 0 {
 				if err := json.Unmarshal(msg.Body, &body); err != nil {
-					_ = closePolicyViolation(conn, "invalid publish body")
+					_ = WriteClosePolicyViolation(conn, "invalid publish body")
 					return fmt.Errorf("decode publish body: %w", err)
 				}
 			}
 			if err := busClient.PublishAs(bus.Sender{UID: identity.UID, Kind: bus.SenderKindDelegated}, msg.Topic, body); err != nil {
-				_ = closeInternalError(conn, "publish failed")
+				_ = WriteCloseInternalError(conn, "publish failed")
 				return fmt.Errorf("publish %q: %w", msg.Topic, err)
 			}
 		default:
-			_ = closePolicyViolation(conn, fmt.Sprintf("unknown op %q", msg.Op))
+			_ = WriteClosePolicyViolation(conn, fmt.Sprintf("unknown op %q", msg.Op))
 			return fmt.Errorf("unknown op %q", msg.Op)
 		}
 	}
@@ -156,20 +156,4 @@ func (g *Gateway) forwardOutbound(ctx context.Context, conn *websocket.Conn, bus
 			return err
 		}
 	}
-}
-
-func closePolicyViolation(conn *websocket.Conn, reason string) error {
-	return conn.WriteControl(
-		websocket.CloseMessage,
-		websocket.FormatCloseMessage(websocket.ClosePolicyViolation, reason),
-		time.Now().Add(time.Second),
-	)
-}
-
-func closeInternalError(conn *websocket.Conn, reason string) error {
-	return conn.WriteControl(
-		websocket.CloseMessage,
-		websocket.FormatCloseMessage(websocket.CloseInternalServerErr, reason),
-		time.Now().Add(time.Second),
-	)
 }

@@ -280,7 +280,7 @@ func (s *Server) handleAuditWS(w http.ResponseWriter, r *http.Request) {
 
 	conn, err := net.Dial("unix", s.auditSocket)
 	if err != nil {
-		_ = closeInternalError(ws, "connect audit stream failed")
+		_ = webbus.WriteCloseInternalError(ws, "connect audit stream failed")
 		return
 	}
 	defer conn.Close()
@@ -292,7 +292,7 @@ func (s *Server) handleAuditWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		_ = closeInternalError(ws, "audit stream failed")
+		_ = webbus.WriteCloseInternalError(ws, "audit stream failed")
 	}
 }
 
@@ -533,12 +533,4 @@ func defaultString(value, fallback string) string {
 func writeJSON(w http.ResponseWriter, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(value)
-}
-
-func closeInternalError(conn *websocket.Conn, reason string) error {
-	return conn.WriteControl(
-		websocket.CloseMessage,
-		websocket.FormatCloseMessage(websocket.CloseInternalServerErr, reason),
-		time.Now().Add(time.Second),
-	)
 }
