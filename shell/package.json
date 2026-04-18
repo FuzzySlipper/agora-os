@@ -1,0 +1,11 @@
+{
+  "name": "agora-shell",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "mkdir -p dist && cp src/index.html src/styles.css dist/ && tsc --project tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  }
+}

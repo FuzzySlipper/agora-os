@@ -11,20 +11,27 @@ import (
 	"log"
 	"net"
 
-	"github.com/patch/agora-os/internal/agent"
+	"github.com/patch/agora-os/internal/bus"
 	"github.com/patch/agora-os/internal/peercred"
 	"github.com/patch/agora-os/internal/schema"
 )
 
+type manager interface {
+	Spawn(req schema.SpawnAgentRequest) (*schema.AgentInfo, error)
+	Terminate(uid uint32) error
+	List() []schema.AgentInfo
+}
+
 // Service handles isolation-service requests. It wraps an agent.Manager
 // and adds transport decoding, authorization, and method dispatch.
 type Service struct {
-	mgr *agent.Manager
+	mgr       manager
+	busSocket string
 }
 
 // New creates a Service backed by the given Manager.
-func New(mgr *agent.Manager) *Service {
-	return &Service{mgr: mgr}
+func New(mgr manager, busSocket string) *Service {
+	return &Service{mgr: mgr, busSocket: busSocket}
 }
 
 // HandleConn reads a single request from conn, authorizes it against the
@@ -76,6 +83,7 @@ func (s *Service) handleSpawn(peerUID uint32, body json.RawMessage) (schema.Resp
 	if err != nil {
 		return schema.Response{}, err
 	}
+	s.publishLifecycle(schema.TopicAgentLifecycleSpawned, schema.AgentLifecycleEvent{Agent: *info})
 	return okResponse(schema.SpawnAgentResponse{Agent: *info}), nil
 }
 
@@ -87,9 +95,21 @@ func (s *Service) handleTerminate(peerUID uint32, body json.RawMessage) (schema.
 	if peerUID != 0 && req.UID != peerUID {
 		return schema.Response{}, fmt.Errorf("cannot terminate another agent")
 	}
+	var terminated schema.AgentInfo
+	for _, info := range s.mgr.List() {
+		if info.UID == req.UID {
+			terminated = info
+			break
+		}
+	}
 	if err := s.mgr.Terminate(req.UID); err != nil {
 		return schema.Response{}, err
 	}
+	if terminated.UID == 0 {
+		terminated.UID = req.UID
+	}
+	terminated.Status = schema.StatusStopped
+	s.publishLifecycle(schema.TopicAgentLifecycleTerminated, schema.AgentLifecycleEvent{Agent: terminated})
 	return okResponse("terminated"), nil
 }
 
@@ -117,5 +137,20 @@ func writeError(conn net.Conn, msg string) {
 	resp := schema.Response{OK: false, Body: b}
 	if err := json.NewEncoder(conn).Encode(resp); err != nil {
 		log.Printf("write error response: %v", err)
+	}
+}
+
+func (s *Service) publishLifecycle(topic string, body any) {
+	if s.busSocket == "" {
+		return
+	}
+	client, err := bus.Dial(s.busSocket)
+	if err != nil {
+		log.Printf("publish %s: connect event bus: %v", topic, err)
+		return
+	}
+	defer client.Close()
+	if err := client.Publish(topic, body); err != nil {
+		log.Printf("publish %s: %v", topic, err)
 	}
 }

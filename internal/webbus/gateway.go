@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"net/url"
-	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -82,44 +80,11 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (g *Gateway) authenticate(r *http.Request) (Identity, string, error) {
-	token, selectedSubprotocol := tokenFromRequest(r)
-	if token == "" {
-		return Identity{}, "", errors.New("missing bearer token")
-	}
-	claims, err := VerifyToken(g.Secret, token, g.Now())
-	if err != nil {
-		return Identity{}, "", err
-	}
-	return claims.Identity(), selectedSubprotocol, nil
+	return AuthenticateRequest(g.Secret, g.Now(), r)
 }
 
 func (g *Gateway) checkOrigin(r *http.Request) bool {
-	origin := strings.TrimSpace(r.Header.Get("Origin"))
-	if origin == "" {
-		return true
-	}
-	if len(g.AllowedOrigins) > 0 {
-		_, ok := g.AllowedOrigins[origin]
-		return ok
-	}
-	parsed, err := url.Parse(origin)
-	if err != nil {
-		return false
-	}
-	return strings.EqualFold(parsed.Host, r.Host)
-}
-
-func tokenFromRequest(r *http.Request) (string, string) {
-	authz := strings.TrimSpace(r.Header.Get("Authorization"))
-	if strings.HasPrefix(authz, "Bearer ") {
-		return strings.TrimSpace(strings.TrimPrefix(authz, "Bearer ")), ""
-	}
-	for _, protocol := range websocket.Subprotocols(r) {
-		if strings.HasPrefix(protocol, tokenSubprotocolPrefix) {
-			return strings.TrimPrefix(protocol, tokenSubprotocolPrefix), protocol
-		}
-	}
-	return "", ""
+	return CheckOrigin(g.AllowedOrigins, r)
 }
 
 func (g *Gateway) forwardInbound(ctx context.Context, conn *websocket.Conn, busClient *bus.Client, identity Identity) error {

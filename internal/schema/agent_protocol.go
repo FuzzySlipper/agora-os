@@ -21,6 +21,7 @@ const (
 	TopicAgentSpawnAccepted  = "agent.spawn.accepted"
 	TopicAgentSpawnRejected  = "agent.spawn.rejected"
 
+	TopicAgentLifecycleSpawned    = "agent.lifecycle.spawned"
 	TopicAgentLifecycleAssigned   = "agent.lifecycle.assigned"
 	TopicAgentLifecycleReused     = "agent.lifecycle.reused"
 	TopicAgentLifecycleTerminated = "agent.lifecycle.terminated"
@@ -232,6 +233,28 @@ type SpawnRejectedEvent struct {
 	SessionID string `json:"session_id"`
 	RequestID string `json:"request_id"`
 	Reason    string `json:"reason"`
+}
+
+type AgentLifecycleEvent struct {
+	Agent AgentInfo `json:"agent"`
+}
+
+type AdminEscalationEvent struct {
+	ID        string             `json:"id"`
+	Timestamp time.Time          `json:"timestamp"`
+	Request   EscalationRequest  `json:"request"`
+	Response  EscalationResponse `json:"response"`
+}
+
+type HumanEscalationDecision struct {
+	ID          string             `json:"id"`
+	Timestamp   time.Time          `json:"timestamp"`
+	ReviewedBy  uint32             `json:"reviewed_by"`
+	Decision    EscalationDecision `json:"decision"`
+	Constraints []string           `json:"constraints,omitempty"`
+	Notes       string             `json:"notes,omitempty"`
+	Request     EscalationRequest  `json:"request"`
+	Response    EscalationResponse `json:"response"`
 }
 
 // WorkerLifecycleEvent publishes the lease record after a supervisor lifecycle

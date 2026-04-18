@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	iofs "io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -10,7 +11,9 @@ import (
 	"time"
 
 	"github.com/patch/agora-os/internal/schema"
+	"github.com/patch/agora-os/internal/shellui"
 	"github.com/patch/agora-os/internal/webbus"
+	shellassets "github.com/patch/agora-os/shell"
 )
 
 const (
@@ -50,13 +53,40 @@ func serve(args []string) {
 		gateway.AllowedOrigins[origin] = struct{}{}
 	}
 
+	shellFS, err := iofs.Sub(shellassets.Assets, "dist")
+	if err != nil {
+		log.Fatal(err)
+	}
+	shellServer := shellui.New(shellui.Config{
+		Secret:           secret,
+		AllowedOrigins:   gateway.AllowedOrigins,
+		Assets:           shellFS,
+		BusSocket:        *busSocket,
+		IsolationSocket:  schema.IsolationSocket,
+		CompositorSocket: schema.CompositorControlSocket,
+		AuditSocket:      schema.AuditSocket,
+	})
+
+	mux := http.NewServeMux()
+	mux.Handle("/ws", gateway)
+	mux.Handle("/api/shell/", shellServer)
+	mux.Handle("/shell/", http.StripPrefix("/shell/", shellServer.StaticHandler()))
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		http.Redirect(w, r, "/shell/", http.StatusTemporaryRedirect)
+	})
+
 	if len(gateway.AllowedOrigins) == 0 {
 		log.Printf("event-bus-web origin policy: same-origin")
 	} else {
 		log.Printf("event-bus-web origin policy: allow-list from %s", allowedOriginsEnv)
 	}
 	log.Printf("event-bus-web listening on http://%s/ws", *listen)
-	log.Fatal(http.ListenAndServe(*listen, gateway))
+	log.Printf("event-bus-web shell UI on http://%s/shell/", *listen)
+	log.Fatal(http.ListenAndServe(*listen, mux))
 }
 
 func mintToken(args []string) {

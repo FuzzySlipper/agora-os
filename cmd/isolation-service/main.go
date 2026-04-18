@@ -24,7 +24,7 @@ func main() {
 	}
 
 	mgr := agent.NewManager()
-	svc := isolation.New(mgr)
+	svc := isolation.New(mgr, schema.BusSocket)
 
 	// Ensure the socket directory exists
 	os.MkdirAll(schema.SocketDir, 0755)

@@ -78,6 +78,9 @@ type AgentInfo struct {
 	UID       uint32      `json:"uid"`
 	Status    AgentStatus `json:"status"`
 	Slice     string      `json:"slice"` // systemd slice name
+	CPUQuota  string      `json:"cpu_quota,omitempty"`
+	MemoryMax string      `json:"memory_max,omitempty"`
+	NetAccess NetPolicy   `json:"net_access,omitempty"`
 	CreatedAt time.Time   `json:"created_at"`
 }
 

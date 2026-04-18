@@ -79,6 +79,9 @@ func (m *Manager) Spawn(req schema.SpawnAgentRequest) (*schema.AgentInfo, error)
 		UID:       uid,
 		Status:    schema.StatusRunning,
 		Slice:     sliceName,
+		CPUQuota:  req.CPUQuota,
+		MemoryMax: req.MemoryMax,
+		NetAccess: req.NetAccess,
 		CreatedAt: time.Now(),
 	}
 	m.agents[uid] = info
