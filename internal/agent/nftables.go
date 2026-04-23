@@ -121,6 +121,12 @@ func parseNftHandle(output string) (uint64, error) {
 	if idx < 0 {
 		return 0, fmt.Errorf("no handle in nft output: %q", output)
 	}
-	s := strings.TrimSpace(output[idx+len(prefix):])
-	return strconv.ParseUint(s, 10, 64)
+
+	rest := output[idx+len(prefix):]
+	handleField := strings.Fields(rest)
+	if len(handleField) == 0 {
+		return 0, fmt.Errorf("empty handle in nft output: %q", output)
+	}
+
+	return strconv.ParseUint(handleField[0], 10, 64)
 }

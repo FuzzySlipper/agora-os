@@ -20,6 +20,12 @@ func TestParseNftHandle(t *testing.T) {
 			want:  9999,
 		},
 		{
+			name: "handle with trailing generation line",
+			input: "add rule inet filter output meta skuid 60000 drop # handle 5\n" +
+				"# new generation 8 by process 3682 (nft)\n",
+			want: 5,
+		},
+		{
 			name:    "no handle",
 			input:   "add rule inet filter agent-os-output meta skuid 60000 drop\n",
 			wantErr: true,

@@ -114,10 +114,15 @@ For authoritative Phase 2 validation, use the VM as the disposable guest environ
 ```sh
 scripts/vm.sh start
 scripts/vm.sh phase2-deps
-scripts/vm.sh ssh -- 'cd /repo/compositor/wayfire-plugin && meson setup build && meson compile -C build'
+scripts/vm.sh ssh -- 'meson setup /tmp/agora-wayfire-plugin-build /repo/compositor/wayfire-plugin && meson compile -C /tmp/agora-wayfire-plugin-build && sudo meson install -C /tmp/agora-wayfire-plugin-build'
 scripts/vm.sh stop
 scripts/vm.sh snap phase2-deps
 ```
+
+Keep the Meson build directory on the guest's local filesystem (for example
+`/tmp/agora-wayfire-plugin-build`) instead of under `/repo`. The repo is
+shared into the guest over `virtiofs`, and Meson can mis-detect clock skew
+when the build dir sits on that shared mount.
 
 For live compositor validation, restore that snapshot and boot the guest with graphics:
 

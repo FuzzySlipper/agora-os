@@ -19,9 +19,14 @@ This subtree is an out-of-tree Meson project in the normal Wayfire style.
 
 ```sh
 cd compositor/wayfire-plugin
-meson setup build
-meson compile -C build
+meson setup /tmp/agora-wayfire-plugin-build .
+meson compile -C /tmp/agora-wayfire-plugin-build
 ```
+
+When building inside the disposable VM, prefer a guest-local build directory
+such as `/tmp` or `/var/tmp` instead of `/repo/.../build`. The host repo is
+shared into the guest via `virtiofs`, and Meson may report clock-skew errors
+if the build directory lives on that shared mount.
 
 Expected runtime dependencies:
 - `wayfire`

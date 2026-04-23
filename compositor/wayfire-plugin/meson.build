@@ -14,6 +14,15 @@ wayland_server = dependency('wayland-server')
 wfconfig = dependency('wf-config', required: false)
 threads = dependency('threads')
 
+wayfire_plugin_dir = wayfire.get_variable(
+  pkgconfig: 'plugindir',
+  default_value: join_paths(get_option('libdir'), 'wayfire'),
+)
+wayfire_metadata_dir = wayfire.get_variable(
+  pkgconfig: 'metadatadir',
+  default_value: join_paths(get_option('datadir'), 'wayfire', 'metadata'),
+)
+
 plugin_deps = [wayfire, wayland_server, threads]
 if wfconfig.found()
   plugin_deps += wfconfig
@@ -25,10 +34,10 @@ shared_module(
   include_directories: include_directories('src'),
   dependencies: plugin_deps,
   install: true,
-  install_dir: join_paths(get_option('libdir'), 'wayfire'),
+  install_dir: wayfire_plugin_dir,
 )
 
 install_data(
   'metadata/agora-bridge.xml',
-  install_dir: join_paths(get_option('datadir'), 'wayfire', 'metadata'),
+  install_dir: wayfire_metadata_dir,
 )

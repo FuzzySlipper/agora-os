@@ -14,6 +14,8 @@ SSH_KEY="$VM_DIR/ssh_key"
 PID_FILE="$VM_DIR/qemu.pid"
 VFS_SOCK="$VM_DIR/virtiofsd.sock"
 VFS_PID="$VM_DIR/virtiofsd.pid"
+VFS_DAEMON_PID="$VFS_SOCK.pid"
+VFS_LOG="$VM_DIR/virtiofsd.log"
 CONSOLE_LOG="$VM_DIR/console.log"
 
 SSH_PORT="${AGORA_VM_SSH_PORT:-2222}"
@@ -23,12 +25,74 @@ DISK_SIZE="${AGORA_VM_DISK:-20G}"
 NBD_DEV="${AGORA_VM_NBD:-/dev/nbd0}"
 VM_GUI_DISPLAY="${AGORA_VM_GUI_DISPLAY:-gtk,gl=off}"
 VM_GUI_GPU="${AGORA_VM_GUI_GPU:-virtio-vga}"
+VIRTIOFSD_BIN="${AGORA_VM_VIRTIOFSD:-}"
 
 die()  { echo "error: $*" >&2; exit 1; }
 info() { echo ":: $*"; }
 
+cleanup_build_mount() {
+    local mnt="$1"
+    local nbd_dev="$2"
+    local rc=0
+
+    if mountpoint -q "$mnt/boot" 2>/dev/null; then
+        umount "$mnt/boot" || rc=1
+    fi
+
+    if mountpoint -q "$mnt" 2>/dev/null; then
+        umount -R "$mnt" || rc=1
+    fi
+
+    if mountpoint -q "$mnt" 2>/dev/null; then
+        # Disposable build mount: fall back to a lazy unmount if the normal
+        # recursive unmount still sees the tree as busy.
+        umount -l -R "$mnt" || rc=1
+    fi
+
+    if mountpoint -q "$mnt" 2>/dev/null; then
+        return 1
+    fi
+
+    qemu-nbd --disconnect "$nbd_dev" 2>/dev/null || rc=1
+    rmdir "$mnt" 2>/dev/null || true
+    return "$rc"
+}
+
+find_qemu_pids() {
+    ps -C qemu-system-x86_64 -o pid=,args= 2>/dev/null | awk \
+        -v disk="file=$DISK," \
+        -v pidfile="-pidfile $PID_FILE" \
+        'index($0, "qemu-system-x86_64") && index($0, disk) && index($0, pidfile) { print $1 }' || true
+}
+
+find_virtiofsd_pids() {
+    ps -C virtiofsd -o pid=,args= 2>/dev/null | awk \
+        -v sock="--socket-path=$VFS_SOCK" \
+        -v share="--shared-dir=$REPO_DIR" \
+        'index($0, "virtiofsd") && index($0, sock) && index($0, share) { print $1 }' || true
+}
+
+resolve_virtiofsd() {
+    if [[ -n "$VIRTIOFSD_BIN" ]]; then
+        [[ -x "$VIRTIOFSD_BIN" ]] || die "AGORA_VM_VIRTIOFSD points to a non-executable path: $VIRTIOFSD_BIN"
+        return
+    fi
+
+    if VIRTIOFSD_BIN=$(command -v virtiofsd 2>/dev/null); then
+        return
+    fi
+
+    # Arch packages virtiofsd under /usr/lib/virtiofsd rather than on PATH.
+    if [[ -x /usr/lib/virtiofsd ]]; then
+        VIRTIOFSD_BIN=/usr/lib/virtiofsd
+        return
+    fi
+
+    die "missing: virtiofsd (install the package or set AGORA_VM_VIRTIOFSD)"
+}
+
 is_running() {
-    [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null
+    [[ -n "$(find_qemu_pids)" ]]
 }
 
 ssh_cmd() {
@@ -41,10 +105,29 @@ ssh_cmd() {
 }
 
 stop_virtiofsd() {
-    if [[ -f "$VFS_PID" ]]; then
-        kill "$(cat "$VFS_PID")" 2>/dev/null || true
-        rm -f "$VFS_PID" "$VFS_SOCK"
-    fi
+    local pid
+    while read -r pid; do
+        [[ -n "$pid" ]] || continue
+        kill "$pid" 2>/dev/null || true
+    done < <(find_virtiofsd_pids)
+
+    rm -f "$VFS_PID" "$VFS_DAEMON_PID" "$VFS_SOCK"
+}
+
+cleanup_stale_virtiofsd_state() {
+    for pid_file in "$VFS_PID" "$VFS_DAEMON_PID"; do
+        [[ -f "$pid_file" ]] || continue
+
+        local pid
+        pid="$(cat "$pid_file" 2>/dev/null || true)"
+        if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+            die "virtiofsd appears to already be running (pid $pid from $pid_file); use 'vm.sh stop' first"
+        fi
+
+        rm -f "$pid_file"
+    done
+
+    rm -f "$VFS_SOCK"
 }
 
 # ---------------------------------------------------------------------------
@@ -63,6 +146,7 @@ cmd_build() {
     # SSH keypair (owned by the invoking user, not root)
     local caller_uid="${SUDO_UID:-$(id -u)}"
     local caller_gid="${SUDO_GID:-$(id -g)}"
+    chown "$caller_uid:$caller_gid" "$VM_DIR"
     if [[ ! -f "$SSH_KEY" ]]; then
         ssh-keygen -t ed25519 -f "$SSH_KEY" -N "" -C "agora-os-vm" -q
         chown "$caller_uid:$caller_gid" "$SSH_KEY" "$SSH_KEY.pub"
@@ -77,14 +161,7 @@ cmd_build() {
     qemu-nbd --connect="$NBD_DEV" "$DISK"
 
     local mnt="$VM_DIR/mnt"
-    cleanup_build() {
-        set +e
-        mountpoint -q "$mnt/boot" 2>/dev/null && umount "$mnt/boot"
-        mountpoint -q "$mnt" 2>/dev/null && umount -R "$mnt"
-        qemu-nbd --disconnect "$NBD_DEV" 2>/dev/null
-        rmdir "$mnt" 2>/dev/null
-    }
-    trap cleanup_build EXIT
+    trap 'cleanup_build_mount "'"$mnt"'" "'"$NBD_DEV"'"' EXIT
 
     # Partition: MBR, single bootable ext4 partition
     info "Partitioning"
@@ -105,6 +182,7 @@ EOF
     info "Installing packages (this takes a few minutes)"
     pacstrap -K "$mnt" \
         base linux linux-firmware \
+        mkinitcpio \
         grub \
         go nftables git base-devel openssh \
         sudo vim less which iproute2 procps-ng
@@ -119,6 +197,7 @@ EOF
     arch-chroot "$mnt" locale-gen
     echo "LANG=en_US.UTF-8" > "$mnt/etc/locale.conf"
     ln -sf /usr/share/zoneinfo/UTC "$mnt/etc/localtime"
+    echo "KEYMAP=us" > "$mnt/etc/vconsole.conf"
 
     # Hostname
     echo "agora-vm" > "$mnt/etc/hostname"
@@ -156,6 +235,11 @@ EOF
     # Root password for emergency console access
     echo "root:root" | arch-chroot "$mnt" chpasswd
 
+    # Ensure the kernel image and initramfs are materialized under /boot.
+    arch-chroot "$mnt" mkinitcpio -P
+    [[ -f "$mnt/boot/vmlinuz-linux" ]] || die "kernel image missing at $mnt/boot/vmlinuz-linux after mkinitcpio"
+    [[ -f "$mnt/boot/initramfs-linux.img" ]] || die "initramfs missing at $mnt/boot/initramfs-linux.img after mkinitcpio"
+
     # GRUB (BIOS / i386-pc)
     info "Installing GRUB"
     arch-chroot "$mnt" grub-install --target=i386-pc "$NBD_DEV"
@@ -163,7 +247,7 @@ EOF
 
     # Cleanup
     trap - EXIT
-    cleanup_build
+    cleanup_build_mount "$mnt" "$NBD_DEV" || die "failed to clean up VM build mount at $mnt"
     chown "$caller_uid:$caller_gid" "$VM_DIR"
 
     info "Build complete."
@@ -176,32 +260,41 @@ EOF
 # ---------------------------------------------------------------------------
 cmd_start() {
     local boot_mode="${1:-headless}"
+    local running_pids=""
 
     [[ -f "$DISK" ]] || die "no disk — run 'vm.sh build' first"
-    is_running && die "VM already running (pid $(cat "$PID_FILE"))"
+    running_pids="$(find_qemu_pids | paste -sd' ' -)"
+    [[ -n "$running_pids" ]] && die "VM already running (pid(s): $running_pids)"
 
-    for bin in qemu-system-x86_64 virtiofsd; do
-        command -v "$bin" >/dev/null || die "missing: $bin"
-    done
+    command -v qemu-system-x86_64 >/dev/null || die "missing: qemu-system-x86_64"
+    resolve_virtiofsd
 
     mkdir -p "$VM_DIR"
+    : > "$VFS_LOG"
 
-    # Clean up stale socket
-    rm -f "$VFS_SOCK"
+    # Clean up stale virtiofsd state from failed or interrupted launches.
+    cleanup_stale_virtiofsd_state
 
     # Start virtiofsd (runs unprivileged with --sandbox none)
     info "Starting virtiofsd"
-    virtiofsd \
+    nohup "$VIRTIOFSD_BIN" \
         --socket-path="$VFS_SOCK" \
         --shared-dir="$REPO_DIR" \
         --sandbox none \
-        --log-level error &
-    echo $! > "$VFS_PID"
+        --log-level info \
+        >"$VFS_LOG" 2>&1 < /dev/null &
+    local virtiofsd_pid=$!
+    echo "$virtiofsd_pid" > "$VFS_PID"
 
     # Wait for the socket to appear
     local i=0
     while [[ ! -S "$VFS_SOCK" ]] && (( i < 30 )); do
-        sleep 0.1; (( i++ ))
+        if ! kill -0 "$virtiofsd_pid" 2>/dev/null; then
+            rm -f "$VFS_PID" "$VFS_DAEMON_PID" "$VFS_SOCK"
+            die "virtiofsd exited before creating $VFS_SOCK"
+        fi
+        sleep 0.1
+        (( ++i ))
     done
     [[ -S "$VFS_SOCK" ]] || die "virtiofsd socket did not appear"
 
@@ -248,10 +341,28 @@ cmd_start() {
         return
     fi
 
+    if [[ ! -f "$PID_FILE" ]]; then
+        stop_virtiofsd
+        die "QEMU exited before writing $PID_FILE; run 'vm.sh console' to see the boot error"
+    fi
+
+    local qemu_pid
+    qemu_pid="$(cat "$PID_FILE")"
+    if ! kill -0 "$qemu_pid" 2>/dev/null; then
+        stop_virtiofsd
+        rm -f "$PID_FILE"
+        die "QEMU exited immediately after launch (pid $qemu_pid); run 'vm.sh console' to see the boot error"
+    fi
+
     info "Waiting for SSH..."
     local i=0
     while ! ssh_cmd true 2>/dev/null; do
-        (( i++ ))
+        if ! kill -0 "$qemu_pid" 2>/dev/null; then
+            stop_virtiofsd
+            rm -f "$PID_FILE"
+            die "QEMU exited while waiting for SSH; run 'vm.sh console' to see the boot error"
+        fi
+        (( ++i ))
         (( i > 90 )) && die "SSH did not come up within 90s (check $CONSOLE_LOG)"
         sleep 1
     done
@@ -311,21 +422,22 @@ cmd_phase2_deps() {
 # ---------------------------------------------------------------------------
 cmd_stop() {
     local stopped=false
-
-    if [[ -f "$PID_FILE" ]]; then
-        local pid
-        pid=$(cat "$PID_FILE")
+    local pid
+    while read -r pid; do
+        [[ -n "$pid" ]] || continue
         if kill -0 "$pid" 2>/dev/null; then
             kill "$pid"
             local i=0
             while kill -0 "$pid" 2>/dev/null && (( i < 30 )); do
-                sleep 0.5; (( i++ ))
+                sleep 0.5
+                (( ++i ))
             done
             kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null
             stopped=true
         fi
-        rm -f "$PID_FILE"
-    fi
+    done < <(find_qemu_pids)
+
+    rm -f "$PID_FILE"
 
     stop_virtiofsd
 
@@ -371,6 +483,7 @@ Environment overrides:
   AGORA_VM_DIR       State directory (default: .vm/)
   AGORA_VM_GUI_DISPLAY  QEMU display backend for 'gui' (default: gtk,gl=off)
   AGORA_VM_GUI_GPU      Virtual GPU device for 'gui' (default: virtio-vga)
+  AGORA_VM_VIRTIOFSD    Path to virtiofsd binary (default: PATH, then /usr/lib/virtiofsd)
   AGORA_VM_NBD       NBD device for build (default: /dev/nbd0)
 USAGE
         exit 1 ;;

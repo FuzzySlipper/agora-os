@@ -55,10 +55,15 @@ Phase 2 and Phase 3 guest setup use the same pattern:
 ```sh
 scripts/vm.sh start
 scripts/vm.sh phase2-deps
-scripts/vm.sh ssh -- 'cd /repo/compositor/wayfire-plugin && meson setup build && meson compile -C build'
+scripts/vm.sh ssh -- 'meson setup /tmp/agora-wayfire-plugin-build /repo/compositor/wayfire-plugin && meson compile -C /tmp/agora-wayfire-plugin-build && sudo meson install -C /tmp/agora-wayfire-plugin-build'
 scripts/vm.sh stop
 scripts/vm.sh snap phase2-deps
 ```
+
+Use a guest-local build directory such as `/tmp/agora-wayfire-plugin-build`
+instead of `/repo/compositor/wayfire-plugin/build`. The `/repo` tree is mounted
+into the guest via `virtiofs`, and Meson can trip over sub-second host/guest
+timestamp skew if the build dir lives on that shared filesystem.
 
 For live compositor work, restore `phase2-deps` and boot the graphical guest:
 
@@ -97,6 +102,7 @@ All VM artifacts go to `.vm/` in the repo root (gitignored):
 | `AGORA_VM_DIR` | `.vm/` | State directory |
 | `AGORA_VM_GUI_DISPLAY` | `gtk,gl=off` | QEMU display backend for `vm.sh gui` |
 | `AGORA_VM_GUI_GPU` | `virtio-vga` | Virtual GPU device for `vm.sh gui` |
+| `AGORA_VM_VIRTIOFSD` | unset | Override path to `virtiofsd` if the package is installed outside `PATH` (for example `/usr/lib/virtiofsd` on Arch) |
 | `AGORA_VM_NBD` | `/dev/nbd0` | NBD device used during build |
 
 ### Inside the VM

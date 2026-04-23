@@ -87,7 +87,7 @@ func (m *Manager) Spawn(req schema.SpawnAgentRequest) (*schema.AgentInfo, error)
 	m.agents[uid] = info
 
 	if len(req.Command) > 0 {
-		if err := m.startProcess(uid, sliceName, req); err != nil {
+		if err := m.startProcess(uid, username, sliceName, req); err != nil {
 			delete(m.agents, uid)
 			_ = exec.Command("pkill", "-U", fmt.Sprintf("%d", uid)).Run()
 			_ = m.removeNetRules(uid)
@@ -111,11 +111,12 @@ func (m *Manager) Terminate(uid uint32) error {
 
 	username := fmt.Sprintf("agent-%s-%d", info.Name, uid)
 
-	// Stop the agent's systemd unit if one was started.
-	if m.hasCmd[uid] {
-		_ = exec.Command("systemctl", "stop", agentUnitName(uid)).Run()
-		delete(m.hasCmd, uid)
-	}
+	// Best-effort cleanup of the transient command unit even if the process
+	// has already exited. Otherwise failed units linger in systemd and can
+	// block reuse of the deterministic unit name after service restarts.
+	_ = exec.Command("systemctl", "stop", agentUnitName(uid)).Run()
+	_ = exec.Command("systemctl", "reset-failed", agentUnitName(uid)).Run()
+	delete(m.hasCmd, uid)
 
 	// Kill any remaining processes owned by this uid
 	_ = exec.Command("pkill", "-U", fmt.Sprintf("%d", uid)).Run()

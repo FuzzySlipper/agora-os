@@ -18,6 +18,8 @@ REQUIRED_PACKAGES=(
     wf-config
     wayland
     wayland-protocols
+    vulkan-headers
+    glm
     meson
     python
     ninja
@@ -55,9 +57,9 @@ print_next_steps() {
 ::   1. Build the Go services inside the guest:
 ::        cd /repo && go build ./cmd/...
 ::   2. Build the Wayfire plugin inside the guest:
-::        cd /repo/compositor/wayfire-plugin
-::        meson setup build
-::        meson compile -C build
+::        meson setup /tmp/agora-wayfire-plugin-build /repo/compositor/wayfire-plugin
+::        meson compile -C /tmp/agora-wayfire-plugin-build
+::        sudo meson install -C /tmp/agora-wayfire-plugin-build
 ::   3. Stop the VM and snapshot the prepared environment:
 ::        scripts/vm.sh stop
 ::        scripts/vm.sh snap phase2-deps
@@ -65,8 +67,9 @@ print_next_steps() {
 :: Notes:
 ::   - This installs the current known runtime needs for test/phase2.sh and
 ::     test/phase3.sh: Wayfire, wtype, one supported terminal client (foot),
-::     the plugin build dependencies, and the GTK/WebKit runtime used by
-::     cmd/webview-launcher.
+::     the plugin build dependencies (including Vulkan headers and GLM
+::     required by the current wlroots/Wayfire headers), and the GTK/WebKit
+::     runtime used by cmd/webview-launcher.
 ::   - After provisioning, use scripts/vm.sh gui on the host to boot the
 ::     guest with a local graphics window for live Wayfire validation.
 STEPS

@@ -26,6 +26,7 @@
 #include <wayfire/nonstd/wlroots-full.hpp>
 #include <wayfire/option-wrapper.hpp>
 #include <wayfire/plugin.hpp>
+#include <wayfire/seat.hpp>
 #include <wayfire/signal-definitions.hpp>
 #include <wayfire/util/log.hpp>
 #include <wayfire/view-helpers.hpp>
@@ -78,13 +79,13 @@ bool verify_bridge_peer_identity(int fd)
     socklen_t len = sizeof(cred);
     if (::getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cred, &len) < 0)
     {
-        wf::log::warn("agora-bridge: SO_PEERCRED failed: ", std::strerror(errno));
+        LOGW("agora-bridge: SO_PEERCRED failed: ", std::strerror(errno));
         return false;
     }
 
     if (cred.uid != 0)
     {
-        wf::log::warn("agora-bridge: rejecting non-root bridge peer uid=", cred.uid);
+        LOGW("agora-bridge: rejecting non-root bridge peer uid=", cred.uid);
         return false;
     }
 
@@ -162,7 +163,7 @@ class bridge_client_t
         ssize_t written = ::send(fd, framed.data(), framed.size(), MSG_NOSIGNAL);
         if (written < 0)
         {
-            wf::log::warn("agora-bridge: send failed: ", std::strerror(errno));
+            LOGW("agora-bridge: send failed: ", std::strerror(errno));
             close_fd_locked();
         }
     }
@@ -196,7 +197,7 @@ class bridge_client_t
         int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
         if (fd < 0)
         {
-            wf::log::warn("agora-bridge: socket() failed: ", std::strerror(errno));
+            LOGW("agora-bridge: socket() failed: ", std::strerror(errno));
             return false;
         }
 
@@ -216,7 +217,7 @@ class bridge_client_t
         }
 
         fd_.store(fd);
-        wf::log::info("agora-bridge: connected to ", socket_path_);
+        LOGI("agora-bridge: connected to ", socket_path_);
         return true;
     }
 
@@ -340,7 +341,7 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         close_wake_fd_ = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
         if (close_wake_fd_ < 0)
         {
-            wf::log::warn("agora-bridge: eventfd() failed: ", std::strerror(errno));
+            LOGW("agora-bridge: eventfd() failed: ", std::strerror(errno));
             return false;
         }
 
@@ -352,7 +353,7 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
             this);
         if (!close_wake_source_)
         {
-            wf::log::warn("agora-bridge: wl_event_loop_add_fd() failed");
+            LOGW("agora-bridge: wl_event_loop_add_fd() failed");
             ::close(close_wake_fd_);
             close_wake_fd_ = -1;
             return false;
@@ -399,7 +400,7 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
 
         if ((errno != 0) && (errno != EAGAIN) && (errno != EWOULDBLOCK))
         {
-            wf::log::warn("agora-bridge: wake read failed: ", std::strerror(errno));
+            LOGW("agora-bridge: wake read failed: ", std::strerror(errno));
         }
 
         std::vector<std::string> close_surfaces;
@@ -446,7 +447,7 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
                 continue;
             }
 
-            wf::log::info("agora-bridge: closing surface ", surface_id);
+            LOGI("agora-bridge: closing surface ", surface_id);
             view->close();
         }
 
@@ -482,14 +483,14 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
     {
         if (close_wake_fd_ < 0)
         {
-            wf::log::warn("agora-bridge: no wake fd available for close request");
+            LOGW("agora-bridge: no wake fd available for close request");
             return;
         }
 
         uint64_t one = 1;
         if ((::write(close_wake_fd_, &one, sizeof(one)) < 0) && (errno != EAGAIN))
         {
-            wf::log::warn("agora-bridge: wake write failed: ", std::strerror(errno));
+            LOGW("agora-bridge: wake write failed: ", std::strerror(errno));
         }
     }
 

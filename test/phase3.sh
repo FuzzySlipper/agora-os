@@ -25,6 +25,7 @@ RUNTIME_DIR="/run/agent-os"
 LOG_DIR="/var/log/agent-os"
 BIN_DIR="$(mktemp -d /tmp/phase3-e2e.XXXXXX)"
 WEB_DIR="$(mktemp -d /tmp/phase3-web.XXXXXX)"
+chmod 0755 "$BIN_DIR" "$WEB_DIR"
 SECRET_FILE="$RUNTIME_DIR/event-bus-web.secret"
 BRIDGE_LOG="$LOG_DIR/compositor-grants.jsonl"
 BUS_LOG="/tmp/agora-event-bus.log"
@@ -414,7 +415,7 @@ spawn_agent_webview() {
     local launch_script="$2"
     local expected_uid="$3"
     local spawn_json
-    spawn_json=$("$BIN_DIR/agentctl" spawn --name "$name" --cpu 50% --mem 256M --net local_only -- "$launch_script")
+    spawn_json=$("$BIN_DIR/agentctl" spawn --name "$name" --cpu 50% --mem 512M --net local_only -- "$launch_script")
     local actual_uid
     actual_uid=$(echo "$spawn_json" | json_get "['agent']['uid']")
     SPAWNED_UIDS+=("$actual_uid")
@@ -515,13 +516,14 @@ note "building services, CLIs, and the phase3 probe"
     go build -o "$BIN_DIR/phase3probe" ./test/phase3probe
 )
 
-mkdir -p "$RUNTIME_DIR" "$LOG_DIR"
+mkdir -p "$RUNTIME_DIR" "$LOG_DIR" /var/lib/agents
 rm -f "$RUNTIME_DIR"/{bus.sock,isolation.sock,audit.sock,compositor-bridge.sock,compositor-control.sock,event-bus-web.secret}
 rm -f "$BRIDGE_LOG"
 
 note "starting event bus, audit service, isolation service, and compositor bridge"
 "$BIN_DIR/event-bus" >"$BUS_LOG" 2>&1 &
 BUS_PID=$!
+wait_for_file "$RUNTIME_DIR/bus.sock" 10 || { echo "error: bus.sock not created" >&2; exit 1; }
 "$BIN_DIR/audit-service" >"$AUDIT_LOG" 2>&1 &
 AUDIT_PID=$!
 "$BIN_DIR/isolation-service" >"$ISOLATION_LOG" 2>&1 &
@@ -529,10 +531,10 @@ ISOLATION_PID=$!
 AGORA_COMPOSITOR_GRANT_LOG="$BRIDGE_LOG" "$BIN_DIR/compositor-bridge" >"$COMPOSITOR_LOG" 2>&1 &
 COMPOSITOR_PID=$!
 
-for sock in bus.sock audit.sock isolation.sock compositor-control.sock; do
-    if wait_for_file "$RUNTIME_DIR/$sock" 10; then
-        :
-    else
+for sock in audit.sock isolation.sock compositor-control.sock; do
+	if wait_for_file "$RUNTIME_DIR/$sock" 10; then
+		:
+	else
         echo "error: $sock not created" >&2
         exit 1
     fi
