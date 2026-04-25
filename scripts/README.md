@@ -24,8 +24,12 @@ sudo usermod -aG kvm $USER   # then re-login
 sudo scripts/vm.sh build       # one-time: install Arch to qcow2 (~5 min)
 scripts/vm.sh start             # boot headless, SSH on port 2222
 scripts/vm.sh gui               # boot with a local graphics window
+scripts/vm.sh gui --no-ssh-wait # boot even when you expect SSH/boot to be broken
 scripts/vm.sh ssh               # open a shell inside the VM
 scripts/vm.sh ssh 'cd /repo && go build ./cmd/...'  # one-shot command
+scripts/vm.sh status            # show QEMU/QMP/QGA/SSH reachability
+scripts/vm.sh screenshot        # capture the QEMU framebuffer to .vm/screenshots/latest.png
+scripts/vm.sh diag              # collect host, QMP/QGA, screenshot, and guest logs
 scripts/vm.sh phase2-deps      # install Wayfire/plugin/webview test deps inside the guest
 scripts/vm.sh snap clean-base   # save a snapshot (VM must be stopped)
 scripts/vm.sh restore clean-base
@@ -80,6 +84,29 @@ when the task needs a real guest compositor session. If GTK is unavailable on
 the host, override `AGORA_VM_GUI_DISPLAY` to another supported backend such as
 `sdl`.
 
+When the guest is broken before SSH comes up, boot with:
+
+```sh
+scripts/vm.sh gui --no-ssh-wait
+```
+
+Then use host-side diagnostics instead of manually transcribing the GUI state:
+
+```sh
+scripts/vm.sh status
+scripts/vm.sh screenshot        # .vm/screenshots/latest.png
+scripts/vm.sh console-log 300
+scripts/vm.sh diag              # .vm/diag/<timestamp>/
+scripts/vm.sh sendkey ctrl-alt-f2
+scripts/vm.sh serial            # interactive serial console, if the guest reaches getty
+```
+
+The VM exposes local-only QMP (`.vm/qmp.sock`), qemu-guest-agent
+(`.vm/qga.sock`), and serial (`.vm/serial.sock`) sockets while it is running.
+Newly built disks mirror GRUB/kernel output to `ttyS0`, enable
+`serial-getty@ttyS0.service`, and enable `qemu-guest-agent.service` so these
+channels can diagnose failures before SSH is available.
+
 ### Where state lives
 
 All VM artifacts go to `.vm/` in the repo root (gitignored):
@@ -90,6 +117,11 @@ All VM artifacts go to `.vm/` in the repo root (gitignored):
 | `ssh_key` / `ssh_key.pub` | tiny | Passwordless SSH into the VM |
 | `qemu.pid` | tiny | QEMU daemon PID |
 | `console.log` | grows | Serial console output for debugging |
+| `qmp.sock` | tiny | QMP control socket while QEMU is running |
+| `qga.sock` | tiny | qemu-guest-agent socket while QEMU is running and the guest agent is alive |
+| `serial.sock` | tiny | Interactive serial console socket while QEMU is running |
+| `screenshots/` | small | QEMU framebuffer captures from `vm.sh screenshot` |
+| `diag/` | varies | Diagnostic bundles from `vm.sh diag` |
 
 ### Environment overrides
 
@@ -111,4 +143,4 @@ All VM artifacts go to `.vm/` in the repo root (gitignored):
 - Root password is `root` (console emergency access only)
 - Host repo mounted at `/repo` via virtiofs (r/w, live — no rsync)
 - Arch stock kernel (`CONFIG_DEBUG_INFO_BTF=y` for future eBPF work)
-- Pre-installed: `go`, `nftables`, `git`, `base-devel`, `openssh`
+- Pre-installed: `go`, `nftables`, `git`, `base-devel`, `openssh`, `qemu-guest-agent`

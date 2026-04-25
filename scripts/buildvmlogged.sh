@@ -1,0 +1,1 @@
+sudo ./vm.sh build 2>&1 | tee /tmp/agora-vm-build.log
