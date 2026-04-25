@@ -40,6 +40,8 @@ cleanup_build_mount() {
     local nbd_dev="$2"
     local _attempt
 
+    sync -f "$mnt" 2>/dev/null || sync
+
     if mountpoint -q "$mnt/boot" 2>/dev/null; then
         for _attempt in 1 2 3; do
             umount "$mnt/boot" 2>/dev/null && break
@@ -562,6 +564,7 @@ EOF
         systemd-resolved \
         serial-getty@ttyS0.service \
         qemu-guest-agent.service
+    ln -sf /run/systemd/resolve/resolv.conf "$mnt/etc/resolv.conf"
 
     # SSH daemon: key-only auth
     sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' "$mnt/etc/ssh/sshd_config"
@@ -604,6 +607,19 @@ EOF
     info "Installing GRUB"
     arch-chroot "$mnt" grub-install --target=i386-pc "$NBD_DEV"
     arch-chroot "$mnt" grub-mkconfig -o /boot/grub/grub.cfg
+    if [[ -s "$mnt/boot/grub/grub.cfg.new" ]]; then
+        # On current Arch/grub in this chrooted NBD build, grub-mkconfig can
+        # report success while leaving the validated output at grub.cfg.new.
+        # Install that file explicitly from the host side so the VM never boots
+        # into the GRUB rescue shell just because /boot/grub/grub.cfg is absent.
+        info "grub-mkconfig left grub.cfg.new; validating and installing it as grub.cfg"
+        arch-chroot "$mnt" grub-script-check /boot/grub/grub.cfg.new
+        install -m 0600 "$mnt/boot/grub/grub.cfg.new" "$mnt/boot/grub/grub.cfg"
+        rm -f "$mnt/boot/grub/grub.cfg.new"
+    fi
+    [[ -s "$mnt/boot/grub/grub.cfg" ]] || die "GRUB config missing after grub-mkconfig; check $mnt/boot/grub/grub.cfg.new and build output"
+    arch-chroot "$mnt" grub-script-check /boot/grub/grub.cfg
+    sync -f "$mnt/boot/grub/grub.cfg" 2>/dev/null || sync
 
     # Cleanup
     trap - EXIT
@@ -852,7 +868,7 @@ cmd_status() {
     echo
     if ssh_quick_cmd true 2>/dev/null; then
         echo "SSH: reachable"
-        ssh_quick_cmd 'printf "hostname: "; hostname; printf "uptime: "; uptime; printf "cmdline: "; cat /proc/cmdline' || true
+        ssh_quick_cmd 'printf "hostname: "; uname -n; printf "uptime: "; uptime; printf "cmdline: "; cat /proc/cmdline' || true
     else
         echo "SSH: not reachable"
     fi

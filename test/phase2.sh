@@ -42,6 +42,8 @@ WINDOW_CLIENT=""
 ROOT_WINDOW_CMD=""
 AGENT_WINDOW_CMD=""
 WAYLAND_SOCKET=""
+COMPOSITOR_UID=""
+COMPOSITOR_GID=""
 ORIG_RUNTIME_MODE=""
 ORIG_SOCKET_MODE=""
 
@@ -67,17 +69,28 @@ require_wayland_session() {
     WAYLAND_SOCKET="$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY"
     [[ -S "$WAYLAND_SOCKET" ]] || { echo "error: Wayland socket $WAYLAND_SOCKET not found" >&2; exit 1; }
 
-    local compositor_uid
-    compositor_uid=$(stat -Lc '%u' "$WAYLAND_SOCKET")
-    if [[ "$compositor_uid" != "0" ]]; then
-        echo "error: $WAYLAND_SOCKET is owned by uid $compositor_uid, not uid 0" >&2
-        echo "Phase 2 acceptance currently targets a root-owned human surface." >&2
-        exit 1
-    fi
+    COMPOSITOR_UID="${AGORA_COMPOSITOR_UID:-}"
+    COMPOSITOR_GID="${AGORA_COMPOSITOR_GID:-}"
+    [[ -n "$COMPOSITOR_UID" ]] || COMPOSITOR_UID="$(stat -Lc '%u' "$WAYLAND_SOCKET")"
+    [[ -n "$COMPOSITOR_GID" ]] || COMPOSITOR_GID="$(stat -Lc '%g' "$WAYLAND_SOCKET")"
+    note "using compositor plugin peer uid=$COMPOSITOR_UID gid=$COMPOSITOR_GID from $WAYLAND_SOCKET"
 }
 
 require_cmd() {
     command -v "$1" >/dev/null || { echo "error: required command '$1' not found" >&2; exit 1; }
+}
+
+wait_for_socket() {
+    local path="$1"
+    local timeout="${2:-10}"
+    local deadline=$((SECONDS + timeout))
+
+    while (( SECONDS < deadline )); do
+        [[ -S "$path" ]] && return 0
+        sleep 0.25
+    done
+
+    return 1
 }
 
 pick_window_client() {
@@ -225,7 +238,7 @@ finally:
 
 sys.exit(1)
 PY
-    echo $!
+    WATCHER_PID=$!
 }
 
 launch_root_window() {
@@ -326,19 +339,18 @@ rm -f "$BRIDGE_LOG"
 note "starting event bus, isolation service, and compositor bridge"
 "$BIN_DIR/event-bus" >"$BUS_LOG" 2>&1 &
 BUS_PID=$!
+wait_for_socket "$RUNTIME_DIR/bus.sock" 10 || { echo "error: bus.sock not created" >&2; exit 1; }
+
 "$BIN_DIR/isolation-service" >"$ISOLATION_LOG" 2>&1 &
 ISOLATION_PID=$!
-AGORA_COMPOSITOR_GRANT_LOG="$BRIDGE_LOG" "$BIN_DIR/compositor-bridge" >"$COMPOSITOR_LOG" 2>&1 &
+wait_for_socket "$RUNTIME_DIR/isolation.sock" 10 || { echo "error: isolation.sock not created" >&2; exit 1; }
+
+AGORA_COMPOSITOR_UID="$COMPOSITOR_UID" \
+    AGORA_COMPOSITOR_GID="$COMPOSITOR_GID" \
+    AGORA_COMPOSITOR_GRANT_LOG="$BRIDGE_LOG" \
+    "$BIN_DIR/compositor-bridge" >"$COMPOSITOR_LOG" 2>&1 &
 COMPOSITOR_PID=$!
-
-for _ in $(seq 1 40); do
-    [[ -S "$RUNTIME_DIR/bus.sock" && -S "$RUNTIME_DIR/isolation.sock" && -S "$RUNTIME_DIR/compositor-control.sock" ]] && break
-    sleep 0.25
-done
-
-for sock in bus.sock isolation.sock compositor-control.sock; do
-    [[ -S "$RUNTIME_DIR/$sock" ]] || { echo "error: $sock not created" >&2; exit 1; }
-done
+wait_for_socket "$RUNTIME_DIR/compositor-control.sock" 10 || { echo "error: compositor-control.sock not created" >&2; exit 1; }
 
 relax_wayland_socket_perms
 sleep 1
@@ -383,7 +395,7 @@ else
 fi
 
 WATCHER_OUT="$(mktemp /tmp/phase2-input-denied.XXXXXX.json)"
-WATCHER_PID="$(start_bus_watcher "$WATCHER_OUT" 'compositor.surface.input' "$HUMAN_SURFACE_ID" 'keyboard' 5)"
+start_bus_watcher "$WATCHER_OUT" 'compositor.surface.input' "$HUMAN_SURFACE_ID" 'keyboard' 5
 "$BIN_DIR/compositorctl" set-input-context --agent-uid "$SPAWNED_UID" >/dev/null
 sleep 0.5
 wtype denied >/tmp/agora-wtype-denied.log 2>&1 || true
@@ -421,7 +433,7 @@ else
 fi
 
 WATCHER_OUT="$(mktemp /tmp/phase2-input-allowed.XXXXXX.json)"
-WATCHER_PID="$(start_bus_watcher "$WATCHER_OUT" 'compositor.surface.input' "$HUMAN_SURFACE_ID" 'keyboard' 2)"
+start_bus_watcher "$WATCHER_OUT" 'compositor.surface.input' "$HUMAN_SURFACE_ID" 'keyboard' 2
 sleep 0.5
 wtype allowed >/tmp/agora-wtype-allowed.log 2>&1 || true
 

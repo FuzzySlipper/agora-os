@@ -26,10 +26,12 @@ behavior.
 ## Use the graphical VM guest for authoritative Phase 2 and Phase 3 checks
 
 - Restore the `phase2-deps` snapshot and boot the VM with `scripts/vm.sh gui`.
-- Run `test/phase2.sh` inside a root-owned Wayfire session with the
-  `agora-bridge` plugin loaded.
-- Use a root-owned Wayfire session under `/run/user/0` so the script can
-  launch both the human-owned and agent-owned Wayland clients.
+- Run `test/phase2.sh` against a live Wayfire session with the `agora-bridge`
+  plugin loaded.
+- Current Wayfire refuses to run as root. Use a normal compositor user such as
+  `dev`, and let the tests derive the trusted plugin uid from the Wayland
+  socket owner (or override it with `AGORA_COMPOSITOR_UID`). The scripts still
+  run as root so they can launch uid-0 human clients and agent-owned clients.
 - Install one supported native Wayland terminal client: `foot`,
   `weston-terminal`, `alacritty`, or `kitty`.
 - Install `wtype` so the script can generate a real keyboard event for the
@@ -97,19 +99,18 @@ scripts/vm.sh restore phase2-deps
 scripts/vm.sh gui
 ```
 
-Then, in the guest console, launch the compositor session:
+Then start the dev-owned compositor session. The `phase2-deps` provisioner
+creates `/home/dev/.config/wayfire-agora.ini` with the `agora-bridge` plugin
+enabled and adds `dev` to the required seat/device groups:
 
 ```sh
-sudo systemctl start seatd
-sudo install -d -m 0700 /run/user/0
-# Keep /run/user/0 root-owned: Phase 2 currently models the human session as uid 0.
-sudo dbus-run-session env XDG_RUNTIME_DIR=/run/user/0 wayfire
+scripts/vm.sh ssh -- 'sudo systemctl start seatd && sudo install -d -o dev -g dev -m 0700 /run/user/1000 && sudo openvt -c 2 -f -s -- runuser -u dev -- sh -lc "export XDG_RUNTIME_DIR=/run/user/1000; export WLR_RENDERER_ALLOW_SOFTWARE=1; exec dbus-run-session -- wayfire -c /home/dev/.config/wayfire-agora.ini >/tmp/wayfire.log 2>&1"'
 ```
 
 From another host terminal, run the Phase 2 proof against that guest session:
 
 ```sh
-scripts/vm.sh ssh -- 'cd /repo && sudo env XDG_RUNTIME_DIR=/run/user/0 WAYLAND_DISPLAY=$(basename $(ls /run/user/0/wayland-* | head -n1)) test/phase2.sh'
+scripts/vm.sh ssh -- 'cd /repo && sudo env XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=$(basename $(ls /run/user/1000/wayland-* | grep -v lock | head -n1)) test/phase2.sh'
 ```
 
 ### Phase 3
@@ -121,19 +122,16 @@ scripts/vm.sh restore phase2-deps
 scripts/vm.sh gui
 ```
 
-Then, in the guest console, launch the compositor session:
+Then start the same dev-owned compositor session shape:
 
 ```sh
-sudo systemctl start seatd
-sudo install -d -m 0700 /run/user/0
-# Keep /run/user/0 root-owned: Phase 3 still models the human session as uid 0.
-sudo dbus-run-session env XDG_RUNTIME_DIR=/run/user/0 wayfire
+scripts/vm.sh ssh -- 'sudo systemctl start seatd && sudo install -d -o dev -g dev -m 0700 /run/user/1000 && sudo openvt -c 2 -f -s -- runuser -u dev -- sh -lc "export XDG_RUNTIME_DIR=/run/user/1000; export WLR_RENDERER_ALLOW_SOFTWARE=1; exec dbus-run-session -- wayfire -c /home/dev/.config/wayfire-agora.ini >/tmp/wayfire.log 2>&1"'
 ```
 
 From another host terminal, run the Phase 3 proof against that guest session:
 
 ```sh
-scripts/vm.sh ssh -- 'cd /repo && sudo env XDG_RUNTIME_DIR=/run/user/0 WAYLAND_DISPLAY=$(basename $(ls /run/user/0/wayland-* | head -n1)) test/phase3.sh'
+scripts/vm.sh ssh -- 'cd /repo && sudo env XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=$(basename $(ls /run/user/1000/wayland-* | grep -v lock | head -n1)) test/phase3.sh'
 ```
 
 For optional manual inspection after the probe passes, run the script from an

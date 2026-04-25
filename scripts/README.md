@@ -77,12 +77,19 @@ scripts/vm.sh gui
 ```
 
 That opens a local QEMU window with a virtual GPU while keeping the host
-workflow unprivileged. Log into the guest console, start `seatd`, and launch a
-root-owned Wayfire session there when you need to run `test/phase2.sh` or
-`test/phase3.sh`. Use `start` for Phase 1 and headless guest setup; use `gui`
-when the task needs a real guest compositor session. If GTK is unavailable on
-the host, override `AGORA_VM_GUI_DISPLAY` to another supported backend such as
-`sdl`.
+workflow unprivileged. Current Wayfire refuses to run as root, so the
+`phase2-deps` provisioner prepares a dev-owned session config at
+`/home/dev/.config/wayfire-agora.ini` and adds `dev` to the required
+seat/device groups. Start that compositor session when you need to run
+`test/phase2.sh` or `test/phase3.sh`:
+
+```sh
+scripts/vm.sh ssh -- 'sudo systemctl start seatd && sudo install -d -o dev -g dev -m 0700 /run/user/1000 && sudo openvt -c 2 -f -s -- runuser -u dev -- sh -lc "export XDG_RUNTIME_DIR=/run/user/1000; export WLR_RENDERER_ALLOW_SOFTWARE=1; exec dbus-run-session -- wayfire -c /home/dev/.config/wayfire-agora.ini >/tmp/wayfire.log 2>&1"'
+```
+
+Use `start` for Phase 1 and headless guest setup; use `gui` when the task needs
+a real guest compositor session. If GTK is unavailable on the host, override
+`AGORA_VM_GUI_DISPLAY` to another supported backend such as `sdl`.
 
 When the guest is broken before SSH comes up, boot with:
 

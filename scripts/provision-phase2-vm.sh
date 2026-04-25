@@ -49,6 +49,36 @@ install_packages() {
     pacman -S --needed --noconfirm "${REQUIRED_PACKAGES[@]}"
 }
 
+configure_dev_wayfire_session() {
+    if ! id dev >/dev/null 2>&1; then
+        info "Skipping dev Wayfire session setup: user dev does not exist"
+        return
+    fi
+
+    info "Configuring dev user for Wayfire compositor testing"
+    usermod -aG seat,video,input,render dev
+    install -d -o dev -g dev -m 0700 /home/dev/.config
+    cat > /home/dev/.config/wayfire-agora.ini <<'EOF'
+[core]
+plugins = \
+  autostart \
+  command \
+  place \
+  move \
+  resize \
+  wm-actions \
+  agora-bridge
+
+[agora-bridge]
+socket_path = /run/agent-os/compositor-bridge.sock
+emit_input_denied = true
+
+[autostart]
+autostart_wf_shell = false
+EOF
+    chown dev:dev /home/dev/.config/wayfire-agora.ini
+}
+
 print_next_steps() {
     cat <<'STEPS'
 
@@ -72,10 +102,14 @@ print_next_steps() {
 ::     runtime used by cmd/webview-launcher.
 ::   - After provisioning, use scripts/vm.sh gui on the host to boot the
 ::     guest with a local graphics window for live Wayfire validation.
+::   - Current Wayfire refuses to run as root. This provisioner prepares a
+::     dev-owned Wayfire config at /home/dev/.config/wayfire-agora.ini and
+::     adds dev to the seat/video/input/render groups for compositor tests.
 STEPS
 }
 
 require_root
 require_pacman
 install_packages
+configure_dev_wayfire_session
 print_next_steps

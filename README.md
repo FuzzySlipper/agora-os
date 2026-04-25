@@ -133,10 +133,11 @@ scripts/vm.sh gui
 
 Use the headless VM path for Phase 1 and guest-side dependency setup. Use the graphical guest path when the task needs a real Wayfire session or `test/phase2.sh` / `test/phase3.sh`. The goal is still to keep host interaction unprivileged after the one-time `scripts/vm.sh build` and do the risky compositor setup/testing inside the guest.
 
-Phase 3 validation uses the same graphical guest. After launching the root-owned Wayfire session, run the automated shell/webview proof:
+Phase 3 validation uses the same graphical guest. Current Wayfire refuses to run as root, so launch the prepared dev-owned compositor session and then run the automated shell/webview proof as root against that session:
 
 ```sh
-scripts/vm.sh ssh -- 'cd /repo && sudo env XDG_RUNTIME_DIR=/run/user/0 WAYLAND_DISPLAY=$(basename $(ls /run/user/0/wayland-* | head -n1)) test/phase3.sh'
+scripts/vm.sh ssh -- 'sudo systemctl start seatd && sudo install -d -o dev -g dev -m 0700 /run/user/1000 && sudo openvt -c 2 -f -s -- runuser -u dev -- sh -lc "export XDG_RUNTIME_DIR=/run/user/1000; export WLR_RENDERER_ALLOW_SOFTWARE=1; exec dbus-run-session -- wayfire -c /home/dev/.config/wayfire-agora.ini >/tmp/wayfire.log 2>&1"'
+scripts/vm.sh ssh -- 'cd /repo && sudo env XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=$(basename $(ls /run/user/1000/wayland-* | grep -v lock | head -n1)) test/phase3.sh'
 ```
 
 If you want the same proof to stay running for manual clicking and inspection after the probe passes, open an interactive guest shell or console and run:

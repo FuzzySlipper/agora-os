@@ -57,6 +57,8 @@ FIXTURE_PID=""
 PROBE_PID=""
 SHELL_WINDOW_PID=""
 WAYLAND_SOCKET=""
+COMPOSITOR_UID=""
+COMPOSITOR_GID=""
 ORIG_RUNTIME_MODE=""
 ORIG_SOCKET_MODE=""
 HUMAN_TOKEN=""
@@ -88,13 +90,11 @@ require_wayland_session() {
     WAYLAND_SOCKET="$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY"
     [[ -S "$WAYLAND_SOCKET" ]] || { echo "error: Wayland socket $WAYLAND_SOCKET not found" >&2; exit 1; }
 
-    local compositor_uid
-    compositor_uid=$(stat -Lc '%u' "$WAYLAND_SOCKET")
-    if [[ "$compositor_uid" != "0" ]]; then
-        echo "error: $WAYLAND_SOCKET is owned by uid $compositor_uid, not uid 0" >&2
-        echo "Phase 3 acceptance currently targets a root-owned human shell session." >&2
-        exit 1
-    fi
+    COMPOSITOR_UID="${AGORA_COMPOSITOR_UID:-}"
+    COMPOSITOR_GID="${AGORA_COMPOSITOR_GID:-}"
+    [[ -n "$COMPOSITOR_UID" ]] || COMPOSITOR_UID="$(stat -Lc '%u' "$WAYLAND_SOCKET")"
+    [[ -n "$COMPOSITOR_GID" ]] || COMPOSITOR_GID="$(stat -Lc '%g' "$WAYLAND_SOCKET")"
+    note "using compositor plugin peer uid=$COMPOSITOR_UID gid=$COMPOSITOR_GID from $WAYLAND_SOCKET"
 }
 
 require_cmd() {
@@ -528,7 +528,10 @@ wait_for_file "$RUNTIME_DIR/bus.sock" 10 || { echo "error: bus.sock not created"
 AUDIT_PID=$!
 "$BIN_DIR/isolation-service" >"$ISOLATION_LOG" 2>&1 &
 ISOLATION_PID=$!
-AGORA_COMPOSITOR_GRANT_LOG="$BRIDGE_LOG" "$BIN_DIR/compositor-bridge" >"$COMPOSITOR_LOG" 2>&1 &
+AGORA_COMPOSITOR_UID="$COMPOSITOR_UID" \
+    AGORA_COMPOSITOR_GID="$COMPOSITOR_GID" \
+    AGORA_COMPOSITOR_GRANT_LOG="$BRIDGE_LOG" \
+    "$BIN_DIR/compositor-bridge" >"$COMPOSITOR_LOG" 2>&1 &
 COMPOSITOR_PID=$!
 
 for sock in audit.sock isolation.sock compositor-control.sock; do
