@@ -189,8 +189,12 @@ func Run(ctx context.Context, cfg RunnerConfig) (*schema.RunResult, error) {
 
 	finishedAt := time.Now()
 
-	// 3. If the brain provided an explicit verdict, use it directly.
-	if doneAction != nil && doneAction.DoneVerdict != "" {
+	// 3. If the brain provided an explicit non-pass verdict (fail,
+	// ambiguous, env_failure), use it directly. A brain-reported
+	// "pass" verdict is NEVER trusted — the evaluator must verify
+	// against expected outcomes. This prevents LLM brains from
+	// self-reporting success without actually satisfying the scenario.
+	if doneAction != nil && doneAction.DoneVerdict != "" && doneAction.DoneVerdict != schema.VerdictPass {
 		return &schema.RunResult{
 			RunID:            cfg.RunID,
 			ScenarioID:       cfg.Scenario.ID,

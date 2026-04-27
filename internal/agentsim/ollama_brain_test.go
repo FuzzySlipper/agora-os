@@ -378,6 +378,51 @@ func TestRunner_WithOllamaBrain(t *testing.T) {
 	}
 }
 
+func TestRunner_BrainCannotSelfReportPass(t *testing.T) {
+	// A brain that returns done_verdict=pass but the scenario has
+	// unsatisfied expected outcomes must still fail.
+	socketPath, cleanup := testBus(t)
+	defer cleanup()
+
+	scenario := schema.EmpiricalScenario{
+		ID:       "no-self-pass",
+		RunCount: 1,
+		ExpectedOutcomes: []schema.ExpectedOutcome{
+			{ID: "o1", Description: "must fail", Source: "event_bus_topic", Match: "equals", Value: "nonexistent.topic"},
+		},
+	}
+
+	// Script: immediately done with pass.
+	script := []agentsim.Action{
+		{Kind: agentsim.ActionDone, DoneVerdict: schema.VerdictPass},
+	}
+
+	cfg := agentsim.RunnerConfig{
+		Scenario:  scenario,
+		Brain:     agentsim.NewScriptedBrain(script),
+		Agent:     schema.AgentInfo{Name: "test-agent", UID: 60001, Status: schema.StatusRunning},
+		BusSocket: socketPath,
+		RunID:     "no-self-pass",
+		Attempt:   1,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	result, err := agentsim.Run(ctx, cfg)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	// The brain said pass, but the evaluator should have overridden it.
+	if result.Verdict == schema.VerdictPass {
+		t.Error("verdict = pass, but evaluator should have rejected the brain's self-reported pass")
+	}
+	if result.Verdict != schema.VerdictFail {
+		t.Errorf("verdict = %s, want fail", result.Verdict)
+	}
+}
+
 func TestDeterministicTestsDontDependOnOllama(t *testing.T) {
 	// The deterministic brain does not implement BrainArtifacts.
 	scripted := agentsim.NewScriptedBrain(nil)

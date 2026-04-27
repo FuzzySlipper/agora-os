@@ -53,8 +53,14 @@ func (c OllamaConfig) ToBrainConfig() schema.BrainConfig {
 		if c.Options.TopP != nil {
 			bc.ModelOptions["top_p"] = *c.Options.TopP
 		}
+		if c.Options.TopK != nil {
+			bc.ModelOptions["top_k"] = *c.Options.TopK
+		}
 		if c.Options.Seed != nil {
 			bc.ModelOptions["seed"] = *c.Options.Seed
+		}
+		if c.Options.NumPredict != nil {
+			bc.ModelOptions["num_predict"] = *c.Options.NumPredict
 		}
 	}
 	return bc
