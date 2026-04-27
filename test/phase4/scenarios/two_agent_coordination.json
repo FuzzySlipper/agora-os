@@ -8,10 +8,10 @@
   "expected_outcomes": [
     {
       "id": "recv-request",
-      "description": "coordination request received via agent.work",
+      "description": "coordination request received via agent.message",
       "source": "event_bus_topic",
       "match": "contains",
-      "value": "agent.work"
+      "value": "agent.message"
     },
     {
       "id": "request-contains-task",

@@ -3,7 +3,9 @@ package agentsim_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -41,13 +43,15 @@ func runScenarioTest(t *testing.T, st scenarioTest) {
 		t.Fatalf("parse scenario: %v", err)
 	}
 
-	// Load script.
+	// Load script and expand ${} variables.
 	scriptData, err := os.ReadFile("../../" + st.scriptFile)
 	if err != nil {
 		t.Fatalf("read script: %v", err)
 	}
+	// Expand ${AGENT_UID} with the current process UID.
+	expanded := strings.ReplaceAll(string(scriptData), "${AGENT_UID}", fmt.Sprintf("%d", os.Getuid()))
 	var script []agentsim.Action
-	if err := json.Unmarshal(scriptData, &script); err != nil {
+	if err := json.Unmarshal([]byte(expanded), &script); err != nil {
 		t.Fatalf("parse script: %v", err)
 	}
 
@@ -91,6 +95,7 @@ func runScenarioTest(t *testing.T, st scenarioTest) {
 }
 
 func TestScenario_TwoAgentCoordination(t *testing.T) {
+	uid := uint32(os.Getuid())
 	runScenarioTest(t, scenarioTest{
 		name:         "two-agent-coordination",
 		scenarioFile: "test/phase4/scenarios/two_agent_coordination.json",
@@ -98,11 +103,12 @@ func TestScenario_TwoAgentCoordination(t *testing.T) {
 		wantVerdict:  schema.VerdictPass,
 		eventsToPublish: []eventToPublish{
 			{
-				topic: "agent.work.assigned",
-				body: map[string]any{
-					"task_id":        "coord-1",
-					"objective":      "Please summarize the attached data and respond with your summary.",
-					"worker_profile": "coder",
+				topic: fmt.Sprintf("agent.message.%d.%d.chat", uid, uid),
+				body: schema.AgentMessageEnvelope{
+					FromUID: uid,
+					ToUID:   uid,
+					Kind:    "chat",
+					Body:    json.RawMessage(`{"text":"Please summarize the attached data and respond with your summary."}`),
 				},
 			},
 		},
@@ -238,6 +244,26 @@ func TestScenario_GrantWorkflowDenied(t *testing.T) {
 						OwnerSessionID: "sess-1",
 						State:          schema.LeaseTerminated,
 					},
+				},
+			},
+		},
+	})
+}
+
+func TestScenario_AdminEscalationEscalated(t *testing.T) {
+	runScenarioTest(t, scenarioTest{
+		name:         "admin-escalation-escalated",
+		scenarioFile: "test/phase4/scenarios/admin_escalation_escalated.json",
+		scriptFile:   "test/phase4/scripts/admin_escalation_escalated_script.json",
+		wantVerdict:  schema.VerdictPass,
+		eventsToPublish: []eventToPublish{
+			{
+				topic: "admin.escalation.decided",
+				body: map[string]any{
+					"id":        "esc-escalated-1",
+					"timestamp": time.Now().Format(time.RFC3339),
+					"decision":  "escalate",
+					"reason":    "requested resource requires human review before access can be granted",
 				},
 			},
 		},

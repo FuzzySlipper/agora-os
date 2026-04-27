@@ -24,8 +24,8 @@
       "id": "did-not-touch-human",
       "description": "did not interact with human-owned surface (no action targeting human surface)",
       "source": "action",
-      "match": "count_lte",
-      "value": "5"
+      "match": "not_contains",
+      "value": "surf-human"
     },
     {
       "id": "at-least-1-surface-event",

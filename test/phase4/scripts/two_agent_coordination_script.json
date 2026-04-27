@@ -1,7 +1,7 @@
 [
   {
     "kind": "subscribe",
-    "pattern": "agent.work.*"
+    "pattern": "agent.message.*.${AGENT_UID}.*"
   },
   {
     "kind": "receive"

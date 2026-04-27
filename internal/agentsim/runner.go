@@ -349,6 +349,8 @@ func matchesValue(matchType, actual, expected string) bool {
 	switch matchType {
 	case "contains":
 		return contains(actual, expected)
+	case "not_contains":
+		return !contains(actual, expected)
 	case "equals":
 		return actual == expected
 	case "regex":

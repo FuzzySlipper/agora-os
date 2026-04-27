@@ -1,0 +1,32 @@
+[
+  {
+    "kind": "subscribe",
+    "pattern": "admin.escalation.*"
+  },
+  {
+    "kind": "publish",
+    "topic": "admin.escalation.requested",
+    "body": {
+      "agent_uid": 60010,
+      "task_context": "agent needs to access restricted system configuration",
+      "requested_action": "read /etc/agent-os/secrets.conf",
+      "requested_resource": "/etc/agent-os/secrets.conf",
+      "justification": "agent requires system configuration to complete assigned task"
+    }
+  },
+  {
+    "kind": "receive"
+  },
+  {
+    "kind": "publish",
+    "topic": "agent.work.needs_3po",
+    "body": {
+      "task_id": "esc-escalated-1",
+      "reason": "admin escalated to human review, agent paused awaiting decision",
+      "summary": "escalation was escalated to human review; agent paused and will await human decision before proceeding"
+    }
+  },
+  {
+    "kind": "done"
+  }
+]
