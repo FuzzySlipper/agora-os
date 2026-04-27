@@ -20,6 +20,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/patch/agora-os/internal/agentsim"
@@ -35,6 +36,8 @@ func main() {
 	agentName := flag.String("agent-name", "agent-sim", "agent name for identity")
 	artifactDir := flag.String("artifact-dir", "", "directory for per-run artifacts (transcript, events)")
 	timeoutSec := flag.Int("timeout", 300, "run timeout in seconds")
+	varArgs := flagSlice{}
+	flag.Var(&varArgs, "var", "template variable KEY=VALUE (repeatable; expands ${KEY} in script URLs/headers)")
 	flag.Parse()
 
 	if *scenarioPath == "" {
@@ -49,6 +52,9 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Build variable map from --var flags.
+	vars := parseVarArgs(varArgs)
+
 	// Build brain.
 	var brain agentsim.Brain
 	if *scriptPath != "" {
@@ -56,6 +62,15 @@ func main() {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "agent-sim: load script: %v\n", err)
 			os.Exit(1)
+		}
+		// Expand template variables in URLs and headers.
+		for i := range actions {
+			actions[i].URL = expandVars(actions[i].URL, vars)
+			expandedHeaders := make(map[string]string, len(actions[i].Headers))
+			for k, v := range actions[i].Headers {
+				expandedHeaders[expandVars(k, vars)] = expandVars(v, vars)
+			}
+			actions[i].Headers = expandedHeaders
 		}
 		brain = agentsim.NewScriptedBrain(actions)
 	} else {
@@ -136,4 +151,33 @@ func loadScript(path string) ([]agentsim.Action, error) {
 		return nil, fmt.Errorf("invalid script JSON: %w", err)
 	}
 	return actions, nil
+}
+
+// flagSlice implements flag.Value for repeatable --var flags.
+type flagSlice []string
+
+func (f *flagSlice) String() string { return "" }
+func (f *flagSlice) Set(v string) error {
+	*f = append(*f, v)
+	return nil
+}
+
+// parseVarArgs parses KEY=VALUE pairs from --var flags.
+func parseVarArgs(args []string) map[string]string {
+	vars := make(map[string]string)
+	for _, a := range args {
+		k, v, ok := strings.Cut(a, "=")
+		if ok {
+			vars[k] = v
+		}
+	}
+	return vars
+}
+
+// expandVars replaces ${KEY} placeholders with values from vars.
+func expandVars(s string, vars map[string]string) string {
+	for k, v := range vars {
+		s = strings.ReplaceAll(s, "${"+k+"}", v)
+	}
+	return s
 }
