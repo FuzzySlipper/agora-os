@@ -174,7 +174,7 @@ func (a *Agent) callLLM(userContent string) (string, error) {
 
 func (a *Agent) logEntry(req schema.EscalationRequest, resp schema.EscalationResponse) {
 	entry := struct {
-		Timestamp time.Time                `json:"timestamp"`
+		Timestamp time.Time                 `json:"timestamp"`
 		Request   schema.EscalationRequest  `json:"request"`
 		Response  schema.EscalationResponse `json:"response"`
 	}{

@@ -547,6 +547,84 @@ func TestRunner_Phase3ProtocolTopics(t *testing.T) {
 	}
 }
 
+func TestRunner_CheckedInWorkerLifecycleScenario(t *testing.T) {
+	// Load the checked-in scenario and script from disk, proving the
+	// runner can execute a reusable Phase 3 protocol-path scenario
+	// without an LLM. This is the CI-style smoke hook.
+	socketPath, cleanup := testBus(t)
+	defer cleanup()
+
+	scenarioData, err := os.ReadFile("../../test/phase4/scenarios/worker_lifecycle.json")
+	if err != nil {
+		t.Fatalf("read scenario: %v", err)
+	}
+	var scenario schema.EmpiricalScenario
+	if err := json.Unmarshal(scenarioData, &scenario); err != nil {
+		t.Fatalf("parse scenario: %v", err)
+	}
+
+	scriptData, err := os.ReadFile("../../test/phase4/scripts/worker_lifecycle_script.json")
+	if err != nil {
+		t.Fatalf("read script: %v", err)
+	}
+	var script []agentsim.Action
+	if err := json.Unmarshal(scriptData, &script); err != nil {
+		t.Fatalf("parse script: %v", err)
+	}
+
+	// Publish the Phase 3 lifecycle events from another client.
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		c := busClient(t, socketPath)
+		defer c.Close()
+
+		spawned, _ := json.Marshal(schema.AgentLifecycleEvent{
+			Agent: schema.AgentInfo{
+				Name: "worker-1", UID: 60002,
+				Status: schema.StatusRunning,
+				Slice:  "agent-60002.slice",
+			},
+		})
+		c.Publish(schema.TopicAgentLifecycleSpawned, json.RawMessage(spawned))
+
+		time.Sleep(10 * time.Millisecond)
+		assigned, _ := json.Marshal(schema.WorkerLifecycleEvent{
+			Lease: schema.WorkerLease{
+				WorkerID:       "w1",
+				AgentUID:       60002,
+				Profile:        "coder",
+				OwnerSessionID: "sess-1",
+				State:          schema.LeaseRunning,
+			},
+		})
+		c.Publish(schema.TopicAgentLifecycleAssigned, json.RawMessage(assigned))
+	}()
+
+	cfg := agentsim.RunnerConfig{
+		Scenario:  scenario,
+		Brain:     agentsim.NewScriptedBrain(script),
+		Agent:     schema.AgentInfo{Name: "agent-sim-smoke", UID: 60010, Status: schema.StatusRunning},
+		BusSocket: socketPath,
+		RunID:     "checked-in-smoke",
+		Attempt:   1,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	result, err := agentsim.Run(ctx, cfg)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if result.Verdict != schema.VerdictPass {
+		t.Errorf("verdict = %s, want pass. fail reason: %s", result.Verdict, result.FailureReason)
+		for _, obs := range result.Observations {
+			t.Logf("  outcome %s: satisfied=%v actual=%s", obs.OutcomeID, obs.Satisfied, obs.Actual)
+		}
+	}
+}
+
 func TestPeerUIDAgent(t *testing.T) {
 	agent := agentsim.PeerUIDAgent("test-agent")
 	if agent.Name != "test-agent" {

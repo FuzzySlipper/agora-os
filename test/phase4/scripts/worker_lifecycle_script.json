@@ -1,0 +1,31 @@
+[
+  {
+    "kind": "subscribe",
+    "pattern": "agent.lifecycle.*"
+  },
+  {
+    "kind": "subscribe",
+    "pattern": "agent.work.*"
+  },
+  {
+    "kind": "receive"
+  },
+  {
+    "kind": "receive"
+  },
+  {
+    "kind": "publish",
+    "topic": "agent.work.result",
+    "body": {
+      "task_id": "t1",
+      "status": "ok",
+      "summary": "deterministic smoke run complete",
+      "artifacts": [
+        {"kind": "summary", "text": "worker-lifecycle scenario passed"}
+      ]
+    }
+  },
+  {
+    "kind": "done"
+  }
+]

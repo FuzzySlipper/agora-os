@@ -1,0 +1,45 @@
+{
+  "id": "worker-lifecycle",
+  "title": "Phase 3 worker lifecycle round-trip (deterministic smoke)",
+  "description": "An agent-sim agent subscribes to agent.work.* and agent.lifecycle.* topics, receives a spawn+assign event pair, publishes a work result, and evaluates expected outcomes against Phase 3 protocol events. Suitable for CI-style smoke validation: no LLM, no external services beyond a running event bus.",
+  "run_count": 1,
+  "success_threshold_percent": 100,
+  "timeout_seconds": 30,
+  "expected_outcomes": [
+    {
+      "id": "recv-spawned",
+      "description": "agent.lifecycle.spawned event received with worker uid",
+      "source": "event_bus_topic",
+      "match": "equals",
+      "value": "agent.lifecycle.spawned"
+    },
+    {
+      "id": "recv-assigned",
+      "description": "agent.lifecycle.assigned event received",
+      "source": "event_bus_topic",
+      "match": "equals",
+      "value": "agent.lifecycle.assigned"
+    },
+    {
+      "id": "spawned-payload-uid",
+      "description": "spawned event payload contains agent uid",
+      "source": "event_bus_payload",
+      "match": "contains",
+      "value": "\"uid\""
+    },
+    {
+      "id": "published-result",
+      "description": "work result published to agent.work.result",
+      "source": "action",
+      "match": "contains",
+      "value": "agent.work.result"
+    },
+    {
+      "id": "at-least-2-events",
+      "description": "at least 2 protocol events received",
+      "source": "event_bus_topic",
+      "match": "count_gte",
+      "value": "2"
+    }
+  ]
+}
