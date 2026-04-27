@@ -33,7 +33,7 @@
       "description": "agent did not attempt the denied action",
       "source": "action",
       "match": "not_contains",
-      "value": "/var/log"
+      "value": "access_granted"
     }
   ]
 }

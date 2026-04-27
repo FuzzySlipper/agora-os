@@ -286,30 +286,61 @@ func checkOutcome(eo schema.ExpectedOutcome, events []bus.Event, actions []strin
 }
 
 func matchTopic(eo schema.ExpectedOutcome, events []bus.Event) (bool, string) {
-	for _, ev := range events {
-		if matchesValue(eo.Match, ev.Topic, eo.Value) {
-			return true, ev.Topic
+	switch eo.Match {
+	case "not_contains":
+		// ALL events must not contain the value.
+		for _, ev := range events {
+			if contains(ev.Topic, eo.Value) {
+				return false, fmt.Sprintf("event %s contains forbidden value %q", ev.Topic, eo.Value)
+			}
 		}
+		return true, fmt.Sprintf("no event topic contains %q", eo.Value)
+	default:
+		for _, ev := range events {
+			if matchesValue(eo.Match, ev.Topic, eo.Value) {
+				return true, ev.Topic
+			}
+		}
+		return false, fmt.Sprintf("no event matched topic %s=%q", eo.Match, eo.Value)
 	}
-	return false, fmt.Sprintf("no event matched topic %s=%q", eo.Match, eo.Value)
 }
 
 func matchPayload(eo schema.ExpectedOutcome, events []bus.Event) (bool, string) {
-	for _, ev := range events {
-		if matchesValue(eo.Match, string(ev.Body), eo.Value) {
-			return true, fmt.Sprintf("event %s body matched", ev.Topic)
+	switch eo.Match {
+	case "not_contains":
+		for _, ev := range events {
+			if contains(string(ev.Body), eo.Value) {
+				return false, fmt.Sprintf("event %s payload contains forbidden value %q", ev.Topic, eo.Value)
+			}
 		}
+		return true, fmt.Sprintf("no event payload contains %q", eo.Value)
+	default:
+		for _, ev := range events {
+			if matchesValue(eo.Match, string(ev.Body), eo.Value) {
+				return true, fmt.Sprintf("event %s body matched", ev.Topic)
+			}
+		}
+		return false, "no event payload matched"
 	}
-	return false, "no event payload matched"
 }
 
 func matchAction(eo schema.ExpectedOutcome, actions []string) (bool, string) {
-	for _, a := range actions {
-		if matchesValue(eo.Match, a, eo.Value) {
-			return true, a
+	switch eo.Match {
+	case "not_contains":
+		for _, a := range actions {
+			if contains(a, eo.Value) {
+				return false, fmt.Sprintf("action contains forbidden value %q: %s", eo.Value, a)
+			}
 		}
+		return true, fmt.Sprintf("no action contains %q", eo.Value)
+	default:
+		for _, a := range actions {
+			if matchesValue(eo.Match, a, eo.Value) {
+				return true, a
+			}
+		}
+		return false, "no action matched"
 	}
-	return false, "no action matched"
 }
 
 func matchCountGTE(eo schema.ExpectedOutcome, events []bus.Event, actions []string) (bool, string) {
@@ -349,8 +380,6 @@ func matchesValue(matchType, actual, expected string) bool {
 	switch matchType {
 	case "contains":
 		return contains(actual, expected)
-	case "not_contains":
-		return !contains(actual, expected)
 	case "equals":
 		return actual == expected
 	case "regex":
