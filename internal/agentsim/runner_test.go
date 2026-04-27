@@ -625,6 +625,79 @@ func TestRunner_CheckedInWorkerLifecycleScenario(t *testing.T) {
 	}
 }
 
+func TestRunner_CheckedInAuditCompositorScenario(t *testing.T) {
+	// Load the checked-in audit+compositor Phase 3 scenario and script.
+	socketPath, cleanup := testBus(t)
+	defer cleanup()
+
+	scenarioData, err := os.ReadFile("../../test/phase4/scenarios/audit_compositor.json")
+	if err != nil {
+		t.Fatalf("read scenario: %v", err)
+	}
+	var scenario schema.EmpiricalScenario
+	if err := json.Unmarshal(scenarioData, &scenario); err != nil {
+		t.Fatalf("parse scenario: %v", err)
+	}
+
+	scriptData, err := os.ReadFile("../../test/phase4/scripts/audit_compositor_script.json")
+	if err != nil {
+		t.Fatalf("read script: %v", err)
+	}
+	var script []agentsim.Action
+	if err := json.Unmarshal(scriptData, &script); err != nil {
+		t.Fatalf("parse script: %v", err)
+	}
+
+	// Publish audit and compositor events from another client.
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		c := busClient(t, socketPath)
+		defer c.Close()
+
+		audit, _ := json.Marshal(schema.AuditEvent{
+			Timestamp: time.Now(),
+			AgentUID:  60010,
+			AgentName: "agent-sim-smoke",
+			Action:    schema.ActionFileModify,
+			Resource:  "/tmp/test.txt",
+			Outcome:   schema.OutcomeAllowed,
+		})
+		c.Publish("audit.file.modify", json.RawMessage(audit))
+
+		time.Sleep(10 * time.Millisecond)
+		surface, _ := json.Marshal(map[string]any{
+			"surface_id": "surf-1",
+			"owner":      60010,
+			"mapped":     true,
+		})
+		c.Publish("compositor.surface.created", json.RawMessage(surface))
+	}()
+
+	cfg := agentsim.RunnerConfig{
+		Scenario:  scenario,
+		Brain:     agentsim.NewScriptedBrain(script),
+		Agent:     schema.AgentInfo{Name: "agent-sim-smoke", UID: 60010, Status: schema.StatusRunning},
+		BusSocket: socketPath,
+		RunID:     "audit-compositor-smoke",
+		Attempt:   1,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	result, err := agentsim.Run(ctx, cfg)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if result.Verdict != schema.VerdictPass {
+		t.Errorf("verdict = %s, want pass. fail reason: %s", result.Verdict, result.FailureReason)
+		for _, obs := range result.Observations {
+			t.Logf("  outcome %s: satisfied=%v actual=%s", obs.OutcomeID, obs.Satisfied, obs.Actual)
+		}
+	}
+}
+
 func TestPeerUIDAgent(t *testing.T) {
 	agent := agentsim.PeerUIDAgent("test-agent")
 	if agent.Name != "test-agent" {

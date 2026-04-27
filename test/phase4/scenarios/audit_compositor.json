@@ -1,0 +1,52 @@
+{
+  "id": "audit-compositor-smoke",
+  "title": "Phase 3 audit stream and compositor surface smoke",
+  "description": "Agent-sim subscribes to audit.file.* and compositor.surface.* topics, receives audit and surface events, publishes a surface state update, and evaluates against Phase 3 audit/compositor protocol paths. These are the same topic families exercised by test/phase3probe.",
+  "run_count": 1,
+  "success_threshold_percent": 100,
+  "timeout_seconds": 30,
+  "expected_outcomes": [
+    {
+      "id": "recv-audit",
+      "description": "audit.file.modify event received",
+      "source": "event_bus_topic",
+      "match": "equals",
+      "value": "audit.file.modify"
+    },
+    {
+      "id": "recv-surface",
+      "description": "compositor.surface.created event received",
+      "source": "event_bus_topic",
+      "match": "equals",
+      "value": "compositor.surface.created"
+    },
+    {
+      "id": "audit-agent-uid",
+      "description": "audit event payload contains agent_uid",
+      "source": "event_bus_payload",
+      "match": "contains",
+      "value": "agent_uid"
+    },
+    {
+      "id": "surface-has-uid",
+      "description": "surface event payload contains surface owner uid",
+      "source": "event_bus_payload",
+      "match": "contains",
+      "value": "\"owner\""
+    },
+    {
+      "id": "published-surface-state",
+      "description": "surface state update published",
+      "source": "action",
+      "match": "contains",
+      "value": "compositor.surface.focused"
+    },
+    {
+      "id": "at-least-2-events",
+      "description": "at least 2 events received across audit and compositor paths",
+      "source": "event_bus_topic",
+      "match": "count_gte",
+      "value": "2"
+    }
+  ]
+}
