@@ -1,0 +1,28 @@
+[
+  {
+    "kind": "http",
+    "method": "GET",
+    "url": "http://127.0.0.1:7780/api/shell/state",
+    "headers": {
+      "Authorization": "Bearer ${HUMAN_TOKEN}"
+    }
+  },
+  {
+    "kind": "ws_conn",
+    "url": "ws://127.0.0.1:7780/api/shell/audit/ws",
+    "headers": {
+      "Authorization": "Bearer ${HUMAN_TOKEN}"
+    }
+  },
+  {
+    "kind": "ws_recv",
+    "ws_msg_count": 2,
+    "ws_timeout_ms": 5000
+  },
+  {
+    "kind": "ws_close"
+  },
+  {
+    "kind": "done"
+  }
+]

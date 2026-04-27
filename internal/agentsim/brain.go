@@ -17,6 +17,19 @@ import (
 // Brain interface
 // ---------------------------------------------------------------------------
 
+// HTTPResponse is the result of an ActionHTTP request, stored for the
+// evaluator and included in state snapshots.
+type HTTPResponse struct {
+	StatusCode int               `json:"status_code"`
+	Body       string            `json:"body"`
+	Headers    map[string]string `json:"headers,omitempty"`
+}
+
+// WSMessage is a single WebSocket message received during ws_recv.
+type WSMessage struct {
+	Body string `json:"body"`
+}
+
 // StateSnapshot is the world as the brain sees it at the start of an
 // observe-act cycle. The runner populates this from the live event bus
 // and agent state before calling Brain.Observe.
@@ -35,6 +48,13 @@ type StateSnapshot struct {
 	// RecentEvents is a sliding window of events received from the bus
 	// since the last observe cycle.
 	RecentEvents []bus.Event `json:"recent_events,omitempty"`
+
+	// LastHTTPResponse is the result of the most recent HTTP action.
+	LastHTTPResponse *HTTPResponse `json:"last_http_response,omitempty"`
+
+	// WSReceived is the accumulated set of WebSocket messages received
+	// during ws_recv actions across the run.
+	WSReceived []WSMessage `json:"ws_received,omitempty"`
 }
 
 // ActionKind discriminates the type of action the brain wants to take.
@@ -45,7 +65,12 @@ const (
 	ActionSubscribe ActionKind = "subscribe"
 	ActionReceive   ActionKind = "receive" // blocking wait for one event
 	ActionSleep     ActionKind = "sleep"
-	ActionDone      ActionKind = "done" // brain signals run complete
+	ActionHTTP      ActionKind = "http"     // HTTP request (GET/POST)
+	ActionWSConn    ActionKind = "ws_conn"  // WebSocket connect
+	ActionWSRecv    ActionKind = "ws_recv"  // WebSocket receive messages
+	ActionWSSend    ActionKind = "ws_send"  // WebSocket send message
+	ActionWSClose   ActionKind = "ws_close" // WebSocket close
+	ActionDone      ActionKind = "done"     // brain signals run complete
 )
 
 // Action is a single step the brain emits. Only one action per observe-act
@@ -62,6 +87,15 @@ type Action struct {
 
 	// Sleep duration in milliseconds.
 	SleepMS int `json:"sleep_ms,omitempty"`
+
+	// HTTP fields.
+	URL     string            `json:"url,omitempty"`
+	Method  string            `json:"method,omitempty"`  // GET, POST (default GET)
+	Headers map[string]string `json:"headers,omitempty"` // request headers
+
+	// WebSocket fields.
+	WSMsgCount  int `json:"ws_msg_count,omitempty"`  // messages to receive in ws_recv
+	WSTimeoutMS int `json:"ws_timeout_ms,omitempty"` // per-message receive timeout
 
 	// Done verdict — optional; when omitted the evaluator runs against
 	// the scenario's expected outcomes. When set, the run ends immediately

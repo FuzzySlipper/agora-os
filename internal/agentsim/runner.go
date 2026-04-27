@@ -4,13 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/patch/agora-os/internal/bus"
 	"github.com/patch/agora-os/internal/schema"
 )
@@ -52,15 +57,20 @@ func Run(ctx context.Context, cfg RunnerConfig) (*schema.RunResult, error) {
 	var actionsAttempted []string
 	var allEvents []bus.Event
 	var recentEvents []bus.Event
+	var wsConn *websocket.Conn
+	var httpResp *HTTPResponse
+	var wsMessages []WSMessage
 	step := 0
 	var doneAction *Action
 
 	for {
 		state := StateSnapshot{
-			Agent:        cfg.Agent,
-			Scenario:     cfg.Scenario,
-			Step:         step,
-			RecentEvents: recentEvents,
+			Agent:            cfg.Agent,
+			Scenario:         cfg.Scenario,
+			Step:             step,
+			RecentEvents:     recentEvents,
+			LastHTTPResponse: httpResp,
+			WSReceived:       wsMessages,
 		}
 
 		action, err := cfg.Brain.Observe(state)
@@ -120,6 +130,40 @@ func Run(ctx context.Context, cfg RunnerConfig) (*schema.RunResult, error) {
 					"cancelled: "+ctx.Err().Error()), nil
 			}
 
+		case ActionHTTP:
+			httpResp, execErr = executeHTTP(ctx, action)
+			if httpResp != nil {
+				allEvents = append(allEvents, httpResponseAsEvent(*httpResp))
+			}
+
+		case ActionWSConn:
+			wsConn, execErr = dialWebSocket(ctx, action)
+
+		case ActionWSSend:
+			if wsConn == nil {
+				execErr = fmt.Errorf("ws_send: not connected")
+			} else {
+				execErr = wsConn.WriteMessage(websocket.TextMessage, action.Body)
+			}
+
+		case ActionWSRecv:
+			if wsConn == nil {
+				execErr = fmt.Errorf("ws_recv: not connected")
+			} else {
+				var msgs []WSMessage
+				msgs, execErr = receiveWSMessages(ctx, wsConn, action.WSMsgCount, action.WSTimeoutMS)
+				wsMessages = append(wsMessages, msgs...)
+				for _, m := range msgs {
+					allEvents = append(allEvents, wsMessageAsEvent(m))
+				}
+			}
+
+		case ActionWSClose:
+			if wsConn != nil {
+				wsConn.Close()
+				wsConn = nil
+			}
+
 		case ActionDone:
 			doneAction = &action
 		default:
@@ -136,6 +180,11 @@ func Run(ctx context.Context, cfg RunnerConfig) (*schema.RunResult, error) {
 			break
 		}
 		step++
+	}
+
+	// Cleanup WebSocket connection if still open.
+	if wsConn != nil {
+		wsConn.Close()
 	}
 
 	finishedAt := time.Now()
@@ -156,7 +205,7 @@ func Run(ctx context.Context, cfg RunnerConfig) (*schema.RunResult, error) {
 	}
 
 	// 4. Evaluate against expected outcomes.
-	observations := evaluate(cfg.Scenario.ExpectedOutcomes, allEvents, actionsAttempted)
+	observations := evaluate(cfg.Scenario.ExpectedOutcomes, allEvents, actionsAttempted, httpResp, wsMessages)
 
 	verdict, failCat, failReason := computeVerdict(observations)
 
@@ -187,10 +236,10 @@ func Run(ctx context.Context, cfg RunnerConfig) (*schema.RunResult, error) {
 // Evaluator
 // ---------------------------------------------------------------------------
 
-func evaluate(expected []schema.ExpectedOutcome, events []bus.Event, actions []string) []schema.EvaluatorObservation {
+func evaluate(expected []schema.ExpectedOutcome, events []bus.Event, actions []string, httpResp *HTTPResponse, wsMessages []WSMessage) []schema.EvaluatorObservation {
 	obs := make([]schema.EvaluatorObservation, 0, len(expected))
 	for _, eo := range expected {
-		satisfied, actual := checkOutcome(eo, events, actions)
+		satisfied, actual := checkOutcome(eo, events, actions, httpResp, wsMessages)
 		obs = append(obs, schema.EvaluatorObservation{
 			OutcomeID: eo.ID,
 			Satisfied: satisfied,
@@ -200,7 +249,7 @@ func evaluate(expected []schema.ExpectedOutcome, events []bus.Event, actions []s
 	return obs
 }
 
-func checkOutcome(eo schema.ExpectedOutcome, events []bus.Event, actions []string) (bool, string) {
+func checkOutcome(eo schema.ExpectedOutcome, events []bus.Event, actions []string, httpResp *HTTPResponse, wsMessages []WSMessage) (bool, string) {
 	// count_gte / count_lte apply to event or action counts regardless of source.
 	switch eo.Match {
 	case "count_gte":
@@ -216,6 +265,12 @@ func checkOutcome(eo schema.ExpectedOutcome, events []bus.Event, actions []strin
 		return matchPayload(eo, events)
 	case "action":
 		return matchAction(eo, actions)
+	case "http_response":
+		return matchHTTPResponse(eo, httpResp)
+	case "http_status":
+		return matchHTTPStatus(eo, httpResp)
+	case "ws_message":
+		return matchWSMessage(eo, wsMessages)
 	default:
 		return false, fmt.Sprintf("unsupported outcome source: %s", eo.Source)
 	}
@@ -401,4 +456,148 @@ func PeerUIDAgent(name string) schema.AgentInfo {
 		UID:    uid,
 		Status: schema.StatusRunning,
 	}
+}
+
+// ---------------------------------------------------------------------------
+// HTTP / WebSocket helpers
+// ---------------------------------------------------------------------------
+
+func executeHTTP(ctx context.Context, action Action) (*HTTPResponse, error) {
+	method := action.Method
+	if method == "" {
+		method = "GET"
+	}
+	var bodyReader io.Reader
+	if len(action.Body) > 0 {
+		bodyReader = strings.NewReader(string(action.Body))
+	}
+	req, err := http.NewRequestWithContext(ctx, method, action.URL, bodyReader)
+	if err != nil {
+		return nil, fmt.Errorf("http: %w", err)
+	}
+	for k, v := range action.Headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("http %s %s: %w", method, action.URL, err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("http read body: %w", err)
+	}
+	h := &HTTPResponse{
+		StatusCode: resp.StatusCode,
+		Body:       string(body),
+		Headers:    make(map[string]string),
+	}
+	for k := range resp.Header {
+		h.Headers[k] = resp.Header.Get(k)
+	}
+	return h, nil
+}
+
+func dialWebSocket(ctx context.Context, action Action) (*websocket.Conn, error) {
+	u, err := url.Parse(action.URL)
+	if err != nil {
+		return nil, fmt.Errorf("ws parse url: %w", err)
+	}
+	header := http.Header{}
+	for k, v := range action.Headers {
+		header.Set(k, v)
+	}
+	dialer := websocket.Dialer{}
+	conn, _, err := dialer.DialContext(ctx, action.URL, header)
+	if err != nil {
+		return nil, fmt.Errorf("ws dial %s: %w", u.Redacted(), err)
+	}
+	return conn, nil
+}
+
+var _ = url.Parse // keep import
+
+func receiveWSMessages(ctx context.Context, conn *websocket.Conn, count int, timeoutMS int) ([]WSMessage, error) {
+	if count <= 0 {
+		count = 1
+	}
+	var msgs []WSMessage
+	for i := 0; i < count; i++ {
+		msg, err := recvOneWSMsg(ctx, conn, timeoutMS)
+		if err != nil {
+			return msgs, fmt.Errorf("ws recv %d/%d: %w", i+1, count, err)
+		}
+		msgs = append(msgs, msg)
+	}
+	return msgs, nil
+}
+
+func recvOneWSMsg(ctx context.Context, conn *websocket.Conn, timeoutMS int) (WSMessage, error) {
+	if timeoutMS <= 0 {
+		timeoutMS = 5000
+	}
+	type result struct {
+		msg WSMessage
+		err error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		_, data, err := conn.ReadMessage()
+		if err != nil {
+			ch <- result{err: err}
+		} else {
+			ch <- result{msg: WSMessage{Body: string(data)}}
+		}
+	}()
+	select {
+	case r := <-ch:
+		return r.msg, r.err
+	case <-ctx.Done():
+		return WSMessage{}, fmt.Errorf("ws recv cancelled: %w", ctx.Err())
+	case <-time.After(time.Duration(timeoutMS) * time.Millisecond):
+		return WSMessage{}, fmt.Errorf("ws recv timeout after %dms", timeoutMS)
+	}
+}
+
+func httpResponseAsEvent(resp HTTPResponse) bus.Event {
+	body, _ := json.Marshal(map[string]any{
+		"status": resp.StatusCode,
+		"body":   resp.Body,
+	})
+	return bus.Event{Topic: "http.response", Body: body}
+}
+
+func wsMessageAsEvent(msg WSMessage) bus.Event {
+	body, _ := json.Marshal(map[string]any{"body": msg.Body})
+	return bus.Event{Topic: "ws.message", Body: body}
+}
+
+func matchHTTPResponse(eo schema.ExpectedOutcome, httpResp *HTTPResponse) (bool, string) {
+	if httpResp == nil {
+		return false, "no HTTP response available"
+	}
+	if matchesValue(eo.Match, httpResp.Body, eo.Value) {
+		return true, fmt.Sprintf("HTTP body matched: %s", eo.Match)
+	}
+	return false, fmt.Sprintf("HTTP body did not match %s=%q", eo.Match, eo.Value)
+}
+
+func matchHTTPStatus(eo schema.ExpectedOutcome, httpResp *HTTPResponse) (bool, string) {
+	if httpResp == nil {
+		return false, "no HTTP response available"
+	}
+	statusStr := strconv.Itoa(httpResp.StatusCode)
+	if matchesValue(eo.Match, statusStr, eo.Value) {
+		return true, fmt.Sprintf("HTTP status %s matched", statusStr)
+	}
+	return false, fmt.Sprintf("HTTP status %s did not match %s=%q", statusStr, eo.Match, eo.Value)
+}
+
+func matchWSMessage(eo schema.ExpectedOutcome, wsMessages []WSMessage) (bool, string) {
+	for _, m := range wsMessages {
+		if matchesValue(eo.Match, m.Body, eo.Value) {
+			return true, fmt.Sprintf("WS message matched")
+		}
+	}
+	return false, "no WS message matched"
 }

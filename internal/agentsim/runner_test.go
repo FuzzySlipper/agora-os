@@ -4,11 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/patch/agora-os/internal/agentsim"
 	"github.com/patch/agora-os/internal/bus"
 	"github.com/patch/agora-os/internal/schema"
@@ -692,6 +696,239 @@ func TestRunner_CheckedInAuditCompositorScenario(t *testing.T) {
 
 	if result.Verdict != schema.VerdictPass {
 		t.Errorf("verdict = %s, want pass. fail reason: %s", result.Verdict, result.FailureReason)
+		for _, obs := range result.Observations {
+			t.Logf("  outcome %s: satisfied=%v actual=%s", obs.OutcomeID, obs.Satisfied, obs.Actual)
+		}
+	}
+}
+
+func TestRunner_HTTPAction(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/shell/state" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(200)
+			w.Write([]byte(`{"agents":[{"name":"agent-1","uid":60001}]}`))
+			return
+		}
+		w.WriteHeader(404)
+	}))
+	defer srv.Close()
+
+	socketPath, cleanup := testBus(t)
+	defer cleanup()
+
+	scenario := schema.EmpiricalScenario{
+		ID:       "http-test",
+		RunCount: 1,
+		ExpectedOutcomes: []schema.ExpectedOutcome{
+			{
+				ID:          "http-body",
+				Description: "HTTP response contains agent list",
+				Source:      "http_response",
+				Match:       "contains",
+				Value:       "agent-1",
+			},
+			{
+				ID:          "http-status",
+				Description: "HTTP status is 200",
+				Source:      "http_status",
+				Match:       "equals",
+				Value:       "200",
+			},
+		},
+	}
+
+	script := []agentsim.Action{
+		{
+			Kind:    agentsim.ActionHTTP,
+			Method:  "GET",
+			URL:     srv.URL + "/api/shell/state",
+			Headers: map[string]string{"Authorization": "Bearer test-token"},
+		},
+		{Kind: agentsim.ActionDone},
+	}
+
+	cfg := agentsim.RunnerConfig{
+		Scenario:  scenario,
+		Brain:     agentsim.NewScriptedBrain(script),
+		Agent:     schema.AgentInfo{Name: "test-agent", UID: 60001, Status: schema.StatusRunning},
+		BusSocket: socketPath,
+		RunID:     "http-run",
+		Attempt:   1,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	result, err := agentsim.Run(ctx, cfg)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if result.Verdict != schema.VerdictPass {
+		t.Errorf("verdict = %s, want pass. reason: %s", result.Verdict, result.FailureReason)
+		for _, obs := range result.Observations {
+			t.Logf("  outcome %s: satisfied=%v actual=%s", obs.OutcomeID, obs.Satisfied, obs.Actual)
+		}
+	}
+}
+
+func TestRunner_WebSocketAction(t *testing.T) {
+	// Start a WebSocket echo server.
+	var upgrader = websocket.Upgrader{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Logf("ws upgrade: %v", err)
+			return
+		}
+		defer conn.Close()
+		// Echo received messages back.
+		for {
+			_, data, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			conn.WriteMessage(websocket.TextMessage, data)
+		}
+	}))
+	defer srv.Close()
+
+	wsURL := strings.Replace(srv.URL, "http://", "ws://", 1)
+
+	socketPath, cleanup := testBus(t)
+	defer cleanup()
+
+	scenario := schema.EmpiricalScenario{
+		ID:       "ws-test",
+		RunCount: 1,
+		ExpectedOutcomes: []schema.ExpectedOutcome{
+			{
+				ID:          "ws-echo",
+				Description: "received echo response",
+				Source:      "ws_message",
+				Match:       "contains",
+				Value:       "echo-test",
+			},
+		},
+	}
+
+	script := []agentsim.Action{
+		{Kind: agentsim.ActionWSConn, URL: wsURL, Method: "GET"},
+		{Kind: agentsim.ActionWSSend, Body: json.RawMessage(`"echo-test"`)},
+		{Kind: agentsim.ActionWSRecv, WSMsgCount: 1, WSTimeoutMS: 3000},
+		{Kind: agentsim.ActionWSClose},
+		{Kind: agentsim.ActionDone},
+	}
+
+	cfg := agentsim.RunnerConfig{
+		Scenario:  scenario,
+		Brain:     agentsim.NewScriptedBrain(script),
+		Agent:     schema.AgentInfo{Name: "test-agent", UID: 60001, Status: schema.StatusRunning},
+		BusSocket: socketPath,
+		RunID:     "ws-run",
+		Attempt:   1,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	result, err := agentsim.Run(ctx, cfg)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if result.Verdict != schema.VerdictPass {
+		t.Errorf("verdict = %s, want pass. reason: %s", result.Verdict, result.FailureReason)
+		for _, obs := range result.Observations {
+			t.Logf("  outcome %s: satisfied=%v actual=%s", obs.OutcomeID, obs.Satisfied, obs.Actual)
+		}
+	}
+}
+
+func TestRunner_ShellStateAuditScenario(t *testing.T) {
+	// Test the checked-in shell state + audit scenario against local
+	// HTTP and WebSocket test servers that mimic /api/shell/state and
+	// /api/shell/audit/ws — the same paths exercised by test/phase3probe.
+
+	// HTTP server: /api/shell/state returns agent list.
+	httpSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/shell/state" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(200)
+			w.Write([]byte(`{"agents":[{"name":"agent-1","uid":60001,"surfaces":[{"id":"surf-1","title":"Agent Shell"}]}]}`))
+		}
+	}))
+	defer httpSrv.Close()
+
+	// WebSocket server: /api/shell/audit/ws streams audit events.
+	wsSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var upgrader = websocket.Upgrader{}
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"audit","event":"file_modify","agent_uid":60001}`))
+		time.Sleep(50 * time.Millisecond)
+		conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"audit","event":"file_close_write","agent_uid":60001}`))
+		time.Sleep(200 * time.Millisecond) // keep conn open until client closes
+	}))
+	defer wsSrv.Close()
+
+	socketPath, cleanup := testBus(t)
+	defer cleanup()
+
+	// Load the checked-in scenario.
+	scenarioData, err := os.ReadFile("../../test/phase4/scenarios/shell_state_audit.json")
+	if err != nil {
+		t.Fatalf("read scenario: %v", err)
+	}
+	var scenario schema.EmpiricalScenario
+	if err := json.Unmarshal(scenarioData, &scenario); err != nil {
+		t.Fatalf("parse scenario: %v", err)
+	}
+
+	// Build script with actual server URLs.
+	wsURL := strings.Replace(wsSrv.URL, "http://", "ws://", 1)
+	script := []agentsim.Action{
+		{
+			Kind:   agentsim.ActionHTTP,
+			Method: "GET",
+			URL:    httpSrv.URL + "/api/shell/state",
+		},
+		{
+			Kind: agentsim.ActionWSConn,
+			URL:  wsURL + "/api/shell/audit/ws",
+		},
+		{
+			Kind:        agentsim.ActionWSRecv,
+			WSMsgCount:  2,
+			WSTimeoutMS: 3000,
+		},
+		{Kind: agentsim.ActionWSClose},
+		{Kind: agentsim.ActionDone},
+	}
+
+	cfg := agentsim.RunnerConfig{
+		Scenario:  scenario,
+		Brain:     agentsim.NewScriptedBrain(script),
+		Agent:     schema.AgentInfo{Name: "agent-sim-smoke", UID: 60010, Status: schema.StatusRunning},
+		BusSocket: socketPath,
+		RunID:     "shell-state-audit-smoke",
+		Attempt:   1,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	result, err := agentsim.Run(ctx, cfg)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if result.Verdict != schema.VerdictPass {
+		t.Errorf("verdict = %s, want pass. reason: %s", result.Verdict, result.FailureReason)
 		for _, obs := range result.Observations {
 			t.Logf("  outcome %s: satisfied=%v actual=%s", obs.OutcomeID, obs.Satisfied, obs.Actual)
 		}

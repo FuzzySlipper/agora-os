@@ -1,0 +1,38 @@
+{
+  "id": "shell-state-and-audit",
+  "title": "Phase 3 shell state API and audit WebSocket smoke",
+  "description": "Agent-sim calls GET /api/shell/state (HTTP) and connects to /api/shell/audit/ws (WebSocket), exercising the same shell state and audit stream paths used by test/phase3probe. Suitable for CI smoke: the test harness provides local HTTP/WS servers mimicking the shell API.",
+  "run_count": 1,
+  "success_threshold_percent": 100,
+  "timeout_seconds": 30,
+  "expected_outcomes": [
+    {
+      "id": "shell-state-agents",
+      "description": "shell state response contains agent list",
+      "source": "http_response",
+      "match": "contains",
+      "value": "agents"
+    },
+    {
+      "id": "shell-state-200",
+      "description": "shell state returns HTTP 200",
+      "source": "http_status",
+      "match": "equals",
+      "value": "200"
+    },
+    {
+      "id": "audit-events-received",
+      "description": "audit WebSocket delivers audit events",
+      "source": "ws_message",
+      "match": "contains",
+      "value": "audit"
+    },
+    {
+      "id": "at-least-1-ws-msg",
+      "description": "at least 1 WebSocket message received",
+      "source": "event_bus_topic",
+      "match": "count_gte",
+      "value": "1"
+    }
+  ]
+}

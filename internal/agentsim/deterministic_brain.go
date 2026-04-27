@@ -28,7 +28,8 @@ func (b *scriptedBrain) Observe(state StateSnapshot) (Action, error) {
 
 	// Validate that the action kind is known.
 	switch act.Kind {
-	case ActionPublish, ActionSubscribe, ActionReceive, ActionSleep, ActionDone:
+	case ActionPublish, ActionSubscribe, ActionReceive, ActionSleep, ActionDone,
+		ActionHTTP, ActionWSConn, ActionWSRecv, ActionWSSend, ActionWSClose:
 		// OK
 	default:
 		return Action{}, fmt.Errorf("unknown action kind: %s", act.Kind)
