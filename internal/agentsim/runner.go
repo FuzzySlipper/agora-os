@@ -201,6 +201,7 @@ func Run(ctx context.Context, cfg RunnerConfig) (*schema.RunResult, error) {
 			Verdict:          doneAction.DoneVerdict,
 			FailureCategory:  doneAction.DoneFailureCat,
 			FailureReason:    doneAction.DoneFailureReason,
+			Brain:            collectBrainInfo(cfg.Brain),
 		}, nil
 	}
 
@@ -216,6 +217,9 @@ func Run(ctx context.Context, cfg RunnerConfig) (*schema.RunResult, error) {
 		eventLogRef, _ = writeEventLog(runDir, allEvents)
 	}
 
+	// 6. Collect brain artifacts if the brain supports it.
+	brainInfo := collectBrainInfo(cfg.Brain)
+
 	return &schema.RunResult{
 		RunID:            cfg.RunID,
 		ScenarioID:       cfg.Scenario.ID,
@@ -229,6 +233,7 @@ func Run(ctx context.Context, cfg RunnerConfig) (*schema.RunResult, error) {
 		Verdict:          verdict,
 		FailureCategory:  failCat,
 		FailureReason:    failReason,
+		Brain:            brainInfo,
 	}, nil
 }
 
@@ -426,6 +431,14 @@ func writeEventLog(dir string, events []bus.Event) (string, error) {
 		}
 	}
 	return path, nil
+}
+
+func collectBrainInfo(brain Brain) *schema.BrainRunInfo {
+	if ba, ok := brain.(BrainArtifacts); ok {
+		info := ba.BrainRunInfo()
+		return &info
+	}
+	return nil
 }
 
 func envFailureResult(cfg RunnerConfig, startedAt time.Time, finishedAt *time.Time, actions []string, reason string) *schema.RunResult {

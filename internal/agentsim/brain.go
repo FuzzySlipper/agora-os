@@ -114,3 +114,11 @@ type Brain interface {
 	// Returning an Action with Kind == ActionDone ends the run loop.
 	Observe(state StateSnapshot) (Action, error)
 }
+
+// BrainArtifacts is an optional interface that brains can implement to
+// provide model metadata and request/response artifacts for inclusion in
+// the RunResult. The runner checks for this interface after the run
+// completes.
+type BrainArtifacts interface {
+	BrainRunInfo() schema.BrainRunInfo
+}

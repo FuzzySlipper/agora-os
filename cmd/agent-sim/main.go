@@ -30,6 +30,9 @@ import (
 func main() {
 	scenarioPath := flag.String("scenario", "", "path to scenario JSON (required)")
 	scriptPath := flag.String("script", "", "path to deterministic action script JSON (optional; defaults to implicit done)")
+	brainType := flag.String("brain-type", "deterministic", "brain type: deterministic, ollama")
+	ollamaURL := flag.String("ollama-url", "http://127.0.0.1:11434", "Ollama base URL")
+	ollamaModel := flag.String("ollama-model", "qwen3:8b", "Ollama model name")
 	busSocket := flag.String("bus", schema.BusSocket, "event bus socket path")
 	runID := flag.String("run-id", "", "run identifier (defaults to scenario-id-timestamp)")
 	attempt := flag.Int("attempt", 1, "1-based attempt number")
@@ -57,25 +60,33 @@ func main() {
 
 	// Build brain.
 	var brain agentsim.Brain
-	if *scriptPath != "" {
-		actions, err := loadScript(*scriptPath)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "agent-sim: load script: %v\n", err)
-			os.Exit(1)
-		}
-		// Expand template variables in URLs and headers.
-		for i := range actions {
-			actions[i].URL = expandVars(actions[i].URL, vars)
-			expandedHeaders := make(map[string]string, len(actions[i].Headers))
-			for k, v := range actions[i].Headers {
-				expandedHeaders[expandVars(k, vars)] = expandVars(v, vars)
+	switch *brainType {
+	case "ollama":
+		brain = agentsim.NewOllamaBrain(agentsim.OllamaConfig{
+			BaseURL: *ollamaURL,
+			Model:   *ollamaModel,
+		})
+	default:
+		if *scriptPath != "" {
+			actions, err := loadScript(*scriptPath)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "agent-sim: load script: %v\n", err)
+				os.Exit(1)
 			}
-			actions[i].Headers = expandedHeaders
+			// Expand template variables in URLs and headers.
+			for i := range actions {
+				actions[i].URL = expandVars(actions[i].URL, vars)
+				expandedHeaders := make(map[string]string, len(actions[i].Headers))
+				for k, v := range actions[i].Headers {
+					expandedHeaders[expandVars(k, vars)] = expandVars(v, vars)
+				}
+				actions[i].Headers = expandedHeaders
+			}
+			brain = agentsim.NewScriptedBrain(actions)
+		} else {
+			// Default: brain immediately signals done so the evaluator runs.
+			brain = agentsim.NewScriptedBrain(nil)
 		}
-		brain = agentsim.NewScriptedBrain(actions)
-	} else {
-		// Default: brain immediately signals done so the evaluator runs.
-		brain = agentsim.NewScriptedBrain(nil)
 	}
 
 	// Resolve run ID.
