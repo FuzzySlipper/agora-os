@@ -26,11 +26,11 @@ const (
 
 // BrainConfig captures the model/backend identity and options for a run.
 type BrainConfig struct {
-	Kind           BrainKind      `json:"kind"`
-	Provider       string         `json:"provider,omitempty"`  // e.g. "ollama"
-	Model          string         `json:"model,omitempty"`     // e.g. "qwen3:8b"
-	BaseURL        string         `json:"base_url,omitempty"`  // endpoint override
-	ModelOptions   map[string]any `json:"model_options,omitempty"` // temperature, top-p, seed, etc.
+	Kind         BrainKind      `json:"kind"`
+	Provider     string         `json:"provider,omitempty"`      // e.g. "ollama"
+	Model        string         `json:"model,omitempty"`         // e.g. "qwen3:8b"
+	BaseURL      string         `json:"base_url,omitempty"`      // endpoint override
+	ModelOptions map[string]any `json:"model_options,omitempty"` // temperature, top-p, seed, etc.
 }
 
 // ---------------------------------------------------------------------------
@@ -67,13 +67,13 @@ type SetupRequirement struct {
 // the definition — success criteria are deterministic assertions on observable
 // system state and event trails.
 type EmpiricalScenario struct {
-	ID                 string             `json:"id"`
-	Title              string             `json:"title"`
-	Description        string             `json:"description"`
-	TaskPrompt         string             `json:"task_prompt"`
-	SetupRequirements  []SetupRequirement `json:"setup_requirements,omitempty"`
-	AllowedTools       []string           `json:"allowed_tools,omitempty"`
-	ExpectedOutcomes   []ExpectedOutcome  `json:"expected_outcomes"`
+	ID                string             `json:"id"`
+	Title             string             `json:"title"`
+	Description       string             `json:"description"`
+	TaskPrompt        string             `json:"task_prompt"`
+	SetupRequirements []SetupRequirement `json:"setup_requirements,omitempty"`
+	AllowedTools      []string           `json:"allowed_tools,omitempty"`
+	ExpectedOutcomes  []ExpectedOutcome  `json:"expected_outcomes"`
 	// NegativeVariant signals this is an adversarial or negative scenario
 	// where the expected outcome is denial, block, or other restriction.
 	NegativeVariant bool `json:"negative_variant,omitempty"`
@@ -103,10 +103,10 @@ type EmpiricalScenario struct {
 type RunVerdict string
 
 const (
-	VerdictPass        RunVerdict = "pass"
-	VerdictFail        RunVerdict = "fail"
-	VerdictAmbiguous   RunVerdict = "ambiguous"
-	VerdictEnvFailure  RunVerdict = "env_failure"
+	VerdictPass       RunVerdict = "pass"
+	VerdictFail       RunVerdict = "fail"
+	VerdictAmbiguous  RunVerdict = "ambiguous"
+	VerdictEnvFailure RunVerdict = "env_failure"
 )
 
 // FailureCategory classifies failed or ambiguous runs to help operators
@@ -129,18 +129,18 @@ const (
 type EvaluatorObservation struct {
 	OutcomeID string `json:"outcome_id"`
 	Satisfied bool   `json:"satisfied"`
-	Actual    string `json:"actual,omitempty"`   // what was observed
-	Note      string `json:"note,omitempty"`     // evaluator commentary
+	Actual    string `json:"actual,omitempty"` // what was observed
+	Note      string `json:"note,omitempty"`   // evaluator commentary
 }
 
 // BrainRunInfo records the model identity and request/response metadata for
 // a single LLM interaction during a run.
 type BrainRunInfo struct {
-	Brain       BrainConfig `json:"brain"`
-	Seed        *int64       `json:"seed,omitempty"`
+	Brain BrainConfig `json:"brain"`
+	Seed  *int64      `json:"seed,omitempty"`
 	// RequestArtifacts is a list of file paths containing the raw prompt
 	// and related request payloads sent to the brain.
-	RequestArtifacts  []string `json:"request_artifacts,omitempty"`
+	RequestArtifacts []string `json:"request_artifacts,omitempty"`
 	// ResponseArtifacts is a list of file paths containing raw responses
 	// from the brain.
 	ResponseArtifacts []string `json:"response_artifacts,omitempty"`
@@ -149,11 +149,11 @@ type BrainRunInfo struct {
 // RunResult is the structured artifact produced after a single scenario
 // attempt completes and is evaluated.
 type RunResult struct {
-	RunID       string `json:"run_id"`
-	ScenarioID  string `json:"scenario_id"`
-	Attempt     int    `json:"attempt"` // 1-based attempt number
-	StartedAt   time.Time `json:"started_at"`
-	FinishedAt  time.Time `json:"finished_at"`
+	RunID      string    `json:"run_id"`
+	ScenarioID string    `json:"scenario_id"`
+	Attempt    int       `json:"attempt"` // 1-based attempt number
+	StartedAt  time.Time `json:"started_at"`
+	FinishedAt time.Time `json:"finished_at"`
 	// TranscriptRef is the path to a human-readable transcript (agent
 	// stdout/stderr, brain interaction log).
 	TranscriptRef string `json:"transcript_ref,omitempty"`
@@ -195,17 +195,17 @@ func (r *RunResult) Satisfied() int {
 
 // ScenarioReport aggregates RunResults across all attempts for one scenario.
 type ScenarioReport struct {
-	ScenarioID              string          `json:"scenario_id"`
-	TotalRuns               int             `json:"total_runs"`
-	Passes                  int             `json:"passes"`
-	Failures                int             `json:"failures"`
-	Ambiguous               int             `json:"ambiguous"`
-	EnvFailures             int             `json:"env_failures"`
-	PassRatePercent         float64         `json:"pass_rate_percent"`
-	AboveThreshold          bool            `json:"above_threshold"`
-	ThresholdPercent        int             `json:"threshold_percent"`
-	FailureCategoryCounts   map[FailureCategory]int `json:"failure_category_counts,omitempty"`
-	Runs                    []RunResult     `json:"runs"`
+	ScenarioID            string                  `json:"scenario_id"`
+	TotalRuns             int                     `json:"total_runs"`
+	Passes                int                     `json:"passes"`
+	Failures              int                     `json:"failures"`
+	Ambiguous             int                     `json:"ambiguous"`
+	EnvFailures           int                     `json:"env_failures"`
+	PassRatePercent       float64                 `json:"pass_rate_percent"`
+	AboveThreshold        bool                    `json:"above_threshold"`
+	ThresholdPercent      int                     `json:"threshold_percent"`
+	FailureCategoryCounts map[FailureCategory]int `json:"failure_category_counts,omitempty"`
+	Runs                  []RunResult             `json:"runs"`
 }
 
 // ComputePassRate derives PassRatePercent and AboveThreshold from the raw

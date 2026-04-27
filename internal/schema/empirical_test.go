@@ -234,9 +234,9 @@ func TestScenarioJSONRoundTrip(t *testing.T) {
 				Value:       "agent.message.60001.60002",
 			},
 		},
-		TimeoutSeconds:            120,
-		RunCount:                  5,
-		SuccessThresholdPercent:   70,
+		TimeoutSeconds:             120,
+		RunCount:                   5,
+		SuccessThresholdPercent:    70,
 		DeterministicPrerequisites: []string{"test/phase3.sh"},
 	}
 
