@@ -8,11 +8,12 @@
   },
   {
     "kind": "publish",
-    "topic": "agent.work.result",
+    "topic": "agent.message.${AGENT_UID}.${AGENT_UID}.response",
     "body": {
-      "task_id": "coord-1",
-      "status": "ok",
-      "summary": "received coordination request, completed summary transformation"
+      "from_uid": ${AGENT_UID},
+      "to_uid": ${AGENT_UID},
+      "kind": "response",
+      "body": {"summary": "received coordination request, completed summary transformation"}
     }
   },
   {

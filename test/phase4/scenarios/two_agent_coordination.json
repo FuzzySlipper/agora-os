@@ -22,10 +22,10 @@
     },
     {
       "id": "published-response",
-      "description": "coordination response published",
+      "description": "coordination response published via agent.message",
       "source": "action",
       "match": "contains",
-      "value": "agent.work.result"
+      "value": "agent.message"
     },
     {
       "id": "response-contains-summary",
