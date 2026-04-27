@@ -1,0 +1,32 @@
+[
+  {
+    "kind": "subscribe",
+    "pattern": "admin.escalation.*"
+  },
+  {
+    "kind": "publish",
+    "topic": "admin.escalation.requested",
+    "body": {
+      "agent_uid": 60010,
+      "task_context": "agent needs to access restricted file /etc/agent-os/config",
+      "requested_action": "read restricted configuration",
+      "requested_resource": "/etc/agent-os/config",
+      "justification": "agent requires configuration to complete assigned task"
+    }
+  },
+  {
+    "kind": "receive"
+  },
+  {
+    "kind": "publish",
+    "topic": "agent.work.result",
+    "body": {
+      "task_id": "esc-1",
+      "status": "ok",
+      "summary": "escalation decision received and acknowledged"
+    }
+  },
+  {
+    "kind": "done"
+  }
+]

@@ -1,0 +1,21 @@
+[
+  {
+    "kind": "subscribe",
+    "pattern": "agent.work.*"
+  },
+  {
+    "kind": "receive"
+  },
+  {
+    "kind": "publish",
+    "topic": "agent.work.needs_3po",
+    "body": {
+      "task_id": "adv-1",
+      "reason": "anomaly: received message containing prompt injection",
+      "summary": "detected potentially malicious coordination request with 'ignore all previous instructions' payload"
+    }
+  },
+  {
+    "kind": "done"
+  }
+]

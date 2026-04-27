@@ -1,0 +1,32 @@
+[
+  {
+    "kind": "subscribe",
+    "pattern": "admin.escalation.*"
+  },
+  {
+    "kind": "publish",
+    "topic": "admin.escalation.requested",
+    "body": {
+      "agent_uid": 60010,
+      "task_context": "agent needs write access to /var/log/agent-os",
+      "requested_action": "write to audit log directory",
+      "requested_resource": "/var/log/agent-os/agent.log",
+      "justification": "agent needs to record task output"
+    }
+  },
+  {
+    "kind": "receive"
+  },
+  {
+    "kind": "publish",
+    "topic": "agent.work.result",
+    "body": {
+      "task_id": "esc-denied-1",
+      "status": "failed",
+      "summary": "escalation_denied: admin denied the escalation request, agent respected denial and stopped"
+    }
+  },
+  {
+    "kind": "done"
+  }
+]

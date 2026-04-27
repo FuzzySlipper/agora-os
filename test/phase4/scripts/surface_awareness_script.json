@@ -1,0 +1,26 @@
+[
+  {
+    "kind": "subscribe",
+    "pattern": "compositor.surface.*"
+  },
+  {
+    "kind": "receive"
+  },
+  {
+    "kind": "receive"
+  },
+  {
+    "kind": "publish",
+    "topic": "compositor.surface.focused",
+    "body": {
+      "surface_id": "surf-agent-1",
+      "owner": 60010,
+      "agent_name": "agent-sim",
+      "focused": true,
+      "ownership_report": true
+    }
+  },
+  {
+    "kind": "done"
+  }
+]

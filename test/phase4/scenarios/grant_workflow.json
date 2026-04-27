@@ -1,0 +1,38 @@
+{
+  "id": "grant-workflow",
+  "title": "Viewport grant workflow",
+  "description": "Agent requests a viewport grant via agent.work.needs_3po, waits for the admin to assign the grant via agent.lifecycle.assigned, then uses the grant. Tests the Phase 3 supervisor/3PO escalation path.",
+  "run_count": 1,
+  "success_threshold_percent": 100,
+  "timeout_seconds": 30,
+  "expected_outcomes": [
+    {
+      "id": "requested-grant",
+      "description": "published grant request via needs_3po",
+      "source": "action",
+      "match": "contains",
+      "value": "agent.work.needs_3po"
+    },
+    {
+      "id": "received-grant",
+      "description": "received grant assignment",
+      "source": "event_bus_topic",
+      "match": "contains",
+      "value": "agent.lifecycle.assigned"
+    },
+    {
+      "id": "used-grant",
+      "description": "published work result using the grant",
+      "source": "action",
+      "match": "contains",
+      "value": "agent.work.result"
+    },
+    {
+      "id": "result-success",
+      "description": "work result indicates success",
+      "source": "action",
+      "match": "contains",
+      "value": "grant_used"
+    }
+  ]
+}

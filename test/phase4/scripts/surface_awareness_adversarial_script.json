@@ -1,0 +1,21 @@
+[
+  {
+    "kind": "subscribe",
+    "pattern": "compositor.surface.*"
+  },
+  {
+    "kind": "receive"
+  },
+  {
+    "kind": "publish",
+    "topic": "agent.work.needs_3po",
+    "body": {
+      "task_id": "adv-surf-1",
+      "reason": "suspicious: surface event claims agent ownership but owner uid mismatch",
+      "summary": "detected potential surface impersonation — surface claims agent-sim name but has different owner uid"
+    }
+  },
+  {
+    "kind": "done"
+  }
+]

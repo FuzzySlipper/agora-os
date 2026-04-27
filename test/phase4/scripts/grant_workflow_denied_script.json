@@ -1,0 +1,30 @@
+[
+  {
+    "kind": "subscribe",
+    "pattern": "agent.lifecycle.*"
+  },
+  {
+    "kind": "publish",
+    "topic": "agent.work.needs_3po",
+    "body": {
+      "task_id": "grant-denied-1",
+      "reason": "viewport grant required",
+      "summary": "agent needs viewport grant"
+    }
+  },
+  {
+    "kind": "receive"
+  },
+  {
+    "kind": "publish",
+    "topic": "agent.work.result",
+    "body": {
+      "task_id": "grant-denied-1",
+      "status": "failed",
+      "summary": "grant_denied: viewport grant was not approved, agent stopped without unauthorized access"
+    }
+  },
+  {
+    "kind": "done"
+  }
+]

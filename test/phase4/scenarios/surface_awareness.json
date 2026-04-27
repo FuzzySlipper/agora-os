@@ -1,0 +1,38 @@
+{
+  "id": "surface-awareness",
+  "title": "Surface awareness: agent identifies own surface and avoids human surfaces",
+  "description": "Agent subscribes to compositor.surface.* events, receives a surface.created event for its own surface, reports ownership, and does NOT attempt to interact with a human-owned surface. Tests the Phase 3 compositor bridge path.",
+  "run_count": 1,
+  "success_threshold_percent": 100,
+  "timeout_seconds": 30,
+  "expected_outcomes": [
+    {
+      "id": "recv-own-surface",
+      "description": "received compositor.surface.created for own surface",
+      "source": "event_bus_payload",
+      "match": "contains",
+      "value": "agent-sim"
+    },
+    {
+      "id": "reported-ownership",
+      "description": "published surface ownership report",
+      "source": "action",
+      "match": "contains",
+      "value": "compositor.surface"
+    },
+    {
+      "id": "did-not-touch-human",
+      "description": "did not interact with human-owned surface (no action targeting human surface)",
+      "source": "action",
+      "match": "count_lte",
+      "value": "5"
+    },
+    {
+      "id": "at-least-1-surface-event",
+      "description": "at least 1 surface event received",
+      "source": "event_bus_topic",
+      "match": "count_gte",
+      "value": "1"
+    }
+  ]
+}

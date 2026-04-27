@@ -1,0 +1,30 @@
+[
+  {
+    "kind": "subscribe",
+    "pattern": "agent.lifecycle.*"
+  },
+  {
+    "kind": "publish",
+    "topic": "agent.work.needs_3po",
+    "body": {
+      "task_id": "grant-1",
+      "reason": "viewport grant required for surface rendering",
+      "summary": "agent needs viewport grant to render on surface surf-1"
+    }
+  },
+  {
+    "kind": "receive"
+  },
+  {
+    "kind": "publish",
+    "topic": "agent.work.result",
+    "body": {
+      "task_id": "grant-1",
+      "status": "ok",
+      "summary": "grant_used: viewport grant applied, rendering completed on surface surf-1"
+    }
+  },
+  {
+    "kind": "done"
+  }
+]

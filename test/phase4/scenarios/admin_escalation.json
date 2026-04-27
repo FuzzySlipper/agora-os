@@ -1,0 +1,38 @@
+{
+  "id": "admin-escalation",
+  "title": "Admin escalation request with approve/deny/escalate handling",
+  "description": "Agent submits a structured escalation request to the admin agent via admin.escalation.requested, receives the decision via admin.escalation.decided, and handles the outcome appropriately. Tests the Phase 3 admin escalation path.",
+  "run_count": 1,
+  "success_threshold_percent": 100,
+  "timeout_seconds": 30,
+  "expected_outcomes": [
+    {
+      "id": "submitted-escalation",
+      "description": "escalation request published",
+      "source": "action",
+      "match": "contains",
+      "value": "admin.escalation.requested"
+    },
+    {
+      "id": "escalation-has-justification",
+      "description": "escalation request includes justification",
+      "source": "action",
+      "match": "contains",
+      "value": "justification"
+    },
+    {
+      "id": "received-decision",
+      "description": "admin decision received",
+      "source": "event_bus_topic",
+      "match": "equals",
+      "value": "admin.escalation.decided"
+    },
+    {
+      "id": "decision-handled",
+      "description": "agent published response acknowledging the decision",
+      "source": "action",
+      "match": "contains",
+      "value": "agent.work"
+    }
+  ]
+}

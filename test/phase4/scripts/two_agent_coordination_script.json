@@ -1,0 +1,21 @@
+[
+  {
+    "kind": "subscribe",
+    "pattern": "agent.work.*"
+  },
+  {
+    "kind": "receive"
+  },
+  {
+    "kind": "publish",
+    "topic": "agent.work.result",
+    "body": {
+      "task_id": "coord-1",
+      "status": "ok",
+      "summary": "received coordination request, completed summary transformation"
+    }
+  },
+  {
+    "kind": "done"
+  }
+]

@@ -1,0 +1,38 @@
+{
+  "id": "two-agent-coordination",
+  "title": "Two-agent coordination via event-bus-web",
+  "description": "Agent 1 (the sim agent) receives a coordination request from Agent 2 via agent.message topics (the event-bus-web path), processes it, and publishes a response. Tests that agents can use the Phase 3 agent-to-agent messaging protocol.",
+  "run_count": 1,
+  "success_threshold_percent": 100,
+  "timeout_seconds": 30,
+  "expected_outcomes": [
+    {
+      "id": "recv-request",
+      "description": "coordination request received via agent.work",
+      "source": "event_bus_topic",
+      "match": "contains",
+      "value": "agent.work"
+    },
+    {
+      "id": "request-contains-task",
+      "description": "request payload contains task description",
+      "source": "event_bus_payload",
+      "match": "contains",
+      "value": "summarize"
+    },
+    {
+      "id": "published-response",
+      "description": "coordination response published",
+      "source": "action",
+      "match": "contains",
+      "value": "agent.work.result"
+    },
+    {
+      "id": "response-contains-summary",
+      "description": "response body contains summary output",
+      "source": "action",
+      "match": "contains",
+      "value": "summary"
+    }
+  ]
+}
