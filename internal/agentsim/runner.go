@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/patch/agora-os/internal/bus"
@@ -85,12 +86,24 @@ func Run(ctx context.Context, cfg RunnerConfig) (*schema.RunResult, error) {
 			execErr = client.Subscribe(action.Pattern)
 
 		case ActionReceive:
-			ev, recvErr := client.Receive()
-			if recvErr != nil {
-				execErr = recvErr
-			} else {
+			evCh := make(chan bus.Event, 1)
+			errCh := make(chan error, 1)
+			go func() {
+				ev, recvErr := client.Receive()
+				if recvErr != nil {
+					errCh <- recvErr
+				} else {
+					evCh <- ev
+				}
+			}()
+			select {
+			case ev := <-evCh:
 				allEvents = append(allEvents, ev)
 				recentEvents = append(recentEvents, ev)
+			case recvErr := <-errCh:
+				execErr = recvErr
+			case <-ctx.Done():
+				execErr = fmt.Errorf("receive cancelled: %w", ctx.Err())
 			}
 
 		case ActionSleep:
@@ -188,6 +201,14 @@ func evaluate(expected []schema.ExpectedOutcome, events []bus.Event, actions []s
 }
 
 func checkOutcome(eo schema.ExpectedOutcome, events []bus.Event, actions []string) (bool, string) {
+	// count_gte / count_lte apply to event or action counts regardless of source.
+	switch eo.Match {
+	case "count_gte":
+		return matchCountGTE(eo, events, actions)
+	case "count_lte":
+		return matchCountLTE(eo, events, actions)
+	}
+
 	switch eo.Source {
 	case "event_bus_topic":
 		return matchTopic(eo, events)
@@ -225,6 +246,39 @@ func matchAction(eo schema.ExpectedOutcome, actions []string) (bool, string) {
 		}
 	}
 	return false, "no action matched"
+}
+
+func matchCountGTE(eo schema.ExpectedOutcome, events []bus.Event, actions []string) (bool, string) {
+	threshold, err := strconv.Atoi(eo.Value)
+	if err != nil {
+		return false, fmt.Sprintf("invalid count_gte threshold %q: %v", eo.Value, err)
+	}
+	n := countForSource(eo.Source, events, actions)
+	if n >= threshold {
+		return true, fmt.Sprintf("count %d >= %d", n, threshold)
+	}
+	return false, fmt.Sprintf("count %d < %d", n, threshold)
+}
+
+func matchCountLTE(eo schema.ExpectedOutcome, events []bus.Event, actions []string) (bool, string) {
+	threshold, err := strconv.Atoi(eo.Value)
+	if err != nil {
+		return false, fmt.Sprintf("invalid count_lte threshold %q: %v", eo.Value, err)
+	}
+	n := countForSource(eo.Source, events, actions)
+	if n <= threshold {
+		return true, fmt.Sprintf("count %d <= %d", n, threshold)
+	}
+	return false, fmt.Sprintf("count %d > %d", n, threshold)
+}
+
+func countForSource(source string, events []bus.Event, actions []string) int {
+	switch source {
+	case "action":
+		return len(actions)
+	default:
+		return len(events)
+	}
 }
 
 func matchesValue(matchType, actual, expected string) bool {

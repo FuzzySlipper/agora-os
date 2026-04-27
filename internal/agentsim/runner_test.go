@@ -333,6 +333,220 @@ func TestRunner_Artifacts(t *testing.T) {
 	}
 }
 
+func TestRunner_ReceiveTimeout(t *testing.T) {
+	socketPath, cleanup := testBus(t)
+	defer cleanup()
+
+	scenario := schema.EmpiricalScenario{
+		ID:       "timeout-test",
+		RunCount: 1,
+	}
+
+	// Script: subscribe then receive — but no event is published, so
+	// the receive should be cancelled by the context deadline.
+	script := []agentsim.Action{
+		{Kind: agentsim.ActionSubscribe, Pattern: "no.one.will.publish"},
+		{Kind: agentsim.ActionReceive},
+		{Kind: agentsim.ActionDone},
+	}
+
+	cfg := agentsim.RunnerConfig{
+		Scenario:  scenario,
+		Brain:     agentsim.NewScriptedBrain(script),
+		Agent:     schema.AgentInfo{Name: "test-agent", UID: 60001, Status: schema.StatusRunning},
+		BusSocket: socketPath,
+		RunID:     "timeout-run",
+		Attempt:   1,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	result, err := agentsim.Run(ctx, cfg)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if result.Verdict != schema.VerdictEnvFailure {
+		t.Errorf("verdict = %s, want env_failure (cancelled receive)", result.Verdict)
+	}
+}
+
+func TestRunner_CountMatchers(t *testing.T) {
+	socketPath, cleanup := testBus(t)
+	defer cleanup()
+
+	scenario := schema.EmpiricalScenario{
+		ID:       "count-test",
+		RunCount: 1,
+		ExpectedOutcomes: []schema.ExpectedOutcome{
+			{
+				ID:          "at-least-2",
+				Description: "at least 2 events received",
+				Source:      "event_bus_topic",
+				Match:       "count_gte",
+				Value:       "2",
+			},
+			{
+				ID:          "at-most-5",
+				Description: "at most 5 events received",
+				Source:      "event_bus_topic",
+				Match:       "count_lte",
+				Value:       "5",
+			},
+		},
+	}
+
+	// Publish 3 events.
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		c := busClient(t, socketPath)
+		defer c.Close()
+		c.Publish("test.a", json.RawMessage(`1`))
+		time.Sleep(10 * time.Millisecond)
+		c.Publish("test.b", json.RawMessage(`2`))
+		time.Sleep(10 * time.Millisecond)
+		c.Publish("test.c", json.RawMessage(`3`))
+	}()
+
+	script := []agentsim.Action{
+		{Kind: agentsim.ActionSubscribe, Pattern: "test.*"},
+		{Kind: agentsim.ActionReceive},
+		{Kind: agentsim.ActionReceive},
+		{Kind: agentsim.ActionReceive},
+		{Kind: agentsim.ActionDone},
+	}
+
+	cfg := agentsim.RunnerConfig{
+		Scenario:  scenario,
+		Brain:     agentsim.NewScriptedBrain(script),
+		Agent:     schema.AgentInfo{Name: "test-agent", UID: 60001, Status: schema.StatusRunning},
+		BusSocket: socketPath,
+		RunID:     "count-run",
+		Attempt:   1,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	result, err := agentsim.Run(ctx, cfg)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if result.Verdict != schema.VerdictPass {
+		t.Errorf("verdict = %s, want pass. fail reason: %s", result.Verdict, result.FailureReason)
+	}
+	for _, obs := range result.Observations {
+		if !obs.Satisfied {
+			t.Errorf("outcome %s not satisfied: %s", obs.OutcomeID, obs.Actual)
+		}
+	}
+}
+
+func TestRunner_Phase3ProtocolTopics(t *testing.T) {
+	// Exercise the same conversation.turn.* topic family that the Phase 3
+	// shell and event-bus-web use. This proves the runner operates on
+	// real protocol paths, not just test-only topics.
+	socketPath, cleanup := testBus(t)
+	defer cleanup()
+
+	scenario := schema.EmpiricalScenario{
+		ID:       "phase3-conversation",
+		Title:    "Phase 3 conversation turn round-trip",
+		RunCount: 1,
+		ExpectedOutcomes: []schema.ExpectedOutcome{
+			{
+				ID:          "recv-turn-request",
+				Description: "received conversation.turn.requested event",
+				Source:      "event_bus_topic",
+				Match:       "equals",
+				Value:       "conversation.turn.requested",
+			},
+			{
+				ID:          "payload-contains-prompt",
+				Description: "conversation turn payload contains the prompt text",
+				Source:      "event_bus_payload",
+				Match:       "contains",
+				Value:       "hello agent",
+			},
+			{
+				ID:          "published-response",
+				Description: "response published to conversation.turn.responded",
+				Source:      "action",
+				Match:       "contains",
+				Value:       "conversation.turn.responded",
+			},
+			{
+				ID:          "at-least-2-events",
+				Description: "at least 2 events exchanged",
+				Source:      "event_bus_topic",
+				Match:       "count_gte",
+				Value:       "2",
+			},
+		},
+	}
+
+	// Publish a conversation turn request from another client.
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		c := busClient(t, socketPath)
+		defer c.Close()
+		reqBody, _ := json.Marshal(schema.ConversationTurnRequest{
+			SessionID: "sess-1",
+			TurnID:    "turn-1",
+			Prompt:    "hello agent, please report status",
+		})
+		c.Publish(schema.TopicConversationTurnRequested, json.RawMessage(reqBody))
+		// Publish a second event so the count_gte matcher has enough events.
+		time.Sleep(10 * time.Millisecond)
+		c.Publish("agent.work.assigned", json.RawMessage(`{"task_id":"t1"}`))
+	}()
+
+	// Script: subscribe, receive both the turn request and the work event,
+	// publish a turn response.
+	respBody, _ := json.Marshal(schema.ConversationTurnResponse{
+		SessionID: "sess-1",
+		TurnID:    "turn-1",
+		Summary:   "status: all systems nominal",
+	})
+
+	script := []agentsim.Action{
+		{Kind: agentsim.ActionSubscribe, Pattern: "conversation.turn.*"},
+		{Kind: agentsim.ActionSubscribe, Pattern: "agent.work.*"},
+		{Kind: agentsim.ActionReceive},
+		{Kind: agentsim.ActionReceive},
+		{Kind: agentsim.ActionPublish, Topic: schema.TopicConversationTurnResponded, Body: json.RawMessage(respBody)},
+		{Kind: agentsim.ActionDone},
+	}
+
+	cfg := agentsim.RunnerConfig{
+		Scenario:  scenario,
+		Brain:     agentsim.NewScriptedBrain(script),
+		Agent:     schema.AgentInfo{Name: "test-agent", UID: 60001, Status: schema.StatusRunning},
+		BusSocket: socketPath,
+		RunID:     "phase3-run",
+		Attempt:   1,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	result, err := agentsim.Run(ctx, cfg)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if result.Verdict != schema.VerdictPass {
+		t.Errorf("verdict = %s, want pass. fail reason: %s", result.Verdict, result.FailureReason)
+	}
+	for _, obs := range result.Observations {
+		if !obs.Satisfied {
+			t.Errorf("outcome %s not satisfied: %s", obs.OutcomeID, obs.Actual)
+		}
+	}
+}
+
 func TestPeerUIDAgent(t *testing.T) {
 	agent := agentsim.PeerUIDAgent("test-agent")
 	if agent.Name != "test-agent" {
