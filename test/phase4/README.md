@@ -130,25 +130,23 @@ Use larger models (`mistral`, `llama3.1:70b`) for pre-release validation.
 
 ### Ollama Options
 
-Model options (temperature, seed, top_p) are configured in the scenario's
-`brain` field or passed via the scenario JSON. The Ollama adapter forwards
-them to the `/api/chat` endpoint.
+The smoke script passes `--ollama-url` and `--ollama-model` to agent-sim.
+Additional model options (temperature, seed, top_p) are configured through
+the scenario's `BrainConfig` in the runner library. When using the library
+directly (not the CLI), create an `OllamaBrain` with `OllamaOptions`:
 
-For reproducibility, set `seed` in the scenario's `BrainConfig`:
-
-```json
-{
-  "brain": {
-    "kind": "local_llm",
-    "provider": "ollama",
-    "model": "qwen3:8b",
-    "model_options": {
-      "temperature": 0.3,
-      "seed": 42
-    }
-  }
-}
+```go
+brain := agentsim.NewOllamaBrain(agentsim.OllamaConfig{
+    BaseURL: "http://127.0.0.1:11434",
+    Model:   "qwen3:8b",
+    Options: &agentsim.OllamaOptions{
+        Temperature: ptr(0.3),
+        Seed:        ptr(int64(42)),
+    },
+})
 ```
+
+For reproducibility, set `seed` to a fixed value.
 
 ## Interpreting Results
 
@@ -160,10 +158,9 @@ test/phase4/artifacts/<timestamp>/
 ├── results.jsonl         Machine-readable run results (JSON Lines)
 ├── report.json           Aggregate report (pass rate, threshold status)
 └── run-001/              Per-run artifacts
-    ├── result.json        Structured RunResult
-    ├── stderr.log         agent-sim stderr
-    ├── transcript.json    Action/event transcript
-    └── events.jsonl       Raw event bus events
+    └── run-001/          Runner's own run-ID subdirectory
+        ├── result.json   Structured RunResult
+        └── stderr.log    agent-sim stderr
 ```
 
 ### Exit Codes
@@ -181,7 +178,7 @@ When a scenario falls below threshold:
 1. **Check env_failures first.** If all or most runs are env_failures,
    the environment (Ollama, event bus, service state) is the problem.
 
-2. **Examine failing runs.** Look at `transcript.json` and `events.jsonl`
+2. **Examine failing runs.** Look at `result.json` and `stderr.log`
    in the per-run directories. What did the agent observe? What actions
    did it take?
 
