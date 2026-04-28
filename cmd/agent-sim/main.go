@@ -39,6 +39,7 @@ func main() {
 	agentName := flag.String("agent-name", "agent-sim", "agent name for identity")
 	artifactDir := flag.String("artifact-dir", "", "directory for per-run artifacts (transcript, events)")
 	timeoutSec := flag.Int("timeout", 300, "run timeout in seconds")
+	compact := flag.Bool("compact", false, "output compact JSON (single line, for JSONL)")
 	varArgs := flagSlice{}
 	flag.Var(&varArgs, "var", "template variable KEY=VALUE (repeatable; expands ${KEY} in script URLs/headers)")
 	flag.Parse()
@@ -120,7 +121,9 @@ func main() {
 
 	// Write result to stdout as JSON.
 	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
+	if !*compact {
+		enc.SetIndent("", "  ")
+	}
 	if err := enc.Encode(result); err != nil {
 		fmt.Fprintf(os.Stderr, "agent-sim: encode result: %v\n", err)
 		os.Exit(1)

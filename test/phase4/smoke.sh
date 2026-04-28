@@ -143,6 +143,7 @@ for ((i=1; i<=RUNS; i++)); do
         --attempt "$i" \
         --artifact-dir "$RUN_DIR" \
         --timeout 300 \
+        --compact \
         "${VAR_ARGS[@]/#/--var }" \
         > "$RUN_DIR/result.json" 2>"$RUN_DIR/stderr.log"
     EXIT_CODE=$?
@@ -173,15 +174,23 @@ done
 # ── Report ──────────────────────────────────────────────────────────────────
 
 TOTAL=$((PASSES + FAILURES + AMBIGUOUS + ENV_FAILURES))
-CONCLUSIVE=$((PASSES + FAILURES))
+# Count env_failures as unsuccessful for the threshold.
+ALL_FAILS=$((FAILURES + ENV_FAILURES))
+CONCLUSIVE=$((PASSES + ALL_FAILS))
 if [[ $CONCLUSIVE -gt 0 ]]; then
-    PASS_RATE=$(awk "BEGIN { printf \"%.1f\", ($PASSES / $CONCLUSIVE) * 100 }")
+    # Integer arithmetic: pass_rate * 100 = (passes * 10000) / conclusive, then round.
+    PASS_RATE_INT=$(( (PASSES * 10000) / CONCLUSIVE ))
+    PASS_RATE_DEC=$(( PASS_RATE_INT % 100 ))
+    PASS_RATE_WHOLE=$(( PASS_RATE_INT / 100 ))
+    PASS_RATE="${PASS_RATE_WHOLE}.${PASS_RATE_DEC}"
 else
     PASS_RATE="0.0"
 fi
 
+# Integer comparison: pass_rate_int >= threshold * 100
+THRESHOLD_INT=$(( THRESHOLD * 100 ))
 ABOVE_THRESHOLD=false
-if (( $(echo "$PASS_RATE >= $THRESHOLD" | bc -l 2>/dev/null || echo 0) )); then
+if [[ $PASS_RATE_INT -ge $THRESHOLD_INT ]]; then
     ABOVE_THRESHOLD=true
 fi
 
@@ -215,8 +224,8 @@ logln "artifacts: $ARTIFACT_DIR"
 logln "results JSONL: $RESULTS_FILE"
 
 # Exit code.
-if [[ $ENV_FAILURES -gt 0 && $PASSES -eq 0 && $FAILURES -eq 0 ]]; then
-    logln "All runs were env_failures — environment issue."
+if [[ $ENV_FAILURES -gt 0 ]]; then
+    logln "WARNING: $ENV_FAILURES env_failure(s) — environment issue."
     exit 2
 fi
 
