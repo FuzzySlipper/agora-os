@@ -158,9 +158,11 @@ test/phase4/artifacts/<timestamp>/
 ├── results.jsonl         Machine-readable run results (JSON Lines)
 ├── report.json           Aggregate report (pass rate, threshold status)
 └── run-001/              Per-run artifacts
-    └── run-001/          Runner's own run-ID subdirectory
-        ├── result.json   Structured RunResult
-        └── stderr.log    agent-sim stderr
+    ├── result.json        Structured RunResult (stdout)
+    ├── stderr.log         agent-sim stderr
+    └── run-001/           Runner's artifact subdirectory
+        ├── transcript.json  Action/event transcript
+        └── events.jsonl     Raw event bus events
 ```
 
 ### Exit Codes
