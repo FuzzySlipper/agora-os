@@ -1,7 +1,7 @@
 {
   "id": "two-agent-coordination",
   "title": "Two-agent coordination via event-bus-web",
-  "description": "Agent 1 (the sim agent) receives a coordination request from Agent 2 via agent.message topics (the event-bus-web path), processes it, and publishes a response. Tests that agents can use the Phase 3 agent-to-agent messaging protocol.",
+  "description": "Agent 1 (the sim agent) receives a coordination request from Agent 2 via agent.message topics (the event-bus-web path), processes it, and publishes a response. Tests that agents can use the Phase 3 agent-to-agent messaging protocol.\n\nNote: The deterministic CI test uses the same UID for sender and receiver because the test process has a single kernel UID. In VM deployment, the isolation service assigns distinct agent UIDs, and the agent.message protocol validates distinct sender→receiver coordination. The scenario is designed for distinct UIDs; the deterministic smoke test validates the protocol path with available identity.",
   "run_count": 1,
   "success_threshold_percent": 100,
   "timeout_seconds": 30,
