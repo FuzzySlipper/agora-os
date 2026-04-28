@@ -149,10 +149,9 @@ for ((i=1; i<=RUNS; i++)); do
     EXIT_CODE=$?
     set -e
 
-    # Append result to JSONL.
+    # Append result to JSONL (one JSON object per line, no blank lines).
     if [[ -s "$RUN_DIR/result.json" ]]; then
         cat "$RUN_DIR/result.json" >> "$RESULTS_FILE"
-        echo "" >> "$RESULTS_FILE"
     fi
 
     # Tally.
