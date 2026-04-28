@@ -29,6 +29,7 @@ SCENARIO=""
 SCRIPT=""
 RUNS=10
 THRESHOLD=70
+BRAIN_TYPE="ollama"
 OLLAMA_URL="http://127.0.0.1:11434"
 OLLAMA_MODEL="qwen3:8b"
 BUS_SOCKET="/run/agent-os/bus.sock"
@@ -48,6 +49,7 @@ while [[ $# -gt 0 ]]; do
         --script) SCRIPT="$2"; shift 2 ;;
         --runs) RUNS="$2"; shift 2 ;;
         --threshold) THRESHOLD="$2"; shift 2 ;;
+        --brain-type) BRAIN_TYPE="$2"; shift 2 ;;
         --ollama-url) OLLAMA_URL="$2"; shift 2 ;;
         --ollama-model) OLLAMA_MODEL="$2"; shift 2 ;;
         --bus) BUS_SOCKET="$2"; shift 2 ;;
@@ -99,23 +101,28 @@ if ! command -v "$AGENT_SIM" > /dev/null 2>&1; then
     AGENT_SIM="$ARTIFACT_DIR/agent-sim"
 fi
 
-# Check Ollama reachability.
-log "checking Ollama at $OLLAMA_URL..."
-if ! curl -sf "$OLLAMA_URL/api/tags" > /dev/null 2>&1; then
-    logln "FAIL: Ollama not reachable at $OLLAMA_URL"
-    logln "Start Ollama or use --ollama-url to specify the correct endpoint."
-    exit 2
+# Check Ollama reachability (only for ollama brain type).
+if [[ "$BRAIN_TYPE" == "ollama" ]]; then
+    log "checking Ollama at $OLLAMA_URL..."
+    if ! curl -sf "$OLLAMA_URL/api/tags" > /dev/null 2>&1; then
+        logln "FAIL: Ollama not reachable at $OLLAMA_URL"
+        logln "Start Ollama or use --ollama-url to specify the correct endpoint."
+        exit 2
+    fi
+    log "Ollama reachable."
 fi
-log "Ollama reachable."
 
 # ── Run ─────────────────────────────────────────────────────────────────────
 
 logln "Phase 4 empirical smoke"
 logln "  scenario:    $SCENARIO"
-logln "  script:      ${SCRIPT:-<ollama brain>}"
+logln "  brain:       $BRAIN_TYPE"
+logln "  script:      ${SCRIPT:-<none>}"
 logln "  runs:        $RUNS"
 logln "  threshold:   ${THRESHOLD}%"
-logln "  model:       $OLLAMA_MODEL"
+if [[ "$BRAIN_TYPE" == "ollama" ]]; then
+    logln "  model:       $OLLAMA_MODEL"
+fi
 logln "  artifacts:   $ARTIFACT_DIR"
 logln ""
 
@@ -135,7 +142,7 @@ for ((i=1; i<=RUNS; i++)); do
     "$AGENT_SIM" \
         --scenario "$SCENARIO" \
         ${SCRIPT:+--script "$SCRIPT"} \
-        --brain-type ollama \
+        --brain-type "$BRAIN_TYPE" \
         --ollama-url "$OLLAMA_URL" \
         --ollama-model "$OLLAMA_MODEL" \
         --bus "$BUS_SOCKET" \

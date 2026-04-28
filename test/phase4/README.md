@@ -47,8 +47,9 @@ first gate. If scripted tests fail, empirical tests are not meaningful.
   --runs 10 \
   --threshold 70
 
-# With a deterministic script (no LLM)
+# With a deterministic script (no LLM, no Ollama needed)
 ./test/phase4/smoke.sh \
+  --brain-type deterministic \
   --scenario test/phase4/scenarios/worker_lifecycle.json \
   --script test/phase4/scripts/worker_lifecycle_script.json \
   --runs 1 \
@@ -129,15 +130,25 @@ Use larger models (`mistral`, `llama3.1:70b`) for pre-release validation.
 
 ### Ollama Options
 
-Pass model options via the smoke script or agent-sim:
+Model options (temperature, seed, top_p) are configured in the scenario's
+`brain` field or passed via the scenario JSON. The Ollama adapter forwards
+them to the `/api/chat` endpoint.
 
-```sh
-agent-sim --brain-type ollama --ollama-model qwen3:8b \
-  --var OLLAMA_TEMPERATURE=0.3
+For reproducibility, set `seed` in the scenario's `BrainConfig`:
+
+```json
+{
+  "brain": {
+    "kind": "local_llm",
+    "provider": "ollama",
+    "model": "qwen3:8b",
+    "model_options": {
+      "temperature": 0.3,
+      "seed": 42
+    }
+  }
+}
 ```
-
-Common options: `temperature` (0.0–1.0, lower = more deterministic),
-`seed` (for reproducibility), `top_p` (nucleus sampling).
 
 ## Interpreting Results
 
