@@ -112,8 +112,8 @@ test_bus() {
     local rc=0
 
     # Start subscriber on a background nc that stays open.
-    (printf '{"op":"sub","topic":"test.phase4.echo"}\n'; cat) \
-        < /dev/null \
+    # Using tail -f /dev/null keeps stdin open so nc does not exit.
+    (printf '{"op":"sub","topic":"test.phase4.echo"}\n'; tail -f /dev/null) \
         | timeout 3 nc -U "$BUS_SOCKET" \
         > "$bus_sub_out" 2>/dev/null &
     local sub_pid=$!
@@ -193,8 +193,8 @@ test_event_capture() {
     info "Subscribing to $sub_pattern"
 
     # Start subscriber in background.
-    (printf '{"op":"sub","topic":"%s"}\n' "$sub_pattern"; cat) \
-        < /dev/null \
+    # Using tail -f /dev/null keeps stdin open so nc does not exit before events arrive.
+    (printf '{"op":"sub","topic":"%s"}\n' "$sub_pattern"; tail -f /dev/null) \
         | timeout 4 nc -U "$BUS_SOCKET" \
         > "$events_file" 2>/dev/null &
     local sub_pid=$!
