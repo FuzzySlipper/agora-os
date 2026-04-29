@@ -102,6 +102,14 @@ interface EscalationDecisionMessage {
 
 type BusEnvelope = LifecycleEventMessage | SurfaceEventMessage | EscalationDecisionMessage;
 
+interface BusSender {
+    uid: number;
+    kind: string;
+}
+
+// SenderUID is the well-known uid of the root/daemon services.
+const SenderRoot = 0;
+
 interface AppState {
     token: string;
     shellState: ShellStateSnapshot;
@@ -194,6 +202,7 @@ function connectBus(): void {
         state.busStatus = "Live";
         socket.send(JSON.stringify({ op: "sub", topic: "agent.lifecycle.*" }));
         socket.send(JSON.stringify({ op: "sub", topic: "compositor.surface.*" }));
+        socket.send(JSON.stringify({ op: "sub", topic: "compositor.advisory.surface.*" }));
         socket.send(JSON.stringify({ op: "sub", topic: "admin.escalation.*" }));
         render();
     });
@@ -203,12 +212,22 @@ function connectBus(): void {
             return;
         }
         if (payload.topic.startsWith("agent.lifecycle.")) {
-            applyLifecycleEvent(payload as LifecycleEventMessage);
+            const msg = payload as LifecycleEventMessage & { sender?: BusSender };
+            // Reject lifecycle events from non-root/delegated senders.
+            if (msg.sender && msg.sender.uid !== SenderRoot && msg.sender.kind !== "delegated") {
+                return;
+            }
+            applyLifecycleEvent(msg);
             render();
             return;
         }
         if (payload.topic.startsWith("compositor.surface.")) {
-            applySurfaceEvent(payload as SurfaceEventMessage);
+            const msg = payload as SurfaceEventMessage & { sender?: BusSender };
+            // Reject surface events from non-root/delegated senders.
+            if (msg.sender && msg.sender.uid !== SenderRoot && msg.sender.kind !== "delegated") {
+                return;
+            }
+            applySurfaceEvent(msg);
             render();
             return;
         }
