@@ -1,0 +1,19 @@
+[package]
+name = "audit-ebpf-ebpf"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["lib"]
+
+[dependencies]
+aya-ebpf = "0.1"
+aya-ebpf-macros = "0.1"
+audit-ebpf-common = { path = "../audit-ebpf-common" }
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+lto = true
