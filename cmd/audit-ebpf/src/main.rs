@@ -9,7 +9,7 @@ use aya::{
 };
 use bus::BusClient;
 use serde_json::json;
-use std::time::UNIX_EPOCH;
+use std::time::SystemTime;
 
 const DEFAULT_BUS_SOCKET: &str = "/run/agent-os/bus.sock";
 const DEFAULT_SSL_LIB: &str = "libssl.so.3";
@@ -161,15 +161,9 @@ fn resolve_lib_path(soname: &str) -> Result<std::path::PathBuf> {
 }
 
 fn handle_event(bus: &mut BusClient, ev: &KernelEvent) -> Result<()> {
-    let ts = if ev.timestamp_ns > 0 {
-        let d = std::time::Duration::from_nanos(ev.timestamp_ns);
-        match UNIX_EPOCH.checked_add(d) {
-            Some(t) => humantime::format_rfc3339_nanos(t).to_string(),
-            None => "unknown".to_string(),
-        }
-    } else {
-        "unknown".to_string()
-    };
+    // Use wall-clock time for the published timestamp.
+    // bpf_ktime_get_ns() (CLOCK_MONOTONIC) is only used for event ordering.
+    let ts = humantime::format_rfc3339_nanos(SystemTime::now()).to_string();
 
     match ev.event_type {
         1 => {
@@ -217,7 +211,12 @@ fn bytes_to_str(buf: &[u8]) -> String {
 }
 
 fn u32_to_ipv4(addr_be: u32) -> String {
-    let addr_host = u32::from_be(addr_be);
-    let bytes = addr_host.to_ne_bytes();
-    format!("{}.{}.{}.{}", bytes[0], bytes[1], bytes[2], bytes[3])
+    let a = u32::from_be(addr_be);
+    format!(
+        "{}.{}.{}.{}",
+        (a >> 24) & 0xff,
+        (a >> 16) & 0xff,
+        (a >> 8) & 0xff,
+        a & 0xff
+    )
 }
