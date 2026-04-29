@@ -1,5 +1,8 @@
 mod bus;
 
+#[cfg(test)]
+mod guard_test;
+
 use anyhow::{Context as _, Result};
 use audit_ebpf_common::*;
 use aya::{
