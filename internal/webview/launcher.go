@@ -325,11 +325,11 @@ func publishLifecycle(client *bus.Client, cfg resolvedConfig, ev helperEvent, ui
 func lifecycleMapping(event string) (topic string, eventName schema.CompositorSurfaceEventName, ok bool) {
 	switch event {
 	case helperEventCreated:
-		return schema.TopicCompositorSurfaceCreated, schema.SurfaceEventMapped, true
+		return schema.TopicCompositorAdvisorySurfaceCreated, schema.SurfaceEventMapped, true
 	case helperEventFocused:
-		return schema.TopicCompositorSurfaceFocused, schema.SurfaceEventFocused, true
+		return schema.TopicCompositorAdvisorySurfaceFocused, schema.SurfaceEventFocused, true
 	case helperEventClosed:
-		return schema.TopicCompositorSurfaceDestroyed, schema.SurfaceEventUnmapped, true
+		return schema.TopicCompositorAdvisorySurfaceDestroyed, schema.SurfaceEventUnmapped, true
 	default:
 		return "", "", false
 	}

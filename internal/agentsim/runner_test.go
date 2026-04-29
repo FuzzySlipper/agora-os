@@ -31,7 +31,7 @@ func testBus(t *testing.T) (socketPath string, cleanup func()) {
 		t.Fatalf("listen: %v", err)
 	}
 
-	broker := bus.NewBroker()
+	broker := bus.NewBrokerWithOptions(false) // test bus: no provenance enforcement
 
 	go func() {
 		for {

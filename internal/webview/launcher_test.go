@@ -61,9 +61,9 @@ func TestLifecycleMapping(t *testing.T) {
 		wantEvent schema.CompositorSurfaceEventName
 		wantOK    bool
 	}{
-		{name: "created", helper: helperEventCreated, wantTopic: schema.TopicCompositorSurfaceCreated, wantEvent: schema.SurfaceEventMapped, wantOK: true},
-		{name: "focused", helper: helperEventFocused, wantTopic: schema.TopicCompositorSurfaceFocused, wantEvent: schema.SurfaceEventFocused, wantOK: true},
-		{name: "closed", helper: helperEventClosed, wantTopic: schema.TopicCompositorSurfaceDestroyed, wantEvent: schema.SurfaceEventUnmapped, wantOK: true},
+		{name: "created", helper: helperEventCreated, wantTopic: schema.TopicCompositorAdvisorySurfaceCreated, wantEvent: schema.SurfaceEventMapped, wantOK: true},
+		{name: "focused", helper: helperEventFocused, wantTopic: schema.TopicCompositorAdvisorySurfaceFocused, wantEvent: schema.SurfaceEventFocused, wantOK: true},
+		{name: "closed", helper: helperEventClosed, wantTopic: schema.TopicCompositorAdvisorySurfaceDestroyed, wantEvent: schema.SurfaceEventUnmapped, wantOK: true},
 		{name: "unknown", helper: "bogus", wantOK: false},
 	}
 

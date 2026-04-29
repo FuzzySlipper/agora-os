@@ -24,6 +24,13 @@ const (
 	TopicCompositorSurfaceDestroyed = "compositor.surface.destroyed"
 	TopicCompositorSurfaceFocused   = "compositor.surface.focused"
 	TopicCompositorSurfaceInput     = "compositor.surface.input"
+
+	// Advisory compositor topics: published by non-privileged clients (e.g.,
+	// webview launcher) alongside the authoritative compositor.surface.*
+	// topics published by the root-owned compositor bridge.
+	TopicCompositorAdvisorySurfaceCreated   = "compositor.advisory.surface.created"
+	TopicCompositorAdvisorySurfaceDestroyed = "compositor.advisory.surface.destroyed"
+	TopicCompositorAdvisorySurfaceFocused   = "compositor.advisory.surface.focused"
 )
 
 type CompositorPluginMessageType string

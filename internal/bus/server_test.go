@@ -489,33 +489,48 @@ func TestServeConnRejectsAgentPublishOnPrivilegedTopic(t *testing.T) {
 		}
 	}()
 
-	rawConn, err := net.Dial("unix", sock)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rawConn.Close()
-
-	// Publish to a privileged topic as a non-root, non-delegated peer.
-	enc := json.NewEncoder(rawConn)
-	if err := enc.Encode(ClientMsg{Op: OpPub, Topic: "audit.file.open", Body: body("forged")}); err != nil {
-		t.Fatalf("Encode publish: %v", err)
+	tests := []struct {
+		topic string
+		desc  string
+	}{
+		{"audit.file.open", "audit"},
+		{"agent.lifecycle.spawned", "lifecycle"},
+		{"compositor.surface.created", "surface"},
+		{"admin.escalation.decided", "escalation"},
 	}
 
-	rawConn.SetReadDeadline(time.Now().Add(2 * time.Second))
-	var msg ClientMsg
-	err = json.NewDecoder(rawConn).Decode(&msg)
-	if err == nil {
-		// If running as root, the publish is allowed.
-		if os.Getuid() == 0 {
-			t.Log("running as root — privileged publish is allowed; connection remains open")
-		} else {
-			t.Fatal("expected agent publish on privileged topic to close connection")
-		}
+	for _, tc := range tests {
+		t.Run(tc.desc, func(t *testing.T) {
+			rawConn, err := net.Dial("unix", sock)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer rawConn.Close()
+
+			enc := json.NewEncoder(rawConn)
+			if err := enc.Encode(ClientMsg{Op: OpPub, Topic: tc.topic, Body: body("forged")}); err != nil {
+				t.Fatalf("Encode publish: %v", err)
+			}
+
+			rawConn.SetReadDeadline(time.Now().Add(2 * time.Second))
+			var msg ClientMsg
+			err = json.NewDecoder(rawConn).Decode(&msg)
+			if err == nil {
+				if os.Getuid() == 0 {
+					t.Log("running as root — privileged publish is allowed")
+				} else {
+					t.Fatalf("expected agent publish on %s to close connection", tc.topic)
+				}
+			}
+		})
 	}
 
 	ln.Close()
 	<-acceptDone
 }
+
+// TestServeConnRejectsAgentPublishOnPrivilegedTopic is now at the top of this block —
+// it was renamed to the parameterized version above.
 
 func TestServeConnRejectsAgentSubscribeOnPrivilegedTopic(t *testing.T) {
 	// Non-root peer subscribing to admin.escalation.* should be rejected.

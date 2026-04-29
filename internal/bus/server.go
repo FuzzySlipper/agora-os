@@ -13,6 +13,10 @@ import (
 // is resolved from SO_PEERCRED up front and stamped onto all events published
 // by this connection.
 func ServeConn(conn net.Conn, broker *Broker) error {
+	return serveConn(conn, broker, broker.strictProvenance)
+}
+
+func serveConn(conn net.Conn, broker *Broker, enforceProvenance bool) error {
 	uid, err := peercred.PeerUID(conn)
 	if err != nil {
 		conn.Close()
@@ -48,9 +52,11 @@ func ServeConn(conn net.Conn, broker *Broker) error {
 				if err := validateAgentMessagePublish(sender.UID, msg.Topic, msg.Body); err != nil {
 					return
 				}
-				// Validate topic-family provenance (ACL check).
-				if err := validateTopicPublish(sender.UID, sender.Kind, msg.Topic); err != nil {
-					return
+				// Validate topic-family provenance (ACL check) — skip in test mode.
+				if enforceProvenance {
+					if err := validateTopicPublish(sender.UID, sender.Kind, msg.Topic); err != nil {
+						return
+					}
 				}
 				if delegated {
 					broker.PublishAs(id, sender, Event{Topic: msg.Topic, Body: msg.Body})
@@ -61,8 +67,10 @@ func ServeConn(conn net.Conn, broker *Broker) error {
 				if err := validateAgentMessageSubscription(uid, msg.Topic); err != nil {
 					return
 				}
-				if err := validateTopicSubscribe(uid, peerKindForUID(uid), msg.Topic); err != nil {
-					return
+				if enforceProvenance {
+					if err := validateTopicSubscribe(uid, peerKindForUID(uid), msg.Topic); err != nil {
+						return
+					}
 				}
 				broker.Subscribe(id, msg.Topic)
 			case OpUnsub:

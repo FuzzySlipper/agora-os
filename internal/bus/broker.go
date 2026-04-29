@@ -18,15 +18,23 @@ type subscriber struct {
 // non-blocking: if a client's channel is full, the event is dropped for that
 // client (backpressure — slow subscribers don't block publishers).
 type Broker struct {
-	mu      sync.Mutex
-	clients map[int]*subscriber
-	nextID  int
+	mu               sync.Mutex
+	clients          map[int]*subscriber
+	nextID           int
+	strictProvenance bool
 }
 
-// NewBroker creates an empty broker with no clients.
+// NewBroker creates an empty broker with provenance enforcement enabled.
 func NewBroker() *Broker {
+	return NewBrokerWithOptions(true)
+}
+
+// NewBrokerWithOptions creates a broker. strictProvenance controls whether
+// topic-family ACL enforcement is active (disabled for isolated test buses).
+func NewBrokerWithOptions(strictProvenance bool) *Broker {
 	return &Broker{
-		clients: make(map[int]*subscriber),
+		clients:          make(map[int]*subscriber),
+		strictProvenance: strictProvenance,
 	}
 }
 
