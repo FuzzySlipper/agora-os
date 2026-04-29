@@ -9,17 +9,17 @@ use aya_ebpf::{
         bpf_probe_read_user, bpf_probe_read_user_str_bytes,
     },
     macros::{map, tracepoint, uprobe},
-    maps::{PerCpuArray, RingBuf},
+    maps::{HashMap, RingBuf},
     programs::{ProbeContext, RetProbeContext, TracePointContext},
 };
 
 #[map]
 static EVENTS: RingBuf = RingBuf::with_byte_size(256 * 1024, 0);
 
-/// Per-CPU buffer pointer stash — used to pass SSL_read's buf argument
-/// from the entry probe to the return probe.
+/// Per-task buffer pointer stash: entry probe stores SSL_read buf ptr
+/// keyed by PID+TID; return probe reads and deletes it.
 #[map]
-static SSL_BUF_STASH: PerCpuArray<*const u8> = PerCpuArray::<*const u8>::with_max_entries(1, 0);
+static SSL_BUF_STASH: HashMap<u64, u64> = HashMap::<u64, u64>::with_max_entries(1024, 0);
 
 fn now_ns() -> u64 {
     unsafe { bpf_ktime_get_ns() }
@@ -43,11 +43,9 @@ fn emit(ev: KernelEvent) {
 fn ssl_read_entry(ctx: ProbeContext) -> u32 {
     // SSL_read(SSL *s, void *buf, int num) — arg(1) = buf
     if let Some(buf_ptr) = ctx.arg::<*const u8>(1) {
-        if let Some(stash) = SSL_BUF_STASH.get_ptr_mut(0) {
-            unsafe {
-                *stash = buf_ptr;
-            }
-        }
+        let key = bpf_get_current_pid_tgid();
+        let val: u64 = buf_ptr as u64;
+        let _ = SSL_BUF_STASH.insert(&key, &val, 0);
     }
     0
 }
@@ -71,9 +69,10 @@ pub fn ssl_read_ret(ctx: RetProbeContext) -> u32 {
     let cap = (retval as usize).min(data.buf.len());
     data.len = cap as u16;
 
-    // Read the stashed buffer pointer from the per-CPU array.
-    if let Some(stash) = SSL_BUF_STASH.get_ptr(0) {
-        let buf_ptr: *const u8 = unsafe { *stash };
+    // Read the stashed buffer pointer from the per-task hash map.
+    let key = bpf_get_current_pid_tgid();
+    if let Some(buf_ptr_val) = SSL_BUF_STASH.get_ptr(&key) {
+        let buf_ptr: *const u8 = unsafe { *buf_ptr_val } as *const u8;
         if !buf_ptr.is_null() {
             let dst = &mut data.buf[..cap];
             for i in 0..cap {
@@ -83,6 +82,8 @@ pub fn ssl_read_ret(ctx: RetProbeContext) -> u32 {
                 }
             }
         }
+        // Clean up: remove the stash entry for this task.
+        let _ = SSL_BUF_STASH.remove(&key);
     }
 
     emit(KernelEvent {
