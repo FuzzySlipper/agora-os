@@ -1066,6 +1066,14 @@ cmd_phase2_deps() {
 }
 
 # ---------------------------------------------------------------------------
+# phase4-ebpf-deps — install guest-side Rust/eBPF toolchain for audit-ebpf
+# ---------------------------------------------------------------------------
+cmd_phase4_ebpf_deps() {
+    is_running || die "VM is not running — use 'vm.sh start' or 'vm.sh gui'"
+    ssh_cmd "sudo /repo/scripts/provision-phase4-ebpf.sh"
+}
+
+# ---------------------------------------------------------------------------
 # stop — shut down QEMU and virtiofsd
 # ---------------------------------------------------------------------------
 cmd_stop() {
@@ -1110,7 +1118,7 @@ cmd_destroy() {
 # dispatch
 # ---------------------------------------------------------------------------
 case "${1:-}" in
-    build|start|gui|ssh|console|status|diag|console-log|journal|qmp|hmp|qga|qga-exec|screenshot|sendkey|serial|snap|restore|phase2-deps|stop|destroy)
+    build|start|gui|ssh|console|status|diag|console-log|journal|qmp|hmp|qga|qga-exec|screenshot|sendkey|serial|snap|restore|phase2-deps|phase4-ebpf-deps|stop|destroy)
         cmd=${1//-/_}; shift; "cmd_$cmd" "$@" ;;
     *)
         cat >&2 <<'USAGE'
