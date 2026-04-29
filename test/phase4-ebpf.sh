@@ -104,16 +104,30 @@ test_bus() {
         return 1
     fi
 
-    # Publish a test event and verify echo-back via subscription.
-    local bus_out="$ARTIFACT_DIR/bus-pub.log"
+    # Publish a test event and verify echo-back via separate subscriber.
+    # The bus broker suppresses echo to the publishing connection, so we
+    # use two connections: one subscriber, one publisher.
+    local bus_pub_out="$ARTIFACT_DIR/bus-pub-out.log"
+    local bus_sub_out="$ARTIFACT_DIR/bus-sub-out.log"
     local rc=0
-    (   printf '{"op":"sub","topic":"test.phase4.echo"}\n'
-        sleep 0.2
-        printf '{"op":"pub","topic":"test.phase4.echo","body":{"msg":"ping"}}\n'
-        sleep 0.5
-    ) | timeout 3 nc -U "$BUS_SOCKET" > "$bus_out" 2>/dev/null || rc=$?
 
-    if grep -q '"msg":"ping"' "$bus_out" 2>/dev/null; then
+    # Start subscriber on a background nc that stays open.
+    (printf '{"op":"sub","topic":"test.phase4.echo"}\n'; cat) \
+        < /dev/null \
+        | timeout 3 nc -U "$BUS_SOCKET" \
+        > "$bus_sub_out" 2>/dev/null &
+    local sub_pid=$!
+    sleep 0.3
+
+    # Publish from a separate connection.
+    printf '{"op":"pub","topic":"test.phase4.echo","body":{"msg":"ping"}}\n' \
+        | timeout 1 nc -U "$BUS_SOCKET" > /dev/null 2>/dev/null || true
+
+    sleep 0.5
+    kill "$sub_pid" 2>/dev/null || true
+    wait "$sub_pid" 2>/dev/null || true
+
+    if grep -q '"msg":"ping"' "$bus_sub_out" 2>/dev/null; then
         pass "bus pub/sub: echo received"
     else
         fail "bus pub/sub: echo not received (daemon: bus may be down)"

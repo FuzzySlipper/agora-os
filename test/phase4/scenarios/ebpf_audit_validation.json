@@ -1,71 +1,33 @@
 {
   "id": "ebpf_audit_validation",
   "name": "eBPF Audit Lane Validation",
-  "description": "Validates that the eBPF audit daemon attaches probes, captures events from agent UIDs, and publishes them to the event bus. Deterministic (no LLM required) — uses the same script-based agent-sim runner with a deterministic brain.",
+  "description": "Validates that the eBPF audit daemon attaches probes, captures events from agent UIDs, and publishes them to the event bus.",
   "version": "1.0",
+  "runner": "test/phase4-ebpf.sh",
+  "runner_note": "This scenario runs via test/phase4-ebpf.sh (not agent-sim). It requires root, CAP_BPF, and kernel >= 5.6 with BTF. Run inside the VM after provisioning with scripts/vm.sh phase4-ebpf-deps.",
+  "expected_outcome": "pass",
   "phases": [
-    {
-      "name": "daemon_startup",
-      "description": "Start the eBPF audit daemon and verify probe attachment"
-    },
-    {
-      "name": "agent_event",
-      "description": "Trigger agent activity and capture eBPF audit events"
-    },
-    {
-      "name": "teardown",
-      "description": "Stop daemon and clean up"
-    }
+    {"name": "daemon_startup", "description": "Start eBPF audit daemon, verify probe attachment"},
+    {"name": "agent_event",    "description": "Trigger agent activity, capture eBPF audit events on bus"},
+    {"name": "teardown",       "description": "Stop daemon and clean up"}
   ],
   "evaluator": {
     "expected_outcome": "pass",
     "conditions": [
-      {
-        "source": "file",
-        "file": "/tmp/phase4-ebpf-test/summary.txt",
-        "check": "contains",
-        "value": "VALIDATION PASSED"
-      },
-      {
-        "source": "file",
-        "file": "/tmp/phase4-ebpf-test/audit-ebpf.log",
-        "check": "contains",
-        "value": "uprobe"
-      },
-      {
-        "source": "file",
-        "file": "/tmp/phase4-ebpf-test/audit-ebpf.log",
-        "check": "contains",
-        "value": "tracepoint"
-      },
-      {
-        "source": "file",
-        "file": "/tmp/phase4-ebpf-test/summary.txt",
-        "check": "not_contains",
-        "value": "FAIL"
-      }
+      {"source": "file", "file": "/tmp/phase4-ebpf-test/summary.txt", "check": "contains", "value": "VALIDATION PASSED"},
+      {"source": "file", "file": "/tmp/phase4-ebpf-test/audit-ebpf.log", "check": "contains", "value": "uprobe"},
+      {"source": "file", "file": "/tmp/phase4-ebpf-test/audit-ebpf.log", "check": "contains", "value": "tracepoint"},
+      {"source": "file", "file": "/tmp/phase4-ebpf-test/summary.txt", "check": "not_contains", "value": "FAIL"}
     ]
   },
   "infrastructure_requirements": {
     "kernel_min": "5.6",
     "btf_required": true,
     "capabilities": ["CAP_BPF", "CAP_SYS_ADMIN"],
-    "tools": ["rustup", "cargo", "lld", "llc", "llvm-objcopy"]
+    "tools": ["rustup", "cargo", "lld", "llc"]
   },
   "failure_classification": {
-    "infrastructure": [
-      "kernel too old",
-      "BTF missing",
-      "bus socket missing",
-      "binary missing",
-      "packages not installed",
-      "CAP_BPF not available"
-    ],
-    "daemon_bug": [
-      "probes not attached",
-      "ring buffer not polling",
-      "no audit events captured",
-      "daemon exited"
-    ]
+    "infrastructure": ["kernel too old", "BTF missing", "bus socket missing", "binary missing", "packages not installed", "CAP_BPF not available"],
+    "daemon_bug": ["probes not attached", "ring buffer not polling", "no audit events captured", "daemon exited"]
   }
 }
