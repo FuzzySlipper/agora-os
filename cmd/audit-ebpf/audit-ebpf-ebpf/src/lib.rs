@@ -51,6 +51,9 @@ fn emit(ev: KernelEvent) {
 
 #[uprobe]
 fn ssl_read_entry(ctx: ProbeContext) -> u32 {
+    if !is_agent_uid() {
+        return 0;
+    }
     // SSL_read(SSL *s, void *buf, int num) — arg(1) = buf
     if let Some(buf_ptr) = ctx.arg::<*const u8>(1) {
         let key = bpf_get_current_pid_tgid();
@@ -63,6 +66,9 @@ fn ssl_read_entry(ctx: ProbeContext) -> u32 {
 #[unsafe(no_mangle)]
 #[unsafe(link_section = "uretprobe/ssl_read_ret")]
 pub fn ssl_read_ret(ctx: RetProbeContext) -> u32 {
+    if !is_agent_uid() {
+        return 0;
+    }
     let key = bpf_get_current_pid_tgid();
 
     let retval: i32 = match ctx.ret() {
@@ -118,6 +124,9 @@ pub fn ssl_read_ret(ctx: RetProbeContext) -> u32 {
 
 #[uprobe]
 fn ssl_write_entry(ctx: ProbeContext) -> u32 {
+    if !is_agent_uid() {
+        return 0;
+    }
     // SSL_write(SSL *s, const void *buf, int num)
     let num: i32 = match ctx.arg(2) {
         Some(v) => v,
