@@ -48,14 +48,14 @@ func TestServeConnStampsPeerUID(t *testing.T) {
 	}
 	defer publisher.Close()
 
-	if err := subscriber.Subscribe("agent.work.*"); err != nil {
+	if err := subscriber.Subscribe("test.stamp.*"); err != nil {
 		t.Fatalf("Subscribe: %v", err)
 	}
 
 	// The broker processes subscribe messages asynchronously over the socket.
 	// Give the subscription a brief moment to register before publishing.
 	time.Sleep(50 * time.Millisecond)
-	if err := publisher.Publish("agent.work.result", map[string]any{
+	if err := publisher.Publish("test.stamp.result", map[string]any{
 		"claimed_role": "pretend-root",
 	}); err != nil {
 		t.Fatalf("Publish: %v", err)
@@ -141,12 +141,12 @@ func TestServeConnIgnoresSenderUIDOverrideForNonRoot(t *testing.T) {
 	}
 	defer publisher.Close()
 
-	if err := subscriber.Subscribe("agent.work.*"); err != nil {
+	if err := subscriber.Subscribe("test.override.*"); err != nil {
 		t.Fatalf("Subscribe: %v", err)
 	}
 	time.Sleep(50 * time.Millisecond)
 
-	if err := publisher.PublishAs(Sender{UID: 12345, Kind: SenderKindDelegated}, "agent.work.result", map[string]any{"kind": "override-attempt"}); err != nil {
+	if err := publisher.PublishAs(Sender{UID: 12345, Kind: SenderKindDelegated}, "test.override.result", map[string]any{"kind": "override-attempt"}); err != nil {
 		t.Fatalf("PublishAs: %v", err)
 	}
 
@@ -460,4 +460,166 @@ func mustJSONRaw(t *testing.T, value any) json.RawMessage {
 		t.Fatal(err)
 	}
 	return b
+}
+
+// ── Provenance policy integration tests ────────────────────────────────────
+
+func TestServeConnRejectsAgentPublishOnPrivilegedTopic(t *testing.T) {
+	// Non-root peer publishing to a privileged topic should be rejected
+	// (connection closed) by the provenance ACL.
+	sock := filepath.Join(t.TempDir(), "bus.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	broker := NewBroker()
+	acceptDone := make(chan struct{})
+	go func() {
+		defer close(acceptDone)
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				_ = ServeConn(c, broker)
+			}(conn)
+		}
+	}()
+
+	rawConn, err := net.Dial("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rawConn.Close()
+
+	// Publish to a privileged topic as a non-root, non-delegated peer.
+	enc := json.NewEncoder(rawConn)
+	if err := enc.Encode(ClientMsg{Op: OpPub, Topic: "audit.file.open", Body: body("forged")}); err != nil {
+		t.Fatalf("Encode publish: %v", err)
+	}
+
+	rawConn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	var msg ClientMsg
+	err = json.NewDecoder(rawConn).Decode(&msg)
+	if err == nil {
+		// If running as root, the publish is allowed.
+		if os.Getuid() == 0 {
+			t.Log("running as root — privileged publish is allowed; connection remains open")
+		} else {
+			t.Fatal("expected agent publish on privileged topic to close connection")
+		}
+	}
+
+	ln.Close()
+	<-acceptDone
+}
+
+func TestServeConnRejectsAgentSubscribeOnPrivilegedTopic(t *testing.T) {
+	// Non-root peer subscribing to admin.escalation.* should be rejected.
+	sock := filepath.Join(t.TempDir(), "bus.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	broker := NewBroker()
+	acceptDone := make(chan struct{})
+	go func() {
+		defer close(acceptDone)
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				_ = ServeConn(c, broker)
+			}(conn)
+		}
+	}()
+
+	rawConn, err := net.Dial("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rawConn.Close()
+
+	enc := json.NewEncoder(rawConn)
+	if err := enc.Encode(ClientMsg{Op: OpSub, Topic: "admin.escalation.*"}); err != nil {
+		t.Fatalf("Encode subscribe: %v", err)
+	}
+
+	rawConn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	var msg ClientMsg
+	err = json.NewDecoder(rawConn).Decode(&msg)
+	if err == nil {
+		if os.Getuid() == 0 {
+			t.Log("running as root — privileged subscribe is allowed; connection remains open")
+		} else {
+			t.Fatal("expected agent subscribe on admin.escalation.* to close connection")
+		}
+	}
+
+	ln.Close()
+	<-acceptDone
+}
+
+func TestServeConnAllowsAgentOpenTopicPublish(t *testing.T) {
+	// Non-root peer publishing to an open topic should succeed.
+	sock := filepath.Join(t.TempDir(), "bus.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	broker := NewBroker()
+	acceptDone := make(chan struct{})
+	go func() {
+		defer close(acceptDone)
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				_ = ServeConn(c, broker)
+			}(conn)
+		}
+	}()
+
+	publisher, err := Dial(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer publisher.Close()
+
+	subscriber, err := Dial(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer subscriber.Close()
+
+	if err := subscriber.Subscribe("test.open.*"); err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	if err := publisher.Publish("test.open.topic", map[string]any{"msg": "hello"}); err != nil {
+		t.Fatalf("Publish open topic: %v", err)
+	}
+
+	ev, err := subscriber.Receive()
+	if err != nil {
+		t.Fatalf("Receive: %v", err)
+	}
+	if ev.Topic != "test.open.topic" {
+		t.Errorf("got topic %q, want test.open.topic", ev.Topic)
+	}
+
+	ln.Close()
+	<-acceptDone
 }

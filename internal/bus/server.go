@@ -44,7 +44,12 @@ func ServeConn(conn net.Conn, broker *Broker) error {
 				if err != nil {
 					return
 				}
+				// Validate agent.message.* envelope (structural check).
 				if err := validateAgentMessagePublish(sender.UID, msg.Topic, msg.Body); err != nil {
+					return
+				}
+				// Validate topic-family provenance (ACL check).
+				if err := validateTopicPublish(sender.UID, sender.Kind, msg.Topic); err != nil {
 					return
 				}
 				if delegated {
@@ -54,6 +59,9 @@ func ServeConn(conn net.Conn, broker *Broker) error {
 				broker.Publish(id, Event{Topic: msg.Topic, Body: msg.Body})
 			case OpSub:
 				if err := validateAgentMessageSubscription(uid, msg.Topic); err != nil {
+					return
+				}
+				if err := validateTopicSubscribe(uid, peerKindForUID(uid), msg.Topic); err != nil {
 					return
 				}
 				broker.Subscribe(id, msg.Topic)
@@ -85,4 +93,11 @@ func effectivePublishSender(peerUID uint32, msg ClientMsg) (Sender, bool, error)
 		sender.Kind = *msg.SenderKind
 	}
 	return sender, true, nil
+}
+
+// peerKindForUID returns the SenderKind for a direct peer connection.
+// uid 0 gets Peer (the connection is root; delegation is indicated via
+// the ClientMsg fields, not by uid alone).
+func peerKindForUID(uid uint32) SenderKind {
+	return SenderKindPeer
 }
