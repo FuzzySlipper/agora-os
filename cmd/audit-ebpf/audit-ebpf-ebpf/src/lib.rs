@@ -10,7 +10,7 @@ use aya_ebpf::{
     },
     macros::{map, tracepoint, uprobe},
     maps::{PerCpuArray, RingBuf},
-    programs::{ProbeContext, TracePointContext},
+    programs::{ProbeContext, RetProbeContext, TracePointContext},
 };
 
 #[map]
@@ -54,8 +54,8 @@ fn ssl_read_entry(ctx: ProbeContext) -> u32 {
 
 #[unsafe(no_mangle)]
 #[unsafe(link_section = "uretprobe/ssl_read_ret")]
-pub fn ssl_read_ret(ctx: ProbeContext) -> u32 {
-    let retval: i32 = match ctx.arg(0) {
+pub fn ssl_read_ret(ctx: RetProbeContext) -> u32 {
+    let retval: i32 = match ctx.ret() {
         Some(v) => v,
         None => return 0,
     };
