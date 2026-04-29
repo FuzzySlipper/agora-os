@@ -30,7 +30,17 @@ fn current_pid() -> u32 {
 fn current_uid() -> u32 {
     (bpf_get_current_uid_gid() as u64 & 0xFFFF_FFFF) as u32
 }
+
+/// Only capture events from Agora agent UIDs (60000-61000).
+fn is_agent_uid() -> bool {
+    let uid = current_uid();
+    uid >= 60000 && uid < 61000
+}
+
 fn emit(ev: KernelEvent) {
+    if !is_agent_uid() {
+        return;
+    }
     if let Some(mut entry) = EVENTS.reserve::<KernelEvent>(0) {
         unsafe { entry.as_mut_ptr().write(ev) };
         entry.submit(0);
