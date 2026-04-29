@@ -31,7 +31,7 @@ fn main() -> Result<()> {
     let bpf_obj_path = args
         .get(3)
         .map(|s| s.as_str())
-        .unwrap_or("target/bpfel-unknown-none/release/audit-ebpf-ebpf.o");
+        .unwrap_or("target/bpfel-unknown-none/release/audit-ebpf-ebpf");
 
     let mut bpf = Ebpf::load_file(bpf_obj_path).context("load BPF program")?;
 

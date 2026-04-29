@@ -1,9 +1,8 @@
 // Shared types between BPF and userspace programs.
-// Must work in both `no_std` (BPF) and `std` (userspace) contexts.
-//
-// All types are `#[repr(C)]` and use only `core` primitives.
+// KernelEvent fits within the BPF stack limit (512 bytes).
+// SslData::buf is reduced to 256 bytes.
 #![no_std]
-/// Represents a kernel event — syscall, process lifecycle, or network.
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct KernelEvent {
@@ -15,7 +14,6 @@ pub struct KernelEvent {
     pub data: KernelEventData,
 }
 
-/// Event type tags.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EventType {
@@ -27,7 +25,6 @@ pub enum EventType {
     SslWrite = 5,
 }
 
-/// Tagged union of event-specific data.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub union KernelEventData {
@@ -40,13 +37,13 @@ pub union KernelEventData {
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct FileOpenData {
-    pub path: [u8; 256],
+    pub path: [u8; 64],
 }
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct ProcessExecData {
-    pub filename: [u8; 128],
+    pub filename: [u8; 64],
     pub comm: [u8; 16],
 }
 
@@ -62,11 +59,9 @@ pub struct TcpConnectData {
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct SslData {
-    /// Number of bytes captured (<= 512).
     pub len: u16,
     pub _pad: [u8; 6],
-    /// First 512 bytes of decrypted SSL read/write buffer.
-    pub buf: [u8; 512],
+    pub buf: [u8; 128],
 }
 
 impl core::fmt::Debug for KernelEvent {
@@ -93,7 +88,6 @@ impl KernelEvent {
     }
 }
 
-// In-memory layout check.
 const _: () = {
-    assert!(core::mem::size_of::<KernelEvent>() <= 1024);
+    assert!(core::mem::size_of::<KernelEvent>() <= 512);
 };
