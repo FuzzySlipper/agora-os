@@ -169,6 +169,9 @@ fn ssl_write_entry(ctx: ProbeContext) -> u32 {
 
 #[tracepoint]
 fn sys_enter_openat2(ctx: TracePointContext) -> u32 {
+    if !is_agent_uid() {
+        return 0;
+    }
     // sys_enter_* layout: common fields at 0-15, __syscall_nr at 8,
     // then trailing padding to 16, then args start:
     //   offset 16: int dfd
@@ -201,6 +204,9 @@ fn sys_enter_openat2(ctx: TracePointContext) -> u32 {
 
 #[tracepoint]
 fn sys_enter_execve(ctx: TracePointContext) -> u32 {
+    if !is_agent_uid() {
+        return 0;
+    }
     // sys_enter_* args start at offset 16.
     //   offset 16: const char __user *filename
     let filename_ptr: *const u8 = match unsafe { ctx.read_at::<*const u8>(16) } {
@@ -246,6 +252,9 @@ struct RawSockaddrIn {
 
 #[tracepoint]
 fn sys_enter_connect(ctx: TracePointContext) -> u32 {
+    if !is_agent_uid() {
+        return 0;
+    }
     // sys_enter_* args start at offset 16.
     //   offset 16: int fd
     //   offset 24: struct sockaddr __user *uservaddr
