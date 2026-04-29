@@ -50,17 +50,25 @@ fn main() -> Result<()> {
     log::info!("polling for eBPF events");
 
     loop {
-        if let Some(item) = rb.next() {
-            let ev: &KernelEvent = unsafe { &*(item.as_ptr() as *const KernelEvent) };
-            if let Err(e) = handle_event(&mut bus, ev) {
-                log::error!("handle event: {}", e);
+        match rb.next() {
+            Some(item) => {
+                let ev: &KernelEvent = unsafe { &*(item.as_ptr() as *const KernelEvent) };
+                if let Err(e) = handle_event(&mut bus, ev) {
+                    log::error!("handle event: {}", e);
+                }
+            }
+            None => {
+                // No events available — yield to avoid busy-spinning.
+                // On Linux, this would be replaced by epoll on the ring buffer fd.
+                std::thread::sleep(std::time::Duration::from_millis(10));
             }
         }
     }
 }
 
 struct ProbeLinks {
-    _ssl_read: UProbeLinkId,
+    _ssl_read_entry: UProbeLinkId,
+    _ssl_read_ret: UProbeLinkId,
     _ssl_write: UProbeLinkId,
     _openat2: TracePointLinkId,
     _execve: TracePointLinkId,
@@ -72,7 +80,8 @@ fn attach_probes(bpf: &mut Ebpf, ssl_lib: &str) -> Result<ProbeLinks> {
     let lib_str = lib_path.to_string_lossy().to_string();
 
     Ok(ProbeLinks {
-        _ssl_read: attach_uprobe(bpf, &lib_str, "SSL_read", "ssl_read_ret")?,
+        _ssl_read_entry: attach_uprobe(bpf, &lib_str, "SSL_read", "ssl_read_entry")?,
+        _ssl_read_ret: attach_uprobe(bpf, &lib_str, "SSL_read", "ssl_read_ret")?,
         _ssl_write: attach_uprobe(bpf, &lib_str, "SSL_write", "ssl_write_entry")?,
         _openat2: attach_tracepoint(bpf, "syscalls", "sys_enter_openat2", "sys_enter_openat2")?,
         _execve: attach_tracepoint(bpf, "syscalls", "sys_enter_execve", "sys_enter_execve")?,
@@ -207,7 +216,8 @@ fn bytes_to_str(buf: &[u8]) -> String {
     String::from_utf8_lossy(&buf[..end]).to_string()
 }
 
-fn u32_to_ipv4(addr: u32) -> String {
-    let bytes = addr.to_be_bytes();
+fn u32_to_ipv4(addr_be: u32) -> String {
+    let addr_host = u32::from_be(addr_be);
+    let bytes = addr_host.to_ne_bytes();
     format!("{}.{}.{}.{}", bytes[0], bytes[1], bytes[2], bytes[3])
 }

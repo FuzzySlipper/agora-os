@@ -2,32 +2,34 @@
 // Captures decrypted SSL traffic, syscall arguments, and network connections.
 #![no_std]
 
+use audit_ebpf_common::*;
 use aya_ebpf::{
     helpers::{
-        bpf_get_current_comm, bpf_get_current_pid_tgid, bpf_get_current_uid_gid,
-        bpf_ktime_get_ns, bpf_probe_read_user,
+        bpf_get_current_comm, bpf_get_current_pid_tgid, bpf_get_current_uid_gid, bpf_ktime_get_ns,
+        bpf_probe_read_user, bpf_probe_read_user_str_bytes,
     },
     macros::{map, tracepoint, uprobe},
-    maps::RingBuf,
+    maps::{PerCpuArray, RingBuf},
     programs::{ProbeContext, TracePointContext},
 };
-use audit_ebpf_common::*;
 
 #[map]
 static EVENTS: RingBuf = RingBuf::with_byte_size(256 * 1024, 0);
 
+/// Per-CPU buffer pointer stash — used to pass SSL_read's buf argument
+/// from the entry probe to the return probe.
+#[map]
+static SSL_BUF_STASH: PerCpuArray<*const u8> = PerCpuArray::<*const u8>::with_max_entries(1, 0);
+
 fn now_ns() -> u64 {
     unsafe { bpf_ktime_get_ns() }
 }
-
 fn current_pid() -> u32 {
     (bpf_get_current_pid_tgid() as u64 & 0xFFFF_FFFF) as u32
 }
-
 fn current_uid() -> u32 {
     (bpf_get_current_uid_gid() as u64 & 0xFFFF_FFFF) as u32
 }
-
 fn emit(ev: KernelEvent) {
     if let Some(mut entry) = EVENTS.reserve::<KernelEvent>(0) {
         unsafe { entry.as_mut_ptr().write(ev) };
@@ -35,19 +37,24 @@ fn emit(ev: KernelEvent) {
     }
 }
 
-// ── SSL probes ─────────────────────────────────────────────────────────────
+// ── SSL_read: entry probe stashes buf pointer, retprobe captures data ──────
 
-/// SSL_read uretprobe: captures the length of decrypted data read.
-/// Full buffer content capture from a uretprobe is unreliable because
-/// the buffer may have been freed or overwritten by the time the
-/// return probe fires. Instead we capture the return-value count and
-/// rely on the companion SSL_write entry probe (which sees plaintext
-/// before encryption) for content. PID/UID correlation in userspace
-/// links the two directions per-connection.
+#[uprobe]
+fn ssl_read_entry(ctx: ProbeContext) -> u32 {
+    // SSL_read(SSL *s, void *buf, int num) — arg(1) = buf
+    if let Some(buf_ptr) = ctx.arg::<*const u8>(1) {
+        if let Some(stash) = SSL_BUF_STASH.get_ptr_mut(0) {
+            unsafe {
+                *stash = buf_ptr;
+            }
+        }
+    }
+    0
+}
+
 #[unsafe(no_mangle)]
 #[unsafe(link_section = "uretprobe/ssl_read_ret")]
 pub fn ssl_read_ret(ctx: ProbeContext) -> u32 {
-    // uretprobe: ctx.arg(0) is the return value (bytes read, or <=0 on error).
     let retval: i32 = match ctx.arg(0) {
         Some(v) => v,
         None => return 0,
@@ -55,7 +62,28 @@ pub fn ssl_read_ret(ctx: ProbeContext) -> u32 {
     if retval <= 0 {
         return 0;
     }
-    let len = (retval as usize).min(128);
+
+    let mut data = SslData {
+        len: 0,
+        _pad: [0; 6],
+        buf: [0; 128],
+    };
+    let cap = (retval as usize).min(data.buf.len());
+    data.len = cap as u16;
+
+    // Read the stashed buffer pointer from the per-CPU array.
+    if let Some(stash) = SSL_BUF_STASH.get_ptr(0) {
+        let buf_ptr: *const u8 = unsafe { *stash };
+        if !buf_ptr.is_null() {
+            let dst = &mut data.buf[..cap];
+            for i in 0..cap {
+                match unsafe { bpf_probe_read_user(buf_ptr.add(i)) } {
+                    Ok(b) => dst[i] = b,
+                    Err(_) => break,
+                }
+            }
+        }
+    }
 
     emit(KernelEvent {
         timestamp_ns: now_ns(),
@@ -63,18 +91,13 @@ pub fn ssl_read_ret(ctx: ProbeContext) -> u32 {
         uid: current_uid(),
         event_type: EventType::SslRead as u8,
         _pad: [0; 3],
-        data: KernelEventData {
-            ssl: SslData {
-                len: len as u16,
-                _pad: [0; 6],
-                buf: [0; 128],
-            },
-        },
+        data: KernelEventData { ssl: data },
     });
     0
 }
 
-/// SSL_write uprobe: captures plaintext BEFORE encryption.
+// ── SSL_write entry: captures plaintext before encryption ─────────────────
+
 #[uprobe]
 fn ssl_write_entry(ctx: ProbeContext) -> u32 {
     // SSL_write(SSL *s, const void *buf, int num)
@@ -90,18 +113,15 @@ fn ssl_write_entry(ctx: ProbeContext) -> u32 {
         None => return 0,
     };
 
-    let len = (num as usize).min(128);
+    let cap = (num as usize).min(128);
     let mut data = SslData {
-        len: len as u16,
+        len: cap as u16,
         _pad: [0; 6],
         buf: [0; 128],
     };
-
-    // Use probe-read to safely copy user memory through BPF verifier.
-    let dst = &mut data.buf[..len];
-    // Read one byte at a time; the verifier will bounds-check each.
-    for i in 0..len {
-        match unsafe { bpf_probe_read_user(buf_ptr.add(i) as *const u8) } {
+    let dst = &mut data.buf[..cap];
+    for i in 0..cap {
+        match unsafe { bpf_probe_read_user(buf_ptr.add(i)) } {
             Ok(b) => dst[i] = b,
             Err(_) => break,
         }
@@ -118,41 +138,24 @@ fn ssl_write_entry(ctx: ProbeContext) -> u32 {
     0
 }
 
-// ── File open ──────────────────────────────────────────────────────────────
+// ── sys_enter_openat2: filename at offset 24 (user pointer) ───────────────
 
 #[tracepoint]
 fn sys_enter_openat2(ctx: TracePointContext) -> u32 {
-    // sys_enter_openat2 fields (kernel >= 5.6):
-    //   offset 0:  __data_loc char[] filename  (4-byte data_loc encoded)
-    //   offset 4:  int dfd
-    //   offset 8:  struct open_how *how  
-    //   offset 16: size_t usize
-    //
-    // __data_loc: upper 16 bits = offset into trace entry, lower 16 bits = length.
-
-    let data_loc: u32 = match unsafe { ctx.read_at::<u32>(0) } {
-        Ok(v) => v,
+    // sys_enter_* layout: common fields at 0-15, __syscall_nr at 8,
+    // then trailing padding to 16, then args start:
+    //   offset 16: int dfd
+    //   offset 24: const char __user *filename
+    let filename_ptr: *const u8 = match unsafe { ctx.read_at::<*const u8>(24) } {
+        Ok(p) => p,
         Err(_) => return 0,
     };
-    let str_offset = (data_loc >> 16) as usize;
-    let str_len = (data_loc & 0xFFFF) as usize;
-
-    if str_offset == 0 || str_len == 0 || str_len > 64 {
+    if filename_ptr.is_null() {
         return 0;
     }
 
-    // Read filename from trace entry at str_offset.
     let mut path = [0u8; 64];
-    let read_len = str_len.min(63);
-    // SAFETY: reading from tracepoint-provided data, bounded by __data_loc.
-    for i in 0..read_len {
-        if let Ok(b) = unsafe { ctx.read_at::<u8>(str_offset + i) } {
-            path[i] = b;
-        } else {
-            break;
-        }
-    }
-    path[read_len] = 0;
+    let _ = unsafe { bpf_probe_read_user_str_bytes(filename_ptr, &mut path) };
 
     emit(KernelEvent {
         timestamp_ns: now_ns(),
@@ -167,41 +170,27 @@ fn sys_enter_openat2(ctx: TracePointContext) -> u32 {
     0
 }
 
-// ── Process exec ───────────────────────────────────────────────────────────
+// ── sys_enter_execve: filename at offset 16 (user pointer) ────────────────
 
 #[tracepoint]
 fn sys_enter_execve(ctx: TracePointContext) -> u32 {
-    // sys_enter_execve fields:
-    //   offset 0:  __data_loc char[] filename
-    //   offset 4:  const char **argv (user pointer)
-    //   offset 12: const char **envp (user pointer)
-
-    let data_loc: u32 = match unsafe { ctx.read_at::<u32>(0) } {
-        Ok(v) => v,
+    // sys_enter_* args start at offset 16.
+    //   offset 16: const char __user *filename
+    let filename_ptr: *const u8 = match unsafe { ctx.read_at::<*const u8>(16) } {
+        Ok(p) => p,
         Err(_) => return 0,
     };
-    let str_offset = (data_loc >> 16) as usize;
-    let str_len = (data_loc & 0xFFFF) as usize;
-
-    let mut filename = [0u8; 64];
-    let mut comm = [0u8; 16];
-
-    // Read filename.
-    if str_offset > 0 && str_len > 0 {
-        let read_len = str_len.min(63);
-        for i in 0..read_len {
-            if let Ok(b) = unsafe { ctx.read_at::<u8>(str_offset + i) } {
-                filename[i] = b;
-            } else {
-                break;
-            }
-        }
+    if filename_ptr.is_null() {
+        return 0;
     }
 
-    // Capture process name via bpf_get_current_comm.
+    let mut filename = [0u8; 64];
+    let _ = unsafe { bpf_probe_read_user_str_bytes(filename_ptr, &mut filename) };
+
+    let mut comm = [0u8; 16];
     if let Ok(comm_val) = bpf_get_current_comm() {
-        let copy_len = comm_val.len().min(comm.len());
-        comm[..copy_len].copy_from_slice(&comm_val[..copy_len]);
+        let n = comm_val.len().min(comm.len());
+        comm[..n].copy_from_slice(&comm_val[..n]);
     }
 
     emit(KernelEvent {
@@ -217,77 +206,47 @@ fn sys_enter_execve(ctx: TracePointContext) -> u32 {
     0
 }
 
-// ── Network connect ────────────────────────────────────────────────────────
+// ── sys_enter_connect: sockaddr at offset 24 (user pointer) ───────────────
+
+// Minimal sockaddr_in layout for reading from user memory via BPF.
+#[repr(C)]
+struct RawSockaddrIn {
+    family: u16,
+    port_be: u16,
+    addr_be: u32,
+    _zero: u64,
+}
 
 #[tracepoint]
 fn sys_enter_connect(ctx: TracePointContext) -> u32 {
-    // sys_enter_connect fields:
-    //   offset 0:  __data_loc char[] uservaddr  (the sockaddr, binary)
-    //   offset 4:  int fd
+    // sys_enter_* args start at offset 16.
+    //   offset 16: int fd
+    //   offset 24: struct sockaddr __user *uservaddr
+    let uservaddr: *const RawSockaddrIn = match unsafe { ctx.read_at::<*const RawSockaddrIn>(24) } {
+        Ok(p) => p,
+        Err(_) => return 0,
+    };
+    if uservaddr.is_null() {
+        return 0;
+    }
 
-    let data_loc: u32 = match unsafe { ctx.read_at::<u32>(0) } {
-        Ok(v) => v,
-        Err(_) => {
-            // Fallback: emit a marker event without address.
-            emit(KernelEvent {
-                timestamp_ns: now_ns(),
-                pid: current_pid(),
-                uid: current_uid(),
-                event_type: EventType::TcpConnect as u8,
-                _pad: [0; 3],
-                data: KernelEventData {
-                    tcp_connect: TcpConnectData {
-                        saddr: 0,
-                        daddr: 0,
-                        dport: 0,
-                        _pad: [0; 2],
-                    },
-                },
-            });
-            return 0;
-        }
+    let mut addr_info = TcpConnectData {
+        saddr: 0,
+        daddr: 0,
+        dport: 0,
+        _pad: [0; 2],
     };
 
-    let addr_offset = (data_loc >> 16) as usize;
-    let addr_len = (data_loc & 0xFFFF) as usize;
-
-    // sockaddr_in is 16 bytes: sa_family (u16) + port (u16 BE) + addr (u32 BE) + zero (8).
-    if addr_offset > 0 && addr_len >= 8 {
-        // Read sa_family and port.
-        let family: u16 = match unsafe { ctx.read_at::<u16>(addr_offset) } {
-            Ok(v) => v,
-            Err(_) => return 0,
-        };
-        if family == 2 {
+    // Read sockaddr_in from user memory.
+    if let Ok(sa) = unsafe { bpf_probe_read_user::<RawSockaddrIn>(uservaddr) } {
+        if sa.family == 2 {
             // AF_INET
-            let port_be: u16 = match unsafe { ctx.read_at::<u16>(addr_offset + 2) } {
-                Ok(v) => v,
-                Err(_) => 0,
-            };
-            let addr_be: u32 = match unsafe { ctx.read_at::<u32>(addr_offset + 4) } {
-                Ok(v) => v,
-                Err(_) => 0,
-            };
-            emit(KernelEvent {
-                timestamp_ns: now_ns(),
-                pid: current_pid(),
-                uid: current_uid(),
-                event_type: EventType::TcpConnect as u8,
-                _pad: [0; 3],
-                data: KernelEventData {
-                    tcp_connect: TcpConnectData {
-                        saddr: 0,
-                        daddr: addr_be,
-                        dport: u16::from_be(port_be),
-                        _pad: [0; 2],
-                    },
-                },
-            });
-            return 0;
+            addr_info.dport = u16::from_be(sa.port_be);
+            // addr_be is network byte order. Store as-is; userspace does final conversion.
+            addr_info.daddr = sa.addr_be;
         }
     }
 
-    // Non-IPv4 or unparseable: emit marker without address.
     emit(KernelEvent {
         timestamp_ns: now_ns(),
         pid: current_pid(),
@@ -295,12 +254,7 @@ fn sys_enter_connect(ctx: TracePointContext) -> u32 {
         event_type: EventType::TcpConnect as u8,
         _pad: [0; 3],
         data: KernelEventData {
-            tcp_connect: TcpConnectData {
-                saddr: 0,
-                daddr: 0,
-                dport: 0,
-                _pad: [0; 2],
-            },
+            tcp_connect: addr_info,
         },
     });
     0
