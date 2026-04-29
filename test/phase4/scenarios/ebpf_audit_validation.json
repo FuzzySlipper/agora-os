@@ -1,0 +1,71 @@
+{
+  "id": "ebpf_audit_validation",
+  "name": "eBPF Audit Lane Validation",
+  "description": "Validates that the eBPF audit daemon attaches probes, captures events from agent UIDs, and publishes them to the event bus. Deterministic (no LLM required) — uses the same script-based agent-sim runner with a deterministic brain.",
+  "version": "1.0",
+  "phases": [
+    {
+      "name": "daemon_startup",
+      "description": "Start the eBPF audit daemon and verify probe attachment"
+    },
+    {
+      "name": "agent_event",
+      "description": "Trigger agent activity and capture eBPF audit events"
+    },
+    {
+      "name": "teardown",
+      "description": "Stop daemon and clean up"
+    }
+  ],
+  "evaluator": {
+    "expected_outcome": "pass",
+    "conditions": [
+      {
+        "source": "file",
+        "file": "/tmp/phase4-ebpf-test/summary.txt",
+        "check": "contains",
+        "value": "VALIDATION PASSED"
+      },
+      {
+        "source": "file",
+        "file": "/tmp/phase4-ebpf-test/audit-ebpf.log",
+        "check": "contains",
+        "value": "uprobe"
+      },
+      {
+        "source": "file",
+        "file": "/tmp/phase4-ebpf-test/audit-ebpf.log",
+        "check": "contains",
+        "value": "tracepoint"
+      },
+      {
+        "source": "file",
+        "file": "/tmp/phase4-ebpf-test/summary.txt",
+        "check": "not_contains",
+        "value": "FAIL"
+      }
+    ]
+  },
+  "infrastructure_requirements": {
+    "kernel_min": "5.6",
+    "btf_required": true,
+    "capabilities": ["CAP_BPF", "CAP_SYS_ADMIN"],
+    "tools": ["rustup", "cargo", "lld", "llc", "llvm-objcopy"]
+  },
+  "failure_classification": {
+    "infrastructure": [
+      "kernel too old",
+      "BTF missing",
+      "bus socket missing",
+      "binary missing",
+      "packages not installed",
+      "CAP_BPF not available"
+    ],
+    "daemon_bug": [
+      "probes not attached",
+      "ring buffer not polling",
+      "no audit events captured",
+      "daemon exited"
+    ]
+  }
+}

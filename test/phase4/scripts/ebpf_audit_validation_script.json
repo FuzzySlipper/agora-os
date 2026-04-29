@@ -1,0 +1,13 @@
+{
+  "script_version": "1.0",
+  "description": "Deterministic script to validate eBPF audit daemon. Runs test/phase4-ebpf.sh inside the VM and checks output.",
+  "actions": [
+    {
+      "kind": "exec",
+      "command": "bash",
+      "args": ["/repo/test/phase4-ebpf.sh"],
+      "timeout_seconds": 120,
+      "as_root": true
+    }
+  ]
+}
