@@ -92,14 +92,16 @@ func TestValidateTopicSubscribe_RootAllowed(t *testing.T) {
 }
 
 func TestValidateTopicSubscribe_AgentDenied(t *testing.T) {
-	privilegedSubPatterns := []string{
+	bypassPatterns := []string{
 		"admin.escalation.decided",
 		"admin.escalation.*",
-		"admin.*.*",   // wildcard bypass attempt
-		"*.*.*",        // global wildcard bypass attempt
+		"admin.escalation.requested",
+		"admin.*.*",       // wildcard bypass — matches decided
+		"*.*.*",            // global wildcard
+		"*.*.requested",    // suffix-targeted bypass
 	}
 
-	for _, pattern := range privilegedSubPatterns {
+	for _, pattern := range bypassPatterns {
 		t.Run(pattern, func(t *testing.T) {
 			if err := validateTopicSubscribe(60001, SenderKindPeer, pattern); err == nil {
 				t.Errorf("agent uid should be denied subscribing to %q", pattern)

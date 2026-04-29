@@ -105,23 +105,26 @@ func validateTopicSubscribe(uid uint32, kind SenderKind, pattern string) error {
 	isRoot := isRootOrDelegated(uid, kind)
 
 	for _, pf := range privilegedSubscribeFamilies {
-		// Use TopicMatch to also catch wildcard bypasses
-		// (e.g., admin.*.* or *.*.*).
-		representative := pf + "decided"
-		if !TopicMatch(pattern, representative) {
-			continue
-		}
-		if !isRoot {
-			return &TopicProvenanceError{
-				Topic:   pattern,
-				Family:  pf,
-				UID:     uid,
-				Kind:    kind,
-				Op:      "subscribe",
-				Reason:  "privileged topic family requires root or delegated authority",
+		// Check every known topic suffix in this family against the
+		// subscription pattern. Catches wildcard bypasses like
+		// admin.*.*, *.*.requested, or *.*.*.
+		for _, suffix := range []string{"decided", "requested"} {
+			representative := pf + suffix
+			if !TopicMatch(pattern, representative) {
+				continue
 			}
+			if !isRoot {
+				return &TopicProvenanceError{
+					Topic:   pattern,
+					Family:  pf,
+					UID:     uid,
+					Kind:    kind,
+					Op:      "subscribe",
+					Reason:  "privileged topic family requires root or delegated authority",
+				}
+			}
+			return nil
 		}
-		return nil
 	}
 
 	// Non-privileged topics are open for subscribe.
