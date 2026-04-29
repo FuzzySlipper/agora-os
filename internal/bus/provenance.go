@@ -35,6 +35,10 @@ var privilegedPublishFamilies = []string{
 // privilegedSubscribeFamilies lists topic prefixes that only uid 0 (root) or
 // delegated proxy services may subscribe to. These are topics where the
 // payload contains sensitive authorization data.
+//
+// Lifecycle, surface, and audit topics are intentionally NOT restricted for
+// subscribe: agent UIDs may freely subscribe to them for observability.
+// Only publishing to those families is restricted.
 var privilegedSubscribeFamilies = []string{
 	"admin.escalation.", // escalation decisions contain authorization context
 }
@@ -101,19 +105,23 @@ func validateTopicSubscribe(uid uint32, kind SenderKind, pattern string) error {
 	isRoot := isRootOrDelegated(uid, kind)
 
 	for _, pf := range privilegedSubscribeFamilies {
-		if strings.HasPrefix(pattern, pf) {
-			if !isRoot {
-				return &TopicProvenanceError{
-					Topic:   pattern,
-					Family:  pf,
-					UID:     uid,
-					Kind:    kind,
-					Op:      "subscribe",
-					Reason:  "privileged topic family requires root or delegated authority",
-				}
-			}
-			return nil
+		// Use TopicMatch to also catch wildcard bypasses
+		// (e.g., admin.*.* or *.*.*).
+		representative := pf + "decided"
+		if !TopicMatch(pattern, representative) {
+			continue
 		}
+		if !isRoot {
+			return &TopicProvenanceError{
+				Topic:   pattern,
+				Family:  pf,
+				UID:     uid,
+				Kind:    kind,
+				Op:      "subscribe",
+				Reason:  "privileged topic family requires root or delegated authority",
+			}
+		}
+		return nil
 	}
 
 	// Non-privileged topics are open for subscribe.

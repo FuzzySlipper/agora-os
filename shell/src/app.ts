@@ -213,8 +213,8 @@ function connectBus(): void {
         }
         if (payload.topic.startsWith("agent.lifecycle.")) {
             const msg = payload as LifecycleEventMessage & { sender?: BusSender };
-            // Reject lifecycle events from non-root/delegated senders.
-            if (msg.sender && msg.sender.uid !== SenderRoot && msg.sender.kind !== "delegated") {
+            // Require sender metadata for privileged lifecycle facts.
+            if (!msg.sender || (msg.sender.uid !== SenderRoot && msg.sender.kind !== "delegated")) {
                 return;
             }
             applyLifecycleEvent(msg);
@@ -223,8 +223,8 @@ function connectBus(): void {
         }
         if (payload.topic.startsWith("compositor.surface.")) {
             const msg = payload as SurfaceEventMessage & { sender?: BusSender };
-            // Reject surface events from non-root/delegated senders.
-            if (msg.sender && msg.sender.uid !== SenderRoot && msg.sender.kind !== "delegated") {
+            // Require sender metadata for privileged surface facts.
+            if (!msg.sender || (msg.sender.uid !== SenderRoot && msg.sender.kind !== "delegated")) {
                 return;
             }
             applySurfaceEvent(msg);
@@ -232,11 +232,15 @@ function connectBus(): void {
             return;
         }
         if (payload.topic === "admin.escalation.decided") {
-            const decision = (payload as EscalationDecisionMessage).body;
-            if (!decision?.id) {
+            const msg = payload as EscalationDecisionMessage & { sender?: BusSender };
+            // Require sender metadata for admin escalation facts.
+            if (!msg.sender || (msg.sender.uid !== SenderRoot && msg.sender.kind !== "delegated")) {
                 return;
             }
-            state.shellState.pending_escalations = state.shellState.pending_escalations.filter((entry) => entry.id !== decision.id);
+            if (!msg.body?.id) {
+                return;
+            }
+            state.shellState.pending_escalations = state.shellState.pending_escalations.filter((entry) => entry.id !== msg.body?.id);
             render();
         }
     });
