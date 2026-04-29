@@ -53,11 +53,19 @@ fn ssl_read_entry(ctx: ProbeContext) -> u32 {
 #[unsafe(no_mangle)]
 #[unsafe(link_section = "uretprobe/ssl_read_ret")]
 pub fn ssl_read_ret(ctx: RetProbeContext) -> u32 {
+    let key = bpf_get_current_pid_tgid();
+
     let retval: i32 = match ctx.ret() {
         Some(v) => v,
-        None => return 0,
+        None => {
+            // No return value: clean up and exit.
+            let _ = SSL_BUF_STASH.remove(&key);
+            return 0;
+        }
     };
     if retval <= 0 {
+        // Failed read: clean up and exit.
+        let _ = SSL_BUF_STASH.remove(&key);
         return 0;
     }
 
@@ -70,7 +78,6 @@ pub fn ssl_read_ret(ctx: RetProbeContext) -> u32 {
     data.len = cap as u16;
 
     // Read the stashed buffer pointer from the per-task hash map.
-    let key = bpf_get_current_pid_tgid();
     if let Some(buf_ptr_val) = SSL_BUF_STASH.get_ptr(&key) {
         let buf_ptr: *const u8 = unsafe { *buf_ptr_val } as *const u8;
         if !buf_ptr.is_null() {
