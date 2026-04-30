@@ -755,7 +755,6 @@ if [[ "$SPAWN_OK9" != "True" ]]; then
 else
     TERM9_UID=$(echo "$SPAWN_RESP9" | resp_body_get "['agent']['uid']")
     TERM9_USER="agent-termtest-${TERM9_UID}"
-    TERM9_HOME="${AGENT_HOME_BASE}/${TERM9_USER}"
     note "test 9: spawned agent uid=$TERM9_UID"
 
     # Kill and restart isolation service.
