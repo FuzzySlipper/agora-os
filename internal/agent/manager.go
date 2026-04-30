@@ -38,10 +38,18 @@ func NewManager() *Manager {
 
 // RecoverAgents discovers agent users and systemd units left by a prior run
 // and rebuilds in-memory state. It is called after BootstrapNftables so the
-// nft chain exists but is empty. UIDs with prior nft rules get those rules
-// re-applied; UIDs without prior rules get the safe default (NetDeny).
-// Stale nft rules for UIDs with no active user or process are cleaned up.
-func (m *Manager) RecoverAgents(priorRuleUIDs map[uint32]bool) {
+// nft chain has been flushed and is empty.
+//
+// Recovery design: flush-then-reapply. BootstrapNftables flushes the entire
+// owned chain indiscriminately, removing all prior rules. RecoverAgents then
+// discovers surviving agent users and re-applies NetDeny rules for each one.
+// This ensures kernel state matches Manager state for all known agent UIDs.
+//
+// Known limitation: recovered agents always get NetDeny regardless of their
+// original NetAccess policy (NetAllow, NetLocalOnly, NetDeny). The original
+// policy is not persisted to disk, so we default to the safest option. This
+// can be improved in a follow-up with disk-persisted policy storage.
+func (m *Manager) RecoverAgents() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -49,26 +57,18 @@ func (m *Manager) RecoverAgents(priorRuleUIDs map[uint32]bool) {
 	activeSlices := discoverActiveSlices()
 	activeCmds := discoverActiveCmds()
 
-	// Clean up stale nft rules for UIDs that no longer have an agent user.
-	for uid := range priorRuleUIDs {
-		if _, exists := agentUsers[uid]; !exists {
-			log.Printf("recovery: cleaning stale nft rules for uid %d", uid)
-			removeStaleRules(uid)
-			delete(priorRuleUIDs, uid)
-		}
-	}
-
 	for uid, username := range agentUsers {
 		_, isRunning := activeSlices[uid]
 		hasCmd := activeCmds[uid]
 
-		// Default to NetDeny — we cannot reliably recover the original policy.
+		// Apply NetDeny for ALL discovered agent users, not just running ones.
+		// After chain flush, UIDs without nft rules have unrestricted network
+		// access. Applying NetDeny for all ensures kernel state matches Manager
+		// state. For truly stale users (no slice), NetDeny is harmless and
+		// prevents misuse of the UID until it is cleaned up.
 		policy := schema.NetDeny
-
-		if isRunning {
-			if err := m.applyNetRules(uid, policy); err != nil {
-				log.Printf("recovery: failed to apply net rules for uid %d: %v", uid, err)
-			}
+		if err := m.applyNetRules(uid, policy); err != nil {
+			log.Printf("recovery: failed to apply net rules for uid %d: %v", uid, err)
 		}
 
 		sliceName := fmt.Sprintf("agent-%d.slice", uid)
@@ -91,9 +91,7 @@ func (m *Manager) RecoverAgents(priorRuleUIDs map[uint32]bool) {
 		}
 		m.hasCmd[uid] = hasCmd
 
-		if isRunning {
-			log.Printf("recovery: adopted agent uid=%d user=%s policy=%s", uid, username, policy)
-		}
+		log.Printf("recovery: adopted agent uid=%d user=%s policy=%s running=%v", uid, username, policy, isRunning)
 	}
 
 	// Set nextUID above all discovered UIDs.
@@ -303,25 +301,4 @@ func discoverActiveCmds() map[uint32]bool {
 	return cmds
 }
 
-// removeStaleRules removes nft rules for a UID that no longer has an agent user.
-func removeStaleRules(uid uint32) {
-	uidStr := fmt.Sprintf("%d", uid)
-	out, err := exec.Command("nft", "list", "chain", "inet", "filter", nftChain).CombinedOutput()
-	if err != nil {
-		return
-	}
-	for _, line := range strings.Split(string(out), "\n") {
-		if !strings.Contains(line, "skuid "+uidStr) || !strings.Contains(line, "handle") {
-			continue
-		}
-		idx := strings.LastIndex(line, "handle ")
-		if idx < 0 {
-			continue
-		}
-		handleStr := strings.TrimSpace(line[idx+7:])
-		if _, err := fmt.Sscanf(handleStr, "%d", new(uint64)); err != nil {
-			continue
-		}
-		exec.Command("nft", "delete", "rule", "inet", "filter", nftChain, "handle", handleStr).Run()
-	}
-}
+

@@ -645,6 +645,9 @@ sys.exit(0)
     sock_send "$RUNTIME_DIR/isolation.sock" "$TERM_REQ7" >/dev/null 2>&1
     pkill -U "$RESTART_UID" 2>/dev/null
     userdel -r "$RESTART_USER" 2>/dev/null
+    # Clear so cleanup() trap doesn't re-clean.
+    RESTART_UID=""
+    RESTART_USER=""
 fi
 
 
