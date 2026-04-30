@@ -8,7 +8,9 @@ package agent
 
 import (
 	"fmt"
+	"log"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -31,6 +33,72 @@ func NewManager() *Manager {
 		hasCmd:      make(map[uint32]bool),
 		ruleHandles: make(map[uint32][]uint64),
 		nextUID:     schema.AgentUIDBase,
+	}
+}
+
+// RecoverAgents discovers agent users and systemd units left by a prior run
+// and rebuilds in-memory state. It is called after BootstrapNftables so the
+// nft chain has been flushed and is empty.
+//
+// Recovery design: flush-then-reapply. BootstrapNftables flushes the entire
+// owned chain indiscriminately, removing all prior rules. RecoverAgents then
+// discovers surviving agent users and re-applies NetDeny rules for each one.
+// This ensures kernel state matches Manager state for all known agent UIDs.
+//
+// Known limitation: recovered agents always get NetDeny regardless of their
+// original NetAccess policy (NetAllow, NetLocalOnly, NetDeny). The original
+// policy is not persisted to disk, so we default to the safest option. This
+// can be improved in a follow-up with disk-persisted policy storage.
+func (m *Manager) RecoverAgents() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	agentUsers := discoverAgentUsers()
+	activeSlices := discoverActiveSlices()
+	activeCmds := discoverActiveCmds()
+
+	for uid, username := range agentUsers {
+		_, isRunning := activeSlices[uid]
+		hasCmd := activeCmds[uid]
+
+		// Apply NetDeny for ALL discovered agent users, not just running ones.
+		// After chain flush, UIDs without nft rules have unrestricted network
+		// access. Applying NetDeny for all ensures kernel state matches Manager
+		// state. For truly stale users (no slice), NetDeny is harmless and
+		// prevents misuse of the UID until it is cleaned up.
+		policy := schema.NetDeny
+		if err := m.applyNetRules(uid, policy); err != nil {
+			log.Printf("recovery: failed to apply net rules for uid %d: %v", uid, err)
+		}
+
+		sliceName := fmt.Sprintf("agent-%d.slice", uid)
+		status := schema.StatusExited
+		if isRunning {
+			status = schema.StatusRunning
+		}
+
+		m.agents[uid] = &schema.AgentInfo{
+			Name:      username,
+			UID:       uid,
+			Status:    status,
+			Slice:     sliceName,
+			NetAccess: policy,
+			CreatedAt: time.Now(), // best-effort; not recoverable
+		}
+
+		if hasCmd {
+			hasCmd = exec.Command("systemctl", "is-active", "--quiet", agentUnitName(uid)).Run() == nil
+		}
+		m.hasCmd[uid] = hasCmd
+
+		log.Printf("recovery: adopted agent uid=%d user=%s policy=%s running=%v", uid, username, policy, isRunning)
+	}
+
+	// Set nextUID above all discovered UIDs.
+	for uid := range agentUsers {
+		if uid >= m.nextUID {
+			m.nextUID = uid + 1
+		}
 	}
 }
 
@@ -162,3 +230,75 @@ func defaultStr(val, fallback string) string {
 	}
 	return val
 }
+
+// discoverAgentUsers reads /etc/passwd for users matching the agent naming
+// convention: agent-<name>-<uid>. Returns a map of uid → username.
+func discoverAgentUsers() map[uint32]string {
+	users := make(map[uint32]string)
+	out, err := exec.Command("getent", "passwd").Output()
+	if err != nil {
+		return users
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.SplitN(line, ":", 7)
+		if len(fields) < 3 {
+			continue
+		}
+		username := fields[0]
+		if !strings.HasPrefix(username, "agent-") {
+			continue
+		}
+		var uid uint32
+		if _, err := fmt.Sscanf(fields[2], "%d", &uid); err != nil {
+			continue
+		}
+		users[uid] = username
+	}
+	return users
+}
+
+// discoverActiveSlices finds running agent slices (agent-*.slice).
+func discoverActiveSlices() map[uint32]bool {
+	active := make(map[uint32]bool)
+	out, err := exec.Command("systemctl", "list-units",
+		"--type=slice", "--state=active", "--no-legend", "--no-pager").Output()
+	if err != nil {
+		return active
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		sliceName := fields[0]
+		var uid uint32
+		if _, err := fmt.Sscanf(sliceName, "agent-%d.slice", &uid); err == nil {
+			active[uid] = true
+		}
+	}
+	return active
+}
+
+// discoverActiveCmds finds loaded agent command units (agent-*-cmd.service).
+func discoverActiveCmds() map[uint32]bool {
+	cmds := make(map[uint32]bool)
+	out, err := exec.Command("systemctl", "list-units",
+		"--type=service", "--state=active", "--no-legend", "--no-pager").Output()
+	if err != nil {
+		return cmds
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		svcName := fields[0]
+		var uid uint32
+		if _, err := fmt.Sscanf(svcName, "agent-%d-cmd.service", &uid); err == nil {
+			cmds[uid] = true
+		}
+	}
+	return cmds
+}
+
+

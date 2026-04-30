@@ -24,6 +24,10 @@ func main() {
 	}
 
 	mgr := agent.NewManager()
+
+	// Adopt agents from a prior run: discover users and systemd units,
+	// rebuild in-memory state, and re-apply network policies.
+	mgr.RecoverAgents()
 	svc := isolation.New(mgr, schema.BusSocket)
 
 	// Ensure the socket directory exists

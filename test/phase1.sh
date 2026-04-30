@@ -38,6 +38,8 @@ AUDIT_PID=""
 # Test state
 SPAWNED_UID=""
 AGENT_USER=""
+RESTART_UID=""
+RESTART_USER=""
 WRITE_PID=""
 LISTENER_PID=""
 SPINNER_UNIT=""
@@ -118,18 +120,22 @@ cleanup() {
     [[ -n "$LISTENER_PID" ]] && kill "$LISTENER_PID" 2>/dev/null && wait "$LISTENER_PID" 2>/dev/null
     [[ -n "$SPINNER_UNIT" ]] && systemctl stop "${SPINNER_UNIT}.service" 2>/dev/null
 
-    # Clean up spawned agent.
-    if [[ -n "$SPAWNED_UID" ]]; then
-        if [[ -S "$RUNTIME_DIR/isolation.sock" ]]; then
-            sock_send "$RUNTIME_DIR/isolation.sock" \
-                "{\"method\":\"terminate_agent\",\"body\":{\"uid\":$SPAWNED_UID}}" \
-                >/dev/null 2>&1
+    # Clean up spawned agents.
+    for _uidvar in SPAWNED_UID RESTART_UID; do
+        eval _uid="\$$_uidvar"
+        eval _user="\$${_uidvar%_UID}_USER"
+        if [[ -n "$_uid" ]]; then
+            if [[ -S "$RUNTIME_DIR/isolation.sock" ]]; then
+                sock_send "$RUNTIME_DIR/isolation.sock" \
+                    "{\"method\":\"terminate_agent\",\"body\":{\"uid\":$_uid}}" \
+                    >/dev/null 2>&1
+            fi
+            pkill -U "$_uid" 2>/dev/null
+            systemctl stop "agent-${_uid}-cmd.service" 2>/dev/null
+            systemctl stop "agent-${_uid}.slice" 2>/dev/null
+            [[ -n "$_user" ]] && userdel -r "$_user" 2>/dev/null
         fi
-        pkill -U "$SPAWNED_UID" 2>/dev/null
-        systemctl stop "agent-${SPAWNED_UID}-cmd.service" 2>/dev/null
-        systemctl stop "agent-${SPAWNED_UID}.slice" 2>/dev/null
-        [[ -n "$AGENT_USER" ]] && userdel -r "$AGENT_USER" 2>/dev/null
-    fi
+    done
 
     # Stop services.
     [[ -n "$AUDIT_PID" ]]     && kill "$AUDIT_PID" 2>/dev/null
@@ -529,6 +535,120 @@ fi
 
 # Mark as cleaned up so the trap doesn't retry.
 SPAWNED_UID=""
+
+
+# ==== Test 7: Service restart preserves agent network isolation ====
+
+echo
+note "test 7: service restart preserves agent network isolation"
+
+# Spawn a fresh agent with a long-running command.
+SPAWN_REQ7='{"method":"spawn_agent","body":{"name":"restart","cpu_quota":"50%","memory_max":"256M","net_access":"deny","command":["sleep","120"]}}'
+SPAWN_RESP7=$(sock_send "$RUNTIME_DIR/isolation.sock" "$SPAWN_REQ7")
+SPAWN_OK7=$(echo "$SPAWN_RESP7" | json_get "['ok']")
+if [[ "$SPAWN_OK7" != "True" ]]; then
+    fail "test 7: spawn_agent failed"
+else
+    RESTART_UID=$(echo "$SPAWN_RESP7" | resp_body_get "['agent']['uid']")
+    RESTART_USER="agent-restart-${RESTART_UID}"
+    note "test 7: spawned agent uid=$RESTART_UID"
+
+    # Verify nft rule exists.
+    NFT_BEFORE=$(nft list chain inet filter agent-os-output 2>/dev/null || echo "")
+    if echo "$NFT_BEFORE" | grep -q "skuid $RESTART_UID"; then
+        pass "test 7: nft rule present before restart"
+    else
+        fail "test 7: nft rule missing before restart"
+    fi
+
+    # Kill the isolation service.
+    kill "$ISOLATION_PID" 2>/dev/null
+    wait "$ISOLATION_PID" 2>/dev/null || true
+    ISOLATION_PID=""
+    sleep 0.5
+
+    # Restart the isolation service.
+    "$BIN_DIR/isolation-service" >/tmp/isolation-service-restart.log 2>&1 &
+    ISOLATION_PID=$!
+
+    # Wait for socket to reappear.
+    for _ in $(seq 1 20); do
+        [[ -S "$RUNTIME_DIR/isolation.sock" ]] && break
+        sleep 0.25
+    done
+
+    if [[ ! -S "$RUNTIME_DIR/isolation.sock" ]]; then
+        fail "test 7: isolation socket not created after restart"
+    else
+        # Verify agent is still tracked.
+        LIST_RESP7=$(sock_send "$RUNTIME_DIR/isolation.sock" '{"method":"list_agents","body":null}')
+        LIST_HAS7=$(echo "$LIST_RESP7" | python3 -c "
+import json, sys
+r = json.loads(sys.stdin.read())
+body = json.loads(r['body']) if isinstance(r['body'], str) else r['body']
+uids = [a['uid'] for a in body.get('agents', [])]
+print('yes' if $RESTART_UID in uids else 'no')
+")
+
+        if [[ "$LIST_HAS7" == "yes" ]]; then
+            pass "test 7: agent uid=$RESTART_UID re-adopted after restart"
+        else
+            fail "test 7: agent uid=$RESTART_UID missing from list_agents after restart"
+        fi
+
+        # Verify nft rules are rebuilt.
+        NFT_AFTER_RESTART=$(nft list chain inet filter agent-os-output 2>/dev/null || echo "")
+        if echo "$NFT_AFTER_RESTART" | grep -q "skuid $RESTART_UID"; then
+            pass "test 7: nft rule rebuilt after restart"
+        else
+            fail "test 7: nft rule missing after restart (security gap!)"
+        fi
+
+        # Verify agent cannot reach network.
+        NET_PORT2=19877
+        python3 -c "
+import socket, signal, sys
+signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(('127.0.0.1', int(sys.argv[1])))
+s.listen(5)
+while True:
+    try:
+        conn, _ = s.accept()
+        conn.close()
+    except:
+        break
+" "$NET_PORT2" &
+        LISTENER_PID=$!
+        sleep 0.3
+
+        if runuser -u "$RESTART_USER" -- python3 -c "
+import socket, sys
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.settimeout(3)
+s.connect(('127.0.0.1', int(sys.argv[1])))
+s.close()
+sys.exit(0)
+" "$NET_PORT2" 2>/dev/null; then
+            fail "test 7: agent uid connected after restart (nft rule not enforced)"
+        else
+            pass "test 7: agent uid blocked from network after restart"
+        fi
+
+        kill "$LISTENER_PID" 2>/dev/null && wait "$LISTENER_PID" 2>/dev/null
+        LISTENER_PID=""
+    fi
+
+    # Clean up the restart-test agent.
+    TERM_REQ7="{\"method\":\"terminate_agent\",\"body\":{\"uid\":$RESTART_UID}}"
+    sock_send "$RUNTIME_DIR/isolation.sock" "$TERM_REQ7" >/dev/null 2>&1
+    pkill -U "$RESTART_UID" 2>/dev/null
+    userdel -r "$RESTART_USER" 2>/dev/null
+    # Clear so cleanup() trap doesn't re-clean.
+    RESTART_UID=""
+    RESTART_USER=""
+fi
 
 
 # ---- Summary ----
