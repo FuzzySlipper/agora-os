@@ -58,6 +58,13 @@ setup() {
     else
         fail "BTF support: missing (CONFIG_DEBUG_INFO_BTF)"
     fi
+
+    # Check required tooling.
+    if command -v nc &>/dev/null; then
+        pass "nc: available"
+    else
+        fail "nc: not installed (infrastructure: install gnu-netcat)"
+    fi
 }
 
 # ── Build ───────────────────────────────────────────────────────────────────

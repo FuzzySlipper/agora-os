@@ -21,22 +21,27 @@ static EVENTS: RingBuf = RingBuf::with_byte_size(256 * 1024, 0);
 #[map]
 static SSL_BUF_STASH: HashMap<u64, u64> = HashMap::<u64, u64>::with_max_entries(1024, 0);
 
+#[inline(always)]
 fn now_ns() -> u64 {
     unsafe { bpf_ktime_get_ns() }
 }
+#[inline(always)]
 fn current_pid() -> u32 {
     (bpf_get_current_pid_tgid() as u64 & 0xFFFF_FFFF) as u32
 }
+#[inline(always)]
 fn current_uid() -> u32 {
     (bpf_get_current_uid_gid() as u64 & 0xFFFF_FFFF) as u32
 }
 
 /// Only capture events from Agora agent UIDs (60000-61000).
+#[inline(always)]
 fn is_agent_uid() -> bool {
     let uid = current_uid();
     uid >= 60000 && uid < 61000
 }
 
+#[inline(always)]
 fn emit(ev: KernelEvent) {
     if !is_agent_uid() {
         return;
