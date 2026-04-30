@@ -29,7 +29,6 @@ CLAUDE.md
 # Go
 bin/
 vendor/
-!vendor/aya-obj-patched/
 *.test
 *.out
 coverage.out
