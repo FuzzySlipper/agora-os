@@ -8,7 +8,7 @@ use aya_ebpf::{
         bpf_get_current_comm, bpf_get_current_pid_tgid, bpf_get_current_uid_gid, bpf_ktime_get_ns,
         bpf_probe_read_user, bpf_probe_read_user_str_bytes,
     },
-    macros::{map, tracepoint},
+    macros::{map},
     maps::{HashMap, RingBuf},
     programs::{ProbeContext, RetProbeContext, TracePointContext},
 };
@@ -174,7 +174,8 @@ fn ssl_write_entry(ctx: ProbeContext) -> u32 {
 
 // ── sys_enter_openat2: filename at offset 24 (user pointer) ───────────────
 
-#[tracepoint(name = "sys_enter_openat2", category = "syscalls")]
+#[unsafe(no_mangle)]
+#[unsafe(link_section = "tracepoint/syscalls/sys_enter_openat2")]
 fn sys_enter_openat2(ctx: TracePointContext) -> u32 {
     if !is_agent_uid() {
         return 0;
@@ -209,7 +210,8 @@ fn sys_enter_openat2(ctx: TracePointContext) -> u32 {
 
 // ── sys_enter_execve: filename at offset 16 (user pointer) ────────────────
 
-#[tracepoint(name = "sys_enter_execve", category = "syscalls")]
+#[unsafe(no_mangle)]
+#[unsafe(link_section = "tracepoint/syscalls/sys_enter_execve")]
 fn sys_enter_execve(ctx: TracePointContext) -> u32 {
     if !is_agent_uid() {
         return 0;
@@ -257,7 +259,8 @@ struct RawSockaddrIn {
     _zero: u64,
 }
 
-#[tracepoint(name = "sys_enter_connect", category = "syscalls")]
+#[unsafe(no_mangle)]
+#[unsafe(link_section = "tracepoint/syscalls/sys_enter_connect")]
 fn sys_enter_connect(ctx: TracePointContext) -> u32 {
     if !is_agent_uid() {
         return 0;
