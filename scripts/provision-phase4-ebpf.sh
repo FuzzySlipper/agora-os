@@ -15,7 +15,7 @@ PACKAGES=(
     llvm               # llc for bitcode → ELF conversion
     linux-headers      # BTF and kernel headers for BPF CO-RE
     bpftrace            # optional: human-readable BPF inspection
-    gnu-netcat          # nc for bus pub/sub validation
+    openbsd-netcat       # nc for bus pub/sub validation (Arch package name; "gnu-netcat" is not available)
 )
 
 info() { echo ":: $*"; }
