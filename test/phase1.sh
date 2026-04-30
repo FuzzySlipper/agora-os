@@ -40,6 +40,10 @@ SPAWNED_UID=""
 AGENT_USER=""
 RESTART_UID=""
 RESTART_USER=""
+STALE_UID=""
+STALE_USER=""
+TERM9_UID=""
+TERM9_USER=""
 WRITE_PID=""
 LISTENER_PID=""
 SPINNER_UNIT=""
@@ -121,9 +125,15 @@ cleanup() {
     [[ -n "$SPINNER_UNIT" ]] && systemctl stop "${SPINNER_UNIT}.service" 2>/dev/null
 
     # Clean up spawned agents.
-    for _uidvar in SPAWNED_UID RESTART_UID; do
+    for _uidvar in SPAWNED_UID RESTART_UID STALE_UID TERM9_UID; do
         eval _uid="\$$_uidvar"
-        eval _user="\$${_uidvar%_UID}_USER"
+        case "$_uidvar" in
+            SPAWNED_UID)  _user="$AGENT_USER" ;;
+            RESTART_UID)  _user="$RESTART_USER" ;;
+            STALE_UID)    _user="$STALE_USER" ;;
+            TERM9_UID)    _user="$TERM9_USER" ;;
+            *)            _user="" ;;
+        esac
         if [[ -n "$_uid" ]]; then
             if [[ -S "$RUNTIME_DIR/isolation.sock" ]]; then
                 sock_send "$RUNTIME_DIR/isolation.sock" \
@@ -648,6 +658,172 @@ sys.exit(0)
     # Clear so cleanup() trap doesn't re-clean.
     RESTART_UID=""
     RESTART_USER=""
+fi
+
+
+# ==== Test 8: Stale agent user (exited process) gets NetDeny after restart ====
+
+echo
+note "test 8: stale agent user with no running process gets NetDeny after restart"
+
+# Spawn an agent with a short-lived command so the process exits on its own.
+SPAWN_REQ8='{"method":"spawn_agent","body":{"name":"stale","cpu_quota":"50%","memory_max":"256M","net_access":"deny","command":["true"]}}'
+SPAWN_RESP8=$(sock_send "$RUNTIME_DIR/isolation.sock" "$SPAWN_REQ8")
+SPAWN_OK8=$(echo "$SPAWN_RESP8" | json_get "['ok']")
+if [[ "$SPAWN_OK8" != "True" ]]; then
+    fail "test 8: spawn_agent failed"
+else
+    STALE_UID=$(echo "$SPAWN_RESP8" | resp_body_get "['agent']['uid']")
+    STALE_USER="agent-stale-${STALE_UID}"
+    note "test 8: spawned short-lived agent uid=$STALE_UID"
+
+    # Wait for the command to finish (true exits immediately).
+    sleep 1
+
+    # The slice should still exist but the command unit should be inactive.
+    if systemctl is-active --quiet "agent-${STALE_UID}.slice" 2>/dev/null; then
+        note "test 8: slice still active (expected)"
+    else
+        note "test 8: slice already inactive"
+    fi
+
+    # Kill the isolation service.
+    kill "$ISOLATION_PID" 2>/dev/null
+    wait "$ISOLATION_PID" 2>/dev/null || true
+    ISOLATION_PID=""
+    sleep 0.5
+
+    # Restart the isolation service.
+    "$BIN_DIR/isolation-service" >/tmp/isolation-service-restart8.log 2>&1 &
+    ISOLATION_PID=$!
+
+    # Wait for socket to reappear.
+    for _ in $(seq 1 20); do
+        [[ -S "$RUNTIME_DIR/isolation.sock" ]] && break
+        sleep 0.25
+    done
+
+    if [[ ! -S "$RUNTIME_DIR/isolation.sock" ]]; then
+        fail "test 8: isolation socket not created after restart"
+    else
+        # Verify agent is re-adopted (even though process exited).
+        LIST_RESP8=$(sock_send "$RUNTIME_DIR/isolation.sock" '{"method":"list_agents","body":null}')
+        LIST_HAS8=$(echo "$LIST_RESP8" | python3 -c "
+import json, sys
+r = json.loads(sys.stdin.read())
+body = json.loads(r['body']) if isinstance(r['body'], str) else r['body']
+uids = [a['uid'] for a in body.get('agents', [])]
+print('yes' if $STALE_UID in uids else 'no')
+")
+
+        if [[ "$LIST_HAS8" == "yes" ]]; then
+            pass "test 8: stale agent uid=$STALE_UID re-adopted after restart"
+        else
+            fail "test 8: stale agent uid=$STALE_UID missing from list_agents after restart"
+        fi
+
+        # Verify nft rules are present even for the stale user.
+        NFT_STALE=$(nft list chain inet filter agent-os-output 2>/dev/null || echo "")
+        if echo "$NFT_STALE" | grep -q "skuid $STALE_UID"; then
+            pass "test 8: nft NetDeny rule present for stale uid=$STALE_UID"
+        else
+            fail "test 8: nft rule missing for stale uid=$STALE_UID (security gap!)"
+        fi
+    fi
+
+    # Clean up the stale agent.
+    TERM_REQ8="{\"method\":\"terminate_agent\",\"body\":{\"uid\":$STALE_UID}}"
+    sock_send "$RUNTIME_DIR/isolation.sock" "$TERM_REQ8" >/dev/null 2>&1
+    pkill -U "$STALE_UID" 2>/dev/null
+    userdel -r "$STALE_USER" 2>/dev/null
+    STALE_UID=""
+    STALE_USER=""
+fi
+
+
+# ==== Test 9: Terminate a recovered agent after restart ====
+
+echo
+note "test 9: terminate recovered agent after restart"
+
+# Spawn a fresh agent with a long-running command.
+SPAWN_REQ9='{"method":"spawn_agent","body":{"name":"termtest","cpu_quota":"50%","memory_max":"256M","net_access":"deny","command":["sleep","120"]}}'
+SPAWN_RESP9=$(sock_send "$RUNTIME_DIR/isolation.sock" "$SPAWN_REQ9")
+SPAWN_OK9=$(echo "$SPAWN_RESP9" | json_get "['ok']")
+if [[ "$SPAWN_OK9" != "True" ]]; then
+    fail "test 9: spawn_agent failed"
+else
+    TERM9_UID=$(echo "$SPAWN_RESP9" | resp_body_get "['agent']['uid']")
+    TERM9_USER="agent-termtest-${TERM9_UID}"
+    note "test 9: spawned agent uid=$TERM9_UID"
+
+    # Kill and restart isolation service.
+    kill "$ISOLATION_PID" 2>/dev/null
+    wait "$ISOLATION_PID" 2>/dev/null || true
+    ISOLATION_PID=""
+    sleep 0.5
+
+    "$BIN_DIR/isolation-service" >/tmp/isolation-service-restart9.log 2>&1 &
+    ISOLATION_PID=$!
+    for _ in $(seq 1 20); do
+        [[ -S "$RUNTIME_DIR/isolation.sock" ]] && break
+        sleep 0.25
+    done
+
+    if [[ ! -S "$RUNTIME_DIR/isolation.sock" ]]; then
+        fail "test 9: isolation socket not created after restart"
+    else
+        # Terminate the recovered agent via the API.
+        TERM9_REQ="{\"method\":\"terminate_agent\",\"body\":{\"uid\":$TERM9_UID}}"
+        TERM9_RESP=$(sock_send "$RUNTIME_DIR/isolation.sock" "$TERM9_REQ")
+        TERM9_OK=$(echo "$TERM9_RESP" | json_get "['ok']")
+
+        if [[ "$TERM9_OK" == "True" ]]; then
+            pass "test 9: terminate_agent for recovered uid=$TERM9_UID returned ok"
+        else
+            TERM9_ERR=$(echo "$TERM9_RESP" | json_get "['body']" 2>/dev/null || echo "unknown")
+            fail "test 9: terminate_agent for recovered uid=$TERM9_UID failed: $TERM9_ERR"
+        fi
+
+        sleep 0.5
+
+        # Verify user removed.
+        if id "$TERM9_USER" &>/dev/null; then
+            fail "test 9: user $TERM9_USER still exists after terminate"
+        else
+            pass "test 9: user $TERM9_USER removed after terminate"
+        fi
+
+        # Verify nft rules removed.
+        NFT_T9=$(nft list chain inet filter agent-os-output 2>/dev/null || echo "")
+        if echo "$NFT_T9" | grep -q "skuid $TERM9_UID"; then
+            fail "test 9: nft rules for uid $TERM9_UID still present after terminate"
+        else
+            pass "test 9: nft rules for uid $TERM9_UID removed after terminate"
+        fi
+
+        # Verify absent from list_agents.
+        LIST_RESP9=$(sock_send "$RUNTIME_DIR/isolation.sock" '{"method":"list_agents","body":null}')
+        LIST_HAS9=$(echo "$LIST_RESP9" | python3 -c "
+import json, sys
+r = json.loads(sys.stdin.read())
+body = json.loads(r['body']) if isinstance(r['body'], str) else r['body']
+uids = [a['uid'] for a in body.get('agents', [])]
+print('yes' if $TERM9_UID in uids else 'no')
+")
+
+        if [[ "$LIST_HAS9" == "no" ]]; then
+            pass "test 9: agent uid=$TERM9_UID absent from list_agents after terminate"
+        else
+            fail "test 9: agent uid=$TERM9_UID still in list_agents after terminate"
+        fi
+    fi
+
+    # Clean up.
+    pkill -U "$TERM9_UID" 2>/dev/null
+    userdel -r "$TERM9_USER" 2>/dev/null
+    TERM9_UID=""
+    TERM9_USER=""
 fi
 
 
