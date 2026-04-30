@@ -8,7 +8,9 @@ package agent
 
 import (
 	"fmt"
+	"log"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -31,6 +33,74 @@ func NewManager() *Manager {
 		hasCmd:      make(map[uint32]bool),
 		ruleHandles: make(map[uint32][]uint64),
 		nextUID:     schema.AgentUIDBase,
+	}
+}
+
+// RecoverAgents discovers agent users and systemd units left by a prior run
+// and rebuilds in-memory state. It is called after BootstrapNftables so the
+// nft chain exists but is empty. UIDs with prior nft rules get those rules
+// re-applied; UIDs without prior rules get the safe default (NetDeny).
+// Stale nft rules for UIDs with no active user or process are cleaned up.
+func (m *Manager) RecoverAgents(priorRuleUIDs map[uint32]bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	agentUsers := discoverAgentUsers()
+	activeSlices := discoverActiveSlices()
+	activeCmds := discoverActiveCmds()
+
+	// Clean up stale nft rules for UIDs that no longer have an agent user.
+	for uid := range priorRuleUIDs {
+		if _, exists := agentUsers[uid]; !exists {
+			log.Printf("recovery: cleaning stale nft rules for uid %d", uid)
+			removeStaleRules(uid)
+			delete(priorRuleUIDs, uid)
+		}
+	}
+
+	for uid, username := range agentUsers {
+		_, isRunning := activeSlices[uid]
+		hasCmd := activeCmds[uid]
+
+		// Default to NetDeny — we cannot reliably recover the original policy.
+		policy := schema.NetDeny
+
+		if isRunning {
+			if err := m.applyNetRules(uid, policy); err != nil {
+				log.Printf("recovery: failed to apply net rules for uid %d: %v", uid, err)
+			}
+		}
+
+		sliceName := fmt.Sprintf("agent-%d.slice", uid)
+		status := schema.StatusExited
+		if isRunning {
+			status = schema.StatusRunning
+		}
+
+		m.agents[uid] = &schema.AgentInfo{
+			Name:      username,
+			UID:       uid,
+			Status:    status,
+			Slice:     sliceName,
+			NetAccess: policy,
+			CreatedAt: time.Now(), // best-effort; not recoverable
+		}
+
+		if hasCmd {
+			hasCmd = exec.Command("systemctl", "is-active", "--quiet", agentUnitName(uid)).Run() == nil
+		}
+		m.hasCmd[uid] = hasCmd
+
+		if isRunning {
+			log.Printf("recovery: adopted agent uid=%d user=%s policy=%s", uid, username, policy)
+		}
+	}
+
+	// Set nextUID above all discovered UIDs.
+	for uid := range agentUsers {
+		if uid >= m.nextUID {
+			m.nextUID = uid + 1
+		}
 	}
 }
 
@@ -161,4 +231,97 @@ func defaultStr(val, fallback string) string {
 		return fallback
 	}
 	return val
+}
+
+// discoverAgentUsers reads /etc/passwd for users matching the agent naming
+// convention: agent-<name>-<uid>. Returns a map of uid → username.
+func discoverAgentUsers() map[uint32]string {
+	users := make(map[uint32]string)
+	out, err := exec.Command("getent", "passwd").Output()
+	if err != nil {
+		return users
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.SplitN(line, ":", 7)
+		if len(fields) < 3 {
+			continue
+		}
+		username := fields[0]
+		if !strings.HasPrefix(username, "agent-") {
+			continue
+		}
+		var uid uint32
+		if _, err := fmt.Sscanf(fields[2], "%d", &uid); err != nil {
+			continue
+		}
+		users[uid] = username
+	}
+	return users
+}
+
+// discoverActiveSlices finds running agent slices (agent-*.slice).
+func discoverActiveSlices() map[uint32]bool {
+	active := make(map[uint32]bool)
+	out, err := exec.Command("systemctl", "list-units",
+		"--type=slice", "--state=active", "--no-legend", "--no-pager").Output()
+	if err != nil {
+		return active
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		sliceName := fields[0]
+		var uid uint32
+		if _, err := fmt.Sscanf(sliceName, "agent-%d.slice", &uid); err == nil {
+			active[uid] = true
+		}
+	}
+	return active
+}
+
+// discoverActiveCmds finds loaded agent command units (agent-*-cmd.service).
+func discoverActiveCmds() map[uint32]bool {
+	cmds := make(map[uint32]bool)
+	out, err := exec.Command("systemctl", "list-units",
+		"--type=service", "--state=active", "--no-legend", "--no-pager").Output()
+	if err != nil {
+		return cmds
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		svcName := fields[0]
+		var uid uint32
+		if _, err := fmt.Sscanf(svcName, "agent-%d-cmd.service", &uid); err == nil {
+			cmds[uid] = true
+		}
+	}
+	return cmds
+}
+
+// removeStaleRules removes nft rules for a UID that no longer has an agent user.
+func removeStaleRules(uid uint32) {
+	uidStr := fmt.Sprintf("%d", uid)
+	out, err := exec.Command("nft", "list", "chain", "inet", "filter", nftChain).CombinedOutput()
+	if err != nil {
+		return
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if !strings.Contains(line, "skuid "+uidStr) || !strings.Contains(line, "handle") {
+			continue
+		}
+		idx := strings.LastIndex(line, "handle ")
+		if idx < 0 {
+			continue
+		}
+		handleStr := strings.TrimSpace(line[idx+7:])
+		if _, err := fmt.Sscanf(handleStr, "%d", new(uint64)); err != nil {
+			continue
+		}
+		exec.Command("nft", "delete", "rule", "inet", "filter", nftChain, "handle", handleStr).Run()
+	}
 }

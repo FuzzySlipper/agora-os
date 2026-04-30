@@ -18,12 +18,19 @@ import (
 const socketPath = schema.IsolationSocket
 
 func main() {
+	// Capture existing nft rules before bootstrap flushes the chain.
+	priorRuleUIDs := agent.ActiveAgentUIDs()
+
 	// Set up nftables table + chains before accepting any requests.
 	if err := agent.BootstrapNftables(); err != nil {
 		log.Fatalf("nft bootstrap: %v", err)
 	}
 
 	mgr := agent.NewManager()
+
+	// Adopt agents from a prior run: discover users and systemd units,
+	// rebuild in-memory state, and re-apply network policies.
+	mgr.RecoverAgents(priorRuleUIDs)
 	svc := isolation.New(mgr, schema.BusSocket)
 
 	// Ensure the socket directory exists

@@ -13,6 +13,33 @@ const (
 	nftChain = "agent-os-output" // dedicated chain so we can flush without touching host rules
 )
 
+// ActiveAgentUIDs returns the set of UIDs that currently have nftables rules
+// in the agent-os-output chain. This is used during service restart to discover
+// which agents had active network policies before the chain is flushed.
+// Call this BEFORE BootstrapNftables if you need to know which agents had
+// rules, because BootstrapNftables flushes the owned chain.
+func ActiveAgentUIDs() map[uint32]bool {
+	uids := make(map[uint32]bool)
+	out, err := exec.Command("nft", "list", "chain", "inet", "filter", nftChain).CombinedOutput()
+	if err != nil {
+		return uids
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if !strings.Contains(line, "meta skuid") {
+			continue
+		}
+		fields := strings.Fields(line)
+		for i, f := range fields {
+			if f == "skuid" && i+1 < len(fields) {
+				if uid, err := strconv.ParseUint(fields[i+1], 10, 32); err == nil {
+					uids[uint32(uid)] = true
+				}
+			}
+		}
+	}
+	return uids
+}
+
 // BootstrapNftables ensures the inet filter table, base output chain, and
 // our dedicated agent-os-output chain exist. Each step probes before creating
 // so the function is safe to call on every startup regardless of prior state.
