@@ -172,27 +172,42 @@ fn ssl_write_entry(ctx: ProbeContext) -> u32 {
     0
 }
 
-// ── sys_enter_openat2: always-accept stub (skips BPF helpers except emit)
-// TODO: restore full implementation after relocation issue is fixed
+// ── sys_enter_openat2: filename at offset 24 (user pointer) ──────────────
+//
+// Tracepoint layout for sys_enter_openat2:
+//   offset 16: int dfd
+//   offset 24: const char __user *filename  ← what we want
+//   offset 32: struct open_how __user *how
 
 #[unsafe(no_mangle)]
 #[unsafe(link_section = "tracepoint/syscalls/sys_enter_openat2")]
-fn sys_enter_openat2(_ctx: TracePointContext) -> u32 {
-    // Simplified: just emit a test event with static data
-    let ev = KernelEvent {
-        timestamp_ns: unsafe { bpf_ktime_get_ns() },
-        pid: (bpf_get_current_pid_tgid() as u64 & 0xFFFF_FFFF) as u32,
-        uid: (bpf_get_current_uid_gid() as u64 & 0xFFFF_FFFF) as u32,
+fn sys_enter_openat2(ctx: TracePointContext) -> u32 {
+    if !is_agent_uid() {
+        return 0;
+    }
+    // sys_enter_* args start at offset 16.
+    //   offset 24: const char __user *filename
+    let filename_ptr: *const u8 = match unsafe { ctx.read_at::<*const u8>(24) } {
+        Ok(p) => p,
+        Err(_) => return 0,
+    };
+    if filename_ptr.is_null() {
+        return 0;
+    }
+
+    let mut path = [0u8; 64];
+    let _ = unsafe { bpf_probe_read_user_str_bytes(filename_ptr, &mut path) };
+
+    emit(KernelEvent {
+        timestamp_ns: now_ns(),
+        pid: current_pid(),
+        uid: current_uid(),
         event_type: EventType::FileOpen as u8,
         _pad: [0; 3],
         data: KernelEventData {
-            file_open: FileOpenData { path: [0u8; 64] },
+            file_open: FileOpenData { path },
         },
-    };
-    if let Some(mut entry) = EVENTS.reserve::<KernelEvent>(0) {
-        unsafe { entry.as_mut_ptr().write(ev) };
-        entry.submit(0);
-    }
+    });
     0
 }
 
