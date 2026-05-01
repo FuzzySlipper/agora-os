@@ -220,6 +220,16 @@ test_event_capture() {
     timeout 2 runuser -u "$test_name" -- curl -s --max-time 1 http://127.0.0.1:1/ 2>/dev/null || true
     sleep 1.5
 
+    # ── openat2 from agent UID: should produce audit.file.open ──────────
+    info "Testing openat2 from agent UID ($test_uid)..."
+    timeout 2 runuser -u "$test_name" -- cat /etc/hostname >/dev/null 2>&1 || true
+    sleep 1
+
+    # ── openat2 from root (non-agent UID): should NOT produce file.open ─
+    info "Testing openat2 from root (non-agent UID)..."
+    cat /etc/hostname >/dev/null 2>&1 || true
+    sleep 0.5
+
     wait "$sub_pid" 2>/dev/null || true
 
     local event_lines
@@ -236,6 +246,34 @@ test_event_capture() {
             grep '"audit\.' "$events_file" | head -5 >> "$SUMMARY"
         else
             fail "audit events: none detected (daemon bug or no agent activity)"
+        fi
+
+        # ── Verify audit.file.open captured from agent UID ──────────────
+        local file_open_count
+        file_open_count=$(grep -c '"audit\.file\.open"' "$events_file" 2>/dev/null || echo 0)
+        if [[ "$file_open_count" -gt 0 ]]; then
+            pass "audit.file.open: $file_open_count event(s) from agent UID"
+            # Verify path is non-empty (not zeroed).
+            if grep '"audit\.file\.open"' "$events_file" | grep -q '"resource":"[^"]\+"'; then
+                pass "audit.file.open: path field is non-empty"
+            else
+                fail "audit.file.open: path field is empty (handler bug)"
+            fi
+        else
+            fail "audit.file.open: no events captured from agent UID openat2 (handler bug)"
+        fi
+
+        # ── Verify root openat2 did NOT produce file.open ───────────────
+        # We expect file.open events only from agent UIDs. If root's
+        # openat2 generated a file.open, the UID filter is broken.
+        # We check that all file.open events come from the agent UID.
+        local non_agent_file_open
+        non_agent_file_open=$(grep '"audit\.file\.open"' "$events_file" \
+            | grep -cv '"agent_uid":60100' 2>/dev/null || echo 0)
+        if [[ "$non_agent_file_open" -eq 0 ]]; then
+            pass "non-agent UID filter: no file.open from non-agent UIDs"
+        else
+            fail "non-agent UID filter: $non_agent_file_open file.open event(s) from non-agent UID (UID filter broken)"
         fi
     else
         fail "bus events: none received (daemon bug or bus down)"
