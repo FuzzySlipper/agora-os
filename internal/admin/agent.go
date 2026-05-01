@@ -26,8 +26,9 @@ import (
 type Config struct {
 	SystemPrompt string
 	APIKey       string
-	APIURL       string   // defaults to https://api.anthropic.com/v1/messages
-	LogFile      *os.File // opened for append-only writing
+	APIURL       string        // defaults to https://api.anthropic.com/v1/messages
+	LogFile      *os.File      // opened for append-only writing
+	LLMTimeout   time.Duration // HTTP timeout for LLM calls; defaults to 30s
 }
 
 // Agent evaluates escalation requests. It is safe for concurrent use.
@@ -37,6 +38,7 @@ type Agent struct {
 	apiURL       string
 	logFile      *os.File
 	logMu        sync.Mutex
+	llmClient    *http.Client
 }
 
 // New creates an Agent from the given configuration.
@@ -45,11 +47,16 @@ func New(cfg Config) *Agent {
 	if apiURL == "" {
 		apiURL = "https://api.anthropic.com/v1/messages"
 	}
+	timeout := cfg.LLMTimeout
+	if timeout == 0 {
+		timeout = 30 * time.Second
+	}
 	return &Agent{
 		systemPrompt: cfg.SystemPrompt,
 		apiKey:       cfg.APIKey,
 		apiURL:       apiURL,
 		logFile:      cfg.LogFile,
+		llmClient:    &http.Client{Timeout: timeout},
 	}
 }
 
@@ -90,7 +97,16 @@ func (a *Agent) HandleConn(conn net.Conn) {
 	escReq.AgentUID = uint32(peerUID)
 
 	resp := a.evaluate(escReq)
-	a.logEntry(escReq, resp)
+	if err := a.logEntry(escReq, resp); err != nil {
+		log.Printf("admin log write failed: %v", err)
+		errResp := schema.EscalationResponse{
+			Decision:  schema.DecisionEscalate,
+			Reasoning: fmt.Sprintf("audit log write failed: %v — cannot confirm request was logged", err),
+		}
+		b, _ := json.Marshal(errResp)
+		writeJSON(conn, schema.Response{OK: false, Body: b})
+		return
+	}
 
 	b, _ := json.Marshal(resp)
 	writeJSON(conn, schema.Response{OK: true, Body: b})
@@ -147,7 +163,7 @@ func (a *Agent) callLLM(userContent string) (string, error) {
 	httpReq.Header.Set("x-api-key", a.apiKey)
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
 
-	resp, err := http.DefaultClient.Do(httpReq)
+	resp, err := a.llmClient.Do(httpReq)
 	if err != nil {
 		return "", err
 	}
@@ -172,7 +188,9 @@ func (a *Agent) callLLM(userContent string) (string, error) {
 	return result.Content[0].Text, nil
 }
 
-func (a *Agent) logEntry(req schema.EscalationRequest, resp schema.EscalationResponse) {
+// logEntry appends the request/response pair to the append-only log.
+// Returns an error if the write fails or is a short write.
+func (a *Agent) logEntry(req schema.EscalationRequest, resp schema.EscalationResponse) error {
 	entry := struct {
 		Timestamp time.Time                 `json:"timestamp"`
 		Request   schema.EscalationRequest  `json:"request"`
@@ -187,8 +205,18 @@ func (a *Agent) logEntry(req schema.EscalationRequest, resp schema.EscalationRes
 	b = append(b, '\n')
 
 	a.logMu.Lock()
-	a.logFile.Write(b)
+	n, err := a.logFile.Write(b)
+	if err == nil {
+		err = a.logFile.Sync()
+	}
 	a.logMu.Unlock()
+	if err != nil {
+		return fmt.Errorf("log entry durability: %w", err)
+	}
+	if n != len(b) {
+		return fmt.Errorf("short write log entry: wrote %d of %d bytes", n, len(b))
+	}
+	return nil
 }
 
 func writeJSON(conn net.Conn, v any) {

@@ -142,8 +142,14 @@ func (s *Service) Run() error {
 
 			b, _ := json.Marshal(ev)
 			line := append(b, '\n')
-			s.stdout.Write(line)
-			logFile.Write(line)
+			if _, err := s.stdout.Write(line); err != nil {
+				log.Printf("audit stdout write: %v", err)
+			}
+			if _, err := logFile.Write(line); err != nil {
+				log.Printf("audit log write: %v", err)
+			} else if err := logFile.Sync(); err != nil {
+				log.Printf("audit log sync: %v", err)
+			}
 			broker.Publish(line)
 		}
 	}
