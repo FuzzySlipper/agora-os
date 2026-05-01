@@ -127,40 +127,7 @@ func TestEvaluate_SuccessfulResponse(t *testing.T) {
 // errWriter is a writer that always returns an error.
 type errWriter struct{}
 
-func (errWriter) Write(p []byte) (int, error) {
-	return 0, fmt.Errorf("disk full")
-}
-
 func TestLogEntry_WriteError(t *testing.T) {
-	a := &Agent{
-		logFile:   os.NewFile(0, "/dev/null"), // will be replaced
-		llmClient: &http.Client{Timeout: 30 * time.Second},
-	}
-	// Replace logFile with a file backed by an error writer.
-	// We can't directly set logFile to an io.Writer, so we use a pipe.
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	r.Close() // close read end so writes fail
-	a.logFile = w
-
-	req := testEscalationRequest()
-	resp := schema.EscalationResponse{
-		Decision:  schema.DecisionEscalate,
-		Reasoning: "test",
-	}
-
-	err = a.logEntry(req, resp)
-	if err == nil {
-		t.Fatal("expected error from logEntry on closed pipe, got nil")
-	}
-	if !strings.Contains(err.Error(), "write log entry") {
-		t.Errorf("expected 'write log entry' in error, got %q", err.Error())
-	}
-}
-
-func TestHandleConn_LogWriteFailureReturnsErrorResponse(t *testing.T) {
 	// Set up a test server that returns a valid LLM response.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
@@ -168,7 +135,7 @@ func TestHandleConn_LogWriteFailureReturnsErrorResponse(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	// Create a pipe and close the write end so log writes fail.
+	// Create a pipe and close the read end so log writes fail.
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
@@ -182,28 +149,7 @@ func TestHandleConn_LogWriteFailureReturnsErrorResponse(t *testing.T) {
 		LogFile:      w,
 	})
 
-	// Create a Unix socket pair for testing HandleConn.
-	server, client := net.Pipe()
-	defer client.Close()
-
-	go func() {
-		// Send a valid escalation request.
-		escReq := testEscalationRequest()
-		body, _ := json.Marshal(escReq)
-		req := schema.Request{
-			Method: schema.MethodEscalate,
-			Body:   body,
-		}
-		json.NewEncoder(server).Encode(req)
-		// Read the response.
-		var resp schema.Response
-		json.NewDecoder(server).Decode(&resp)
-		// We don't use server conn for peercred; this test focuses on log failure.
-		server.Close()
-	}()
-
-	// HandleConn will try to read peercred which will fail on net.Pipe().
-	// Instead, test logEntry failure directly.
+	// Test logEntry failure directly — HandleConn requires SO_PEERCRED (root).
 	req := testEscalationRequest()
 	resp := a.evaluate(req)
 	err = a.logEntry(req, resp)
@@ -211,10 +157,9 @@ func TestHandleConn_LogWriteFailureReturnsErrorResponse(t *testing.T) {
 		t.Fatal("expected logEntry to fail")
 	}
 
-	// Verify the invariant: when logEntry fails, HandleConn should not send OK:true.
-	// We test this indirectly by checking that logEntry returns an error.
-	if !strings.Contains(err.Error(), "write log entry") {
-		t.Errorf("expected 'write log entry' error, got %q", err.Error())
+	// Verify the error mentions durability (write or sync failure).
+	if !strings.Contains(err.Error(), "log entry durability") {
+		t.Errorf("expected 'log entry durability' error, got %q", err.Error())
 	}
 }
 

@@ -206,9 +206,12 @@ func (a *Agent) logEntry(req schema.EscalationRequest, resp schema.EscalationRes
 
 	a.logMu.Lock()
 	n, err := a.logFile.Write(b)
+	if err == nil {
+		err = a.logFile.Sync()
+	}
 	a.logMu.Unlock()
 	if err != nil {
-		return fmt.Errorf("write log entry: %w", err)
+		return fmt.Errorf("log entry durability: %w", err)
 	}
 	if n != len(b) {
 		return fmt.Errorf("short write log entry: wrote %d of %d bytes", n, len(b))

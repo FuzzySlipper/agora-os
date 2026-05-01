@@ -147,6 +147,8 @@ func (s *Service) Run() error {
 			}
 			if _, err := logFile.Write(line); err != nil {
 				log.Printf("audit log write: %v", err)
+			} else if err := logFile.Sync(); err != nil {
+				log.Printf("audit log sync: %v", err)
 			}
 			broker.Publish(line)
 		}
