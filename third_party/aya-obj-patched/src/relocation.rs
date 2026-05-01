@@ -510,6 +510,17 @@ impl<'a> FunctionLinker<'a> {
 /// This is needed for LLVM >= 16 codegen, where helper calls are generated
 /// with PSEUDO_CALL + R_BPF_64_32 relocation to an external (UNDEF) symbol
 /// instead of a direct `imm = helper_id` encoding.
+///
+/// The matching uses substring contains on the Rust-mangled symbol name.
+/// ORDER MATTERS: more specific names must come before less specific ones,
+/// and negative guards (&& !name.contains(...)) prevent false matches.
+/// For example, bpf_probe_read_user must reject _str variants, and
+/// bpf_probe_read_str must reject _user and _kernel variants.
+///
+/// Helper IDs are from include/uapi/linux/bpf.h in the Linux kernel.
+/// Only helpers needed by Agora eBPF programs are included. To add a new
+/// helper, find its ID in bpf.h and insert it in the correct position
+/// (more specific matches before less specific ones).
 fn bpf_helper_id_from_name(name: Option<&str>) -> Option<u32> {
     let name = name?;
     // The Rust-mangled symbol ends with the function name prefixed by its
@@ -561,7 +572,6 @@ fn bpf_helper_id_from_name(name: Option<&str>) -> Option<u32> {
     else if name.contains("bpf_tcp_raw_check_syn") { Some(206) }
     else if name.contains("bpf_getsockopt") { Some(207) }
     else if name.contains("bpf_setsockopt") { Some(208) }
-    else if name.contains("bpf_get_netns_cookie") { Some(210) }
     else if name.contains("bpf_get_netns_cookie") { Some(210) }
     else if name.contains("bpf_dynptr_clone") { Some(218) }
     else if name.contains("bpf_arena_alloc_pages") { Some(220) }
