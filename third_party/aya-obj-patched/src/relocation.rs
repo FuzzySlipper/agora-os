@@ -510,6 +510,17 @@ impl<'a> FunctionLinker<'a> {
 /// This is needed for LLVM >= 16 codegen, where helper calls are generated
 /// with PSEUDO_CALL + R_BPF_64_32 relocation to an external (UNDEF) symbol
 /// instead of a direct `imm = helper_id` encoding.
+///
+/// The matching uses substring contains on the Rust-mangled symbol name.
+/// ORDER MATTERS: more specific names must come before less specific ones,
+/// and negative guards (&& !name.contains(...)) prevent false matches.
+/// For example, bpf_probe_read_user must reject _str variants, and
+/// bpf_probe_read_str must reject _user and _kernel variants.
+///
+/// Helper IDs are from include/uapi/linux/bpf.h in the Linux kernel.
+/// Only helpers needed by Agora eBPF programs are included. To add a new
+/// helper, find its ID in bpf.h and insert it in the correct position
+/// (more specific matches before less specific ones).
 fn bpf_helper_id_from_name(name: Option<&str>) -> Option<u32> {
     let name = name?;
     // The Rust-mangled symbol ends with the function name prefixed by its
@@ -546,27 +557,24 @@ fn bpf_helper_id_from_name(name: Option<&str>) -> Option<u32> {
     else if name.contains("bpf_ringbuf_discard") { Some(133) }
     else if name.contains("bpf_ringbuf_query") { Some(134) }
     else if name.contains("bpf_for_each_map_elem") { Some(164) }
-    else if name.contains("bpf_skc_to_tcp6_sock") { Some(168) }
-    else if name.contains("bpf_skc_to_tcp_sock") { Some(169) }
-    else if name.contains("bpf_skc_to_tcp_timewait_sock") { Some(170) }
-    else if name.contains("bpf_skc_to_tcp_request_sock") { Some(171) }
-    else if name.contains("bpf_skc_to_udp6_sock") { Some(172) }
-    else if name.contains("bpf_get_task_stack") { Some(178) }
-    else if name.contains("bpf_load_hdr_opt") { Some(179) }
-    else if name.contains("bpf_store_hdr_opt") { Some(180) }
-    else if name.contains("bpf_reserve_hdr_opt") { Some(181) }
-    else if name.contains("bpf_dynptr_data") { Some(185) }
-    else if name.contains("bpf_get_branch_snapshot") { Some(195) }
-    else if name.contains("bpf_tcp_raw_gen_syn") { Some(205) }
-    else if name.contains("bpf_tcp_raw_check_syn") { Some(206) }
-    else if name.contains("bpf_getsockopt") { Some(207) }
-    else if name.contains("bpf_setsockopt") { Some(208) }
-    else if name.contains("bpf_get_netns_cookie") { Some(210) }
-    else if name.contains("bpf_get_netns_cookie") { Some(210) }
-    else if name.contains("bpf_dynptr_clone") { Some(218) }
-    else if name.contains("bpf_arena_alloc_pages") { Some(220) }
-    else if name.contains("bpf_arena_free_pages") { Some(221) }
-    else if name.contains("bpf_throw") { Some(226) }
+    else if name.contains("bpf_skc_to_tcp6_sock") { Some(136) }
+    else if name.contains("bpf_skc_to_tcp_sock") { Some(137) }
+    else if name.contains("bpf_skc_to_tcp_timewait_sock") { Some(138) }
+    else if name.contains("bpf_skc_to_tcp_request_sock") { Some(139) }
+    else if name.contains("bpf_skc_to_udp6_sock") { Some(140) }
+    else if name.contains("bpf_get_task_stack") { Some(141) }
+    else if name.contains("bpf_load_hdr_opt") { Some(142) }
+    else if name.contains("bpf_store_hdr_opt") { Some(143) }
+    else if name.contains("bpf_reserve_hdr_opt") { Some(144) }
+    else if name.contains("bpf_dynptr_data") { Some(203) }
+    else if name.contains("bpf_get_branch_snapshot") { Some(176) }
+    else if name.contains("bpf_tcp_raw_gen_syncookie_ipv6") { Some(205) }
+    else if name.contains("bpf_tcp_raw_gen_syncookie_ipv4") { Some(204) }
+    else if name.contains("bpf_tcp_raw_check_syncookie_ipv6") { Some(207) }
+    else if name.contains("bpf_tcp_raw_check_syncookie_ipv4") { Some(206) }
+    else if name.contains("bpf_getsockopt") { Some(57) }
+    else if name.contains("bpf_setsockopt") { Some(49) }
+    else if name.contains("bpf_get_netns_cookie") { Some(122) }
     else {
         debug!("unknown BPF helper symbol: {}", name);
         None
