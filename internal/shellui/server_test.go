@@ -228,3 +228,63 @@ func mustMintHumanToken(t *testing.T, secret []byte) string {
 	}
 	return token
 }
+
+func TestLoadAdminEscalationsSkipsDecisionEntries(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now().UTC()
+	adminLog := filepath.Join(t.TempDir(), "admin.log")
+
+	// Write a model escalation entry.
+	writeAdminLog(t, adminLog, loggedEscalation{
+		Timestamp: now,
+		Request: schema.EscalationRequest{
+			AgentUID:          60003,
+			TaskContext:       "test",
+			RequestedAction:   "read",
+			RequestedResource: "/etc/passwd",
+			Justification:     "test justification",
+		},
+		Response: schema.EscalationResponse{
+			Decision:  schema.DecisionEscalate,
+			Reasoning: "needs human review",
+		},
+	})
+
+	// Append a human decision entry in the wrapped format the admin agent uses.
+	decisionEntry := struct {
+		Timestamp time.Time                      `json:"timestamp"`
+		Decision  schema.HumanEscalationDecision `json:"decision"`
+	}{
+		Timestamp: now,
+		Decision: schema.HumanEscalationDecision{
+			ID:         "some-id",
+			Timestamp:  now,
+			ReviewedBy: 0,
+			Decision:   schema.DecisionApprove,
+			Request:    schema.EscalationRequest{AgentUID: 60003, TaskContext: "test", RequestedAction: "read", RequestedResource: "/etc/passwd", Justification: "test justification"},
+			Response:   schema.EscalationResponse{Decision: schema.DecisionEscalate, Reasoning: "needs human review"},
+		},
+	}
+	payload, _ := json.Marshal(decisionEntry)
+	payload = append(payload, '\n')
+	f, err := os.OpenFile(adminLog, os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write(payload); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	events, err := loadAdminEscalations(adminLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 escalation event, got %d", len(events))
+	}
+	if events[0].Request.AgentUID != 60003 {
+		t.Errorf("expected agent_uid 60003, got %d", events[0].Request.AgentUID)
+	}
+}

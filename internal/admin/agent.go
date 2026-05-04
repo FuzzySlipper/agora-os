@@ -7,6 +7,8 @@ package admin
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/patch/agora-os/internal/bus"
 	"github.com/patch/agora-os/internal/peercred"
 	"github.com/patch/agora-os/internal/schema"
 )
@@ -29,6 +32,7 @@ type Config struct {
 	APIURL       string        // defaults to https://api.anthropic.com/v1/messages
 	LogFile      *os.File      // opened for append-only writing
 	LLMTimeout   time.Duration // HTTP timeout for LLM calls; defaults to 30s
+	BusSocket    string        // optional event bus socket for publishing pending escalations
 }
 
 // Agent evaluates escalation requests. It is safe for concurrent use.
@@ -39,6 +43,7 @@ type Agent struct {
 	logFile      *os.File
 	logMu        sync.Mutex
 	llmClient    *http.Client
+	busSocket    string
 }
 
 // New creates an Agent from the given configuration.
@@ -57,6 +62,7 @@ func New(cfg Config) *Agent {
 		apiURL:       apiURL,
 		logFile:      cfg.LogFile,
 		llmClient:    &http.Client{Timeout: timeout},
+		busSocket:    cfg.BusSocket,
 	}
 }
 
@@ -97,7 +103,8 @@ func (a *Agent) HandleConn(conn net.Conn) {
 	escReq.AgentUID = uint32(peerUID)
 
 	resp := a.evaluate(escReq)
-	if err := a.logEntry(escReq, resp); err != nil {
+	id, _, err := a.logEntry(escReq, resp)
+	if err != nil {
 		log.Printf("admin log write failed: %v", err)
 		errResp := schema.EscalationResponse{
 			Decision:  schema.DecisionEscalate,
@@ -106,6 +113,10 @@ func (a *Agent) HandleConn(conn net.Conn) {
 		b, _ := json.Marshal(errResp)
 		writeJSON(conn, schema.Response{OK: false, Body: b})
 		return
+	}
+
+	if resp.Decision == schema.DecisionEscalate {
+		a.publishPending(id, escReq, resp)
 	}
 
 	b, _ := json.Marshal(resp)
@@ -189,18 +200,77 @@ func (a *Agent) callLLM(userContent string) (string, error) {
 }
 
 // logEntry appends the request/response pair to the append-only log.
-// Returns an error if the write fails or is a short write.
-func (a *Agent) logEntry(req schema.EscalationRequest, resp schema.EscalationResponse) error {
+// Returns the derived event ID, the entry timestamp, and an error if the
+// write fails or is a short write.
+func (a *Agent) logEntry(req schema.EscalationRequest, resp schema.EscalationResponse) (string, time.Time, error) {
+	ts := time.Now()
 	entry := struct {
 		Timestamp time.Time                 `json:"timestamp"`
 		Request   schema.EscalationRequest  `json:"request"`
 		Response  schema.EscalationResponse `json:"response"`
 	}{
-		Timestamp: time.Now(),
+		Timestamp: ts,
 		Request:   req,
 		Response:  resp,
 	}
 
+	b, _ := json.Marshal(entry)
+	b = append(b, '\n')
+
+	a.logMu.Lock()
+	n, err := a.logFile.Write(b)
+	if err == nil {
+		err = a.logFile.Sync()
+	}
+	a.logMu.Unlock()
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("log entry durability: %w", err)
+	}
+	if n != len(b) {
+		return "", time.Time{}, fmt.Errorf("short write log entry: wrote %d of %d bytes", n, len(b))
+	}
+	return eventID(b), ts, nil
+}
+
+func eventID(line []byte) string {
+	sum := sha256.Sum256(bytes.TrimSpace(line))
+	return hex.EncodeToString(sum[:8])
+}
+
+// publishPending sends an admin.escalation.pending event to the event bus
+// when the model evaluation returns escalate.
+func (a *Agent) publishPending(id string, req schema.EscalationRequest, resp schema.EscalationResponse) {
+	if a.busSocket == "" {
+		return
+	}
+	client, err := bus.Dial(a.busSocket)
+	if err != nil {
+		log.Printf("bus connect for pending publish: %v", err)
+		return
+	}
+	defer client.Close()
+
+	event := schema.AdminEscalationEvent{
+		ID:        id,
+		Timestamp: time.Now(),
+		Request:   req,
+		Response:  resp,
+	}
+	if err := client.Publish(schema.TopicAdminEscalationPending, event); err != nil {
+		log.Printf("bus publish pending: %v", err)
+	}
+}
+
+// LogHumanDecision appends a human decision to the same append-only log
+// used for model evaluations. This keeps the audit trail unified.
+func (a *Agent) LogHumanDecision(decision schema.HumanEscalationDecision) error {
+	entry := struct {
+		Timestamp time.Time                      `json:"timestamp"`
+		Decision  schema.HumanEscalationDecision `json:"decision"`
+	}{
+		Timestamp: time.Now(),
+		Decision:  decision,
+	}
 	b, _ := json.Marshal(entry)
 	b = append(b, '\n')
 
@@ -217,6 +287,51 @@ func (a *Agent) logEntry(req schema.EscalationRequest, resp schema.EscalationRes
 		return fmt.Errorf("short write log entry: wrote %d of %d bytes", n, len(b))
 	}
 	return nil
+}
+
+// RunDecisionLogger connects to the event bus and listens for human
+// escalation decisions, appending each one to the agent's log. It blocks
+// until the bus connection fails and should be run in a goroutine.
+func (a *Agent) RunDecisionLogger() {
+	if a.busSocket == "" {
+		return
+	}
+	for {
+		if err := a.runDecisionLoggerOnce(); err != nil {
+			log.Printf("decision logger: %v", err)
+		}
+		time.Sleep(5 * time.Second)
+	}
+}
+
+func (a *Agent) runDecisionLoggerOnce() error {
+	client, err := bus.Dial(a.busSocket)
+	if err != nil {
+		return fmt.Errorf("bus connect: %w", err)
+	}
+	defer client.Close()
+
+	if err := client.Subscribe(schema.TopicAdminEscalationDecided); err != nil {
+		return fmt.Errorf("subscribe: %w", err)
+	}
+
+	for {
+		ev, err := client.Receive()
+		if err != nil {
+			return fmt.Errorf("receive: %w", err)
+		}
+		if ev.Topic != schema.TopicAdminEscalationDecided {
+			continue
+		}
+		var decision schema.HumanEscalationDecision
+		if err := json.Unmarshal(ev.Body, &decision); err != nil {
+			log.Printf("decision logger: decode: %v", err)
+			continue
+		}
+		if err := a.LogHumanDecision(decision); err != nil {
+			log.Printf("decision logger: log: %v", err)
+		}
+	}
 }
 
 func writeJSON(conn net.Conn, v any) {

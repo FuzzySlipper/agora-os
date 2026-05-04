@@ -39,7 +39,10 @@ func main() {
 		APIKey:       os.Getenv("ANTHROPIC_API_KEY"),
 		APIURL:       os.Getenv("ADMIN_AGENT_API_URL"),
 		LogFile:      logFile,
+		BusSocket:    schema.BusSocket,
 	})
+
+	go agent.RunDecisionLogger()
 
 	os.MkdirAll(schema.SocketDir, 0755)
 	os.Remove(socketPath)

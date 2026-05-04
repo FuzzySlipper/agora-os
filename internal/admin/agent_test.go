@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/patch/agora-os/internal/bus"
 	"github.com/patch/agora-os/internal/schema"
 )
 
@@ -152,7 +153,7 @@ func TestLogEntry_WriteError(t *testing.T) {
 	// Test logEntry failure directly — HandleConn requires SO_PEERCRED (root).
 	req := testEscalationRequest()
 	resp := a.evaluate(req)
-	err = a.logEntry(req, resp)
+	_, _, err = a.logEntry(req, resp)
 	if err == nil {
 		t.Fatal("expected logEntry to fail")
 	}
@@ -182,8 +183,12 @@ func TestLogEntry_Success(t *testing.T) {
 		Reasoning: "test",
 	}
 
-	if err := a.logEntry(req, resp); err != nil {
+	id, _, err := a.logEntry(req, resp)
+	if err != nil {
 		t.Fatalf("logEntry failed: %v", err)
+	}
+	if id == "" {
+		t.Fatal("expected non-empty event id")
 	}
 
 	// Verify the log file contains a valid JSON entry.
@@ -351,5 +356,120 @@ func TestHandleConn_LogFailureNoSuccessResponse(t *testing.T) {
 	// When log write fails, OK should be false.
 	if resp.OK {
 		t.Error("expected OK=false when log write fails, got OK=true")
+	}
+}
+
+func TestPublishPending(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "bus.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	broker := bus.NewBrokerWithOptions(false)
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				_ = bus.ServeConn(c, broker)
+			}(conn)
+		}
+	}()
+
+	subscriber, err := bus.Dial(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer subscriber.Close()
+
+	if err := subscriber.Subscribe("admin.escalation.pending"); err != nil {
+		t.Fatal(err)
+	}
+	// Give the broker time to register the subscription.
+	time.Sleep(50 * time.Millisecond)
+
+	a := &Agent{busSocket: sock}
+	req := testEscalationRequest()
+	resp := schema.EscalationResponse{
+		Decision:  schema.DecisionEscalate,
+		Reasoning: "needs human review",
+	}
+
+	a.publishPending("test-pending-id", req, resp)
+
+	evCh := make(chan bus.Event, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		ev, err := subscriber.Receive()
+		if err != nil {
+			errCh <- err
+			return
+		}
+		evCh <- ev
+	}()
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("Receive: %v", err)
+	case ev := <-evCh:
+		if ev.Topic != schema.TopicAdminEscalationPending {
+			t.Errorf("got topic %q, want %q", ev.Topic, schema.TopicAdminEscalationPending)
+		}
+		var event schema.AdminEscalationEvent
+		if err := json.Unmarshal(ev.Body, &event); err != nil {
+			t.Fatalf("unmarshal event: %v", err)
+		}
+		if event.ID != "test-pending-id" {
+			t.Errorf("got id %q, want test-pending-id", event.ID)
+		}
+		if event.Response.Decision != schema.DecisionEscalate {
+			t.Errorf("got decision %q, want escalate", event.Response.Decision)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for pending event")
+	}
+}
+
+func TestLogHumanDecision(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "admin.log")
+	logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer logFile.Close()
+
+	a := &Agent{logFile: logFile}
+
+	decision := schema.HumanEscalationDecision{
+		ID:         "decision-id",
+		Timestamp:  time.Now(),
+		ReviewedBy: 0,
+		Decision:   schema.DecisionApprove,
+		Constraints: []string{"pointer"},
+		Notes:      "approved with constraint",
+		Request:    testEscalationRequest(),
+		Response:   schema.EscalationResponse{Decision: schema.DecisionEscalate, Reasoning: "test"},
+	}
+
+	if err := a.LogHumanDecision(decision); err != nil {
+		t.Fatalf("LogHumanDecision failed: %v", err)
+	}
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+
+	line := strings.TrimSpace(string(data))
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(line), &raw); err != nil {
+		t.Fatalf("unmarshal log line: %v", err)
+	}
+	if _, ok := raw["decision"]; !ok {
+		t.Error("expected log entry to contain 'decision' field")
 	}
 }

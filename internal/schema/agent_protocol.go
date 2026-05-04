@@ -35,6 +35,7 @@ const (
 	// family also has parser/build helpers and a structured envelope type there.
 
 	TopicAdminEscalationRequested = "admin.escalation.requested"
+	TopicAdminEscalationPending   = "admin.escalation.pending"
 	TopicAdminEscalationDecided   = "admin.escalation.decided"
 )
 

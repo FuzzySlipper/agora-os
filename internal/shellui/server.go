@@ -394,6 +394,13 @@ func loadAdminEscalations(path string) ([]schema.AdminEscalationEvent, error) {
 		if len(strings.TrimSpace(string(line))) == 0 {
 			continue
 		}
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal(line, &raw); err != nil {
+			return nil, fmt.Errorf("decode admin log: %w", err)
+		}
+		if _, hasDecision := raw["decision"]; hasDecision {
+			continue
+		}
 		var entry loggedEscalation
 		if err := json.Unmarshal(line, &entry); err != nil {
 			return nil, fmt.Errorf("decode admin log: %w", err)

@@ -231,6 +231,22 @@ function connectBus(): void {
             render();
             return;
         }
+        if (payload.topic === "admin.escalation.pending") {
+            const msg = payload as unknown as { body?: AdminEscalationEvent; sender?: BusSender };
+            // Require sender metadata for admin escalation facts.
+            if (!msg.sender || (msg.sender.uid !== SenderRoot && msg.sender.kind !== "delegated")) {
+                return;
+            }
+            if (!msg.body) {
+                return;
+            }
+            const exists = state.shellState.pending_escalations.some((entry) => entry.id === msg.body!.id);
+            if (!exists) {
+                state.shellState.pending_escalations.unshift(msg.body);
+                render();
+            }
+            return;
+        }
         if (payload.topic === "admin.escalation.decided") {
             const msg = payload as EscalationDecisionMessage & { sender?: BusSender };
             // Require sender metadata for admin escalation facts.
