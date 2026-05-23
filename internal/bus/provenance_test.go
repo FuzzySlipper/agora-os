@@ -55,6 +55,10 @@ func TestValidateTopicPublish_OpenTopicsAllowed(t *testing.T) {
 		"agent.message.60001.60002.chat",
 		"conversation.turn.requested",
 		"agent.spawn.requested",
+		"agent.work.progress",
+		"agent.work.result",
+		"agent.work.cancelled",
+		"agent.work.needs_3po",
 		"test.phase4.ebpf",
 	}
 

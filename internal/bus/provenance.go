@@ -25,11 +25,11 @@ import "strings"
 // daemon, and any future audit sources. All publish as root or through a
 // root-owned delegation path.
 var privilegedPublishFamilies = []string{
-	"agent.lifecycle.",   // agent lifecycle events (spawned, terminated, etc.)
-	"agent.work.",        // work assignment signals from supervisor
-	"compositor.surface.", // compositor surface lifecycle
-	"audit.",             // audit events (fanotify, eBPF)
-	"admin.escalation.",  // admin agent escalation decisions
+	"agent.lifecycle.",        // agent lifecycle events (spawned, terminated, etc.)
+	"agent.work.assigned",      // supervisor-only worker assignment (other agent.work.* are open)
+	"compositor.surface.",      // compositor surface lifecycle
+	"audit.",                  // audit events (fanotify, eBPF)
+	"admin.escalation.",       // admin agent escalation decisions
 }
 
 // privilegedSubscribeFamilies lists topic prefixes that only uid 0 (root) or

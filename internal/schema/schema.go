@@ -15,6 +15,7 @@ const (
 	AdminSocket     = "/run/agent-os/admin-agent.sock"
 	AuditSocket     = "/run/agent-os/audit.sock"
 	BusSocket       = "/run/agent-os/bus.sock"
+	SupervisorSocket = "/run/agent-os/agent-supervisor.sock"
 )
 
 // --- Wire Protocol ---
