@@ -9,17 +9,24 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"flag"
 	"log"
 	"net"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/patch/agora-os/internal/schema"
 	"github.com/patch/agora-os/internal/supervisor"
 )
 
-const socketPath = schema.SupervisorSocket
+const (
+	socketPath        = schema.SupervisorSocket
+	defaultConfigPath = "/etc/agent-os/agent-supervisor.json"
+)
 
 // budgetAdapter wraps the standalone CheckBudget function to implement the
 // BudgetChecker interface expected by supervisor.Service.
@@ -38,53 +45,31 @@ func (reuseAdapter) CanReuse(lease schema.WorkerLease, req schema.EnsureWorkerRe
 }
 
 func main() {
+	configPath := os.Getenv("AGENT_SUPERVISOR_CONFIG")
+	if configPath == "" {
+		configPath = defaultConfigPath
+	}
+	flag.StringVar(&configPath, "config", configPath, "agent supervisor JSON config path")
+	flag.Parse()
+
+	cfg, err := supervisor.LoadConfig(configPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) && configPath == defaultConfigPath && os.Getenv("AGENT_SUPERVISOR_CONFIG") == "" {
+			log.Printf("supervisor config %s not found; using built-in defaults", configPath)
+			cfg = supervisor.DefaultConfig()
+		} else {
+			log.Fatalf("load supervisor config: %v", err)
+		}
+	}
+
 	// --- Worker profiles ---
-	profiles, err := supervisor.NewProfileRegistry([]schema.WorkerProfile{
-		{
-			Profile:         "repo-inspector",
-			Runtime:         schema.RuntimeLocalLLM,
-			Tools:           []string{"fs.read", "git.diff", "ripgrep"},
-			CPUQuota:        "50%",
-			MemoryMax:       "2G",
-			NetAccess:       schema.NetDeny,
-			WatchPaths:      []string{"/repo"},
-			MaxLeaseSeconds: 900,
-			ReusePolicy:     schema.ReuseSession,
-		},
-		{
-			Profile:         "patch-writer",
-			Runtime:         schema.RuntimeDeterministic,
-			Tools:           []string{"fs.write", "git.commit", "patch"},
-			CPUQuota:        "100%",
-			MemoryMax:       "4G",
-			NetAccess:       schema.NetLocalOnly,
-			MaxLeaseSeconds: 1800,
-			ReusePolicy:     schema.ReuseSession,
-		},
-		{
-			Profile:         "ui-observer",
-			Runtime:         schema.RuntimeLocalLLM,
-			Tools:           []string{"screenshot", "dom.query", "ui.read"},
-			CPUQuota:        "50%",
-			MemoryMax:       "4G",
-			NetAccess:       schema.NetAllow,
-			MaxLeaseSeconds: 600,
-			ReusePolicy:     schema.ReuseLease,
-		},
-	})
+	profiles, err := supervisor.NewProfileRegistry(cfg.Profiles)
 	if err != nil {
 		log.Fatalf("profile registry: %v", err)
 	}
 
 	// --- Profile grants ---
-	grants := supervisor.NewGrantRegistry([]schema.ProfileGrant{
-		{
-			RequesterUID:         0, // root / supervisor itself
-			AllowedProfiles:      []string{"repo-inspector", "patch-writer", "ui-observer"},
-			MaxConcurrentWorkers: 5,
-			MaxLeaseSeconds:      3600,
-		},
-	})
+	grants := supervisor.NewGrantRegistry(cfg.Grants)
 
 	// --- Dependencies ---
 	store := supervisor.NewWorkerLeaseStore()
@@ -118,14 +103,18 @@ func main() {
 
 	log.Printf("agent supervisor listening on %s", socketPath)
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go svc.StartExpiryLoop(ctx, 30*time.Second)
+
 	// --- Graceful shutdown ---
 	go func() {
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 		<-sig
 		log.Println("shutting down")
+		cancel()
 		ln.Close()
-		os.Exit(0)
 	}()
 
 	for {

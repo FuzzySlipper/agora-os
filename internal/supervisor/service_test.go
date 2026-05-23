@@ -85,11 +85,24 @@ func (f *fakeLeaseStore) List() []schema.WorkerLease {
 func (f *fakeLeaseStore) CountBySession(sessionID string) int {
 	count := 0
 	for _, l := range f.leases {
-		if l.OwnerSessionID == sessionID {
+		if l.OwnerSessionID == sessionID && l.State == schema.LeaseRunning {
 			count++
 		}
 	}
 	return count
+}
+
+func (f *fakeLeaseStore) ExpireLeases(now time.Time) []string {
+	var expired []string
+	for id, l := range f.leases {
+		if l.State != schema.LeaseRunning || l.LeaseExpiresAt == nil || l.LeaseExpiresAt.After(now) {
+			continue
+		}
+		l.State = schema.LeaseExpired
+		f.leases[id] = l
+		expired = append(expired, id)
+	}
+	return expired
 }
 
 type fakeProfileProvider struct {
@@ -182,6 +195,18 @@ func (f *fakeReuseChecker) CanReuse(_ schema.WorkerLease, _ schema.EnsureWorkerR
 	return false, "no compatible lease"
 }
 
+type realBudgetChecker struct{}
+
+func (realBudgetChecker) CheckBudget(store LeaseStore, grant schema.ProfileGrant, sessionID string, requesterUID uint32) error {
+	return CheckBudget(store, grant, sessionID, requesterUID)
+}
+
+type realReuseChecker struct{}
+
+func (realReuseChecker) CanReuse(lease schema.WorkerLease, req schema.EnsureWorkerRequest, profile schema.WorkerProfile) (bool, string) {
+	return CanReuse(lease, req, profile)
+}
+
 type fakePeerCredProvider struct {
 	uid uint32
 }
@@ -193,17 +218,17 @@ func (f *fakePeerCredProvider) PeerUID(_ net.Conn) (uint32, error) {
 // --- Test Setup ---
 
 type testHarness struct {
-	t            *testing.T
-	service      *Service
-	store        *fakeLeaseStore
-	profiles     *fakeProfileProvider
-	grants       *fakeGrantProvider
-	budgeter     *fakeBudgetChecker
-	reuser       *fakeReuseChecker
-	isoClient    *IsolationClient
-	busClient    *BusClient
-	isoSock      string
-	busSock      string
+	t         *testing.T
+	service   *Service
+	store     *fakeLeaseStore
+	profiles  *fakeProfileProvider
+	grants    *fakeGrantProvider
+	budgeter  *fakeBudgetChecker
+	reuser    *fakeReuseChecker
+	isoClient *IsolationClient
+	busClient *BusClient
+	isoSock   string
+	busSock   string
 }
 
 func newTestHarness(t *testing.T) *testHarness {
@@ -236,6 +261,29 @@ func newTestHarness(t *testing.T) *testHarness {
 		isoSock:   isoSock,
 		busSock:   busSock,
 	}
+}
+
+func newRealPolicyService(t *testing.T, profiles []schema.WorkerProfile, grants []schema.ProfileGrant) (*Service, *WorkerLeaseStore, string) {
+	t.Helper()
+	busSock := startTestBus(t)
+	isoSock := startFakeIsolationService(t)
+	profileRegistry, err := NewProfileRegistry(profiles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grantRegistry := NewGrantRegistry(grants)
+	store := NewWorkerLeaseStore()
+	svc := New(
+		store,
+		profileRegistry,
+		grantRegistry,
+		realBudgetChecker{},
+		realReuseChecker{},
+		NewIsolationClient(isoSock),
+		NewBusClient(busSock),
+		&fakePeerCredProvider{uid: 1001},
+	)
+	return svc, store, busSock
 }
 
 func startTestBus(t *testing.T) string {
@@ -1267,5 +1315,220 @@ func TestService_ReleaseWorker_PublishesTerminatedEvent(t *testing.T) {
 	}
 	if ev.Topic != schema.TopicAgentLifecycleTerminated {
 		t.Fatalf("got topic %q, want %q", ev.Topic, schema.TopicAgentLifecycleTerminated)
+	}
+}
+
+func TestService_EnsureWorker_ReusesRunningLeaseWithRealStore(t *testing.T) {
+	t.Parallel()
+
+	profile := schema.WorkerProfile{Profile: "coder", Runtime: schema.RuntimeDeterministic, NetAccess: schema.NetDeny, ReusePolicy: schema.ReuseSession, MaxLeaseSeconds: 300}
+	svc, store, _ := newRealPolicyService(t,
+		[]schema.WorkerProfile{profile},
+		[]schema.ProfileGrant{{RequesterUID: 1001, AllowedProfiles: []string{"coder"}, MaxConcurrentWorkers: 5, MaxLeaseSeconds: 300}},
+	)
+	future := time.Now().Add(time.Minute)
+	if err := store.Add(schema.WorkerLease{WorkerID: "worker_real", AgentUID: 60001, Profile: "coder", OwnerSessionID: "session-1", RequesterUID: 1001, LeaseExpiresAt: &future, AssignmentTopic: "agent.work.assign.worker_real", State: schema.LeaseRunning}); err != nil {
+		t.Fatal(err)
+	}
+
+	body, _ := json.Marshal(schema.EnsureWorkerRequest{RequestID: "req-real-reuse", SessionID: "session-1", WorkerProfile: "coder"})
+	resp, err := svc.HandleEnsureWorker(1001, body)
+	if err != nil {
+		t.Fatalf("reuse with real store failed: %v", err)
+	}
+	var ensureResp schema.EnsureWorkerResponse
+	if err := json.Unmarshal(resp.Body, &ensureResp); err != nil {
+		t.Fatal(err)
+	}
+	if ensureResp.Assignment.Created || ensureResp.Assignment.WorkerID != "worker_real" {
+		t.Fatalf("expected existing worker_real reuse, got %+v", ensureResp.Assignment)
+	}
+}
+
+func TestService_EnsureWorker_ReusesBeforeBudgetCheck(t *testing.T) {
+	t.Parallel()
+
+	profile := schema.WorkerProfile{Profile: "coder", Runtime: schema.RuntimeDeterministic, NetAccess: schema.NetDeny, ReusePolicy: schema.ReuseSession, MaxLeaseSeconds: 300}
+	svc, store, _ := newRealPolicyService(t,
+		[]schema.WorkerProfile{profile},
+		[]schema.ProfileGrant{{RequesterUID: 1001, AllowedProfiles: []string{"coder"}, MaxConcurrentWorkers: 1, MaxLeaseSeconds: 300}},
+	)
+	future := time.Now().Add(time.Minute)
+	if err := store.Add(schema.WorkerLease{WorkerID: "worker_budget", AgentUID: 60001, Profile: "coder", OwnerSessionID: "session-1", RequesterUID: 1001, LeaseExpiresAt: &future, AssignmentTopic: "agent.work.assign.worker_budget", State: schema.LeaseRunning}); err != nil {
+		t.Fatal(err)
+	}
+
+	body, _ := json.Marshal(schema.EnsureWorkerRequest{RequestID: "req-budget-reuse", SessionID: "session-1", WorkerProfile: "coder"})
+	resp, err := svc.HandleEnsureWorker(1001, body)
+	if err != nil {
+		t.Fatalf("expected reuse despite full max-concurrency budget: %v", err)
+	}
+	var ensureResp schema.EnsureWorkerResponse
+	if err := json.Unmarshal(resp.Body, &ensureResp); err != nil {
+		t.Fatal(err)
+	}
+	if ensureResp.Assignment.Created || ensureResp.Assignment.WorkerID != "worker_budget" {
+		t.Fatalf("expected reused worker_budget, got %+v", ensureResp.Assignment)
+	}
+}
+
+func TestService_ReleaseTerminateList_RejectsNonOwnerPeer(t *testing.T) {
+	t.Parallel()
+
+	h := newTestHarness(t)
+	lease := schema.WorkerLease{WorkerID: "worker_foreign", AgentUID: 60002, Profile: "coder", OwnerSessionID: "session-known", RequesterUID: 2002, State: schema.LeaseRunning}
+	if err := h.store.Add(lease); err != nil {
+		t.Fatal(err)
+	}
+
+	releaseBody, _ := json.Marshal(schema.ReleaseWorkerRequest{SessionID: "session-known", WorkerID: "worker_foreign"})
+	if _, err := h.service.HandleReleaseWorker(1001, releaseBody); err == nil {
+		t.Fatal("expected non-owner release to be rejected despite correct session_id")
+	}
+
+	terminateBody, _ := json.Marshal(schema.TerminateWorkerSupervisorRequest{SessionID: "session-known", WorkerID: "worker_foreign"})
+	if _, err := h.service.HandleTerminateWorker(1001, terminateBody); err == nil {
+		t.Fatal("expected non-owner terminate to be rejected despite correct session_id")
+	}
+
+	listBody, _ := json.Marshal(schema.ListWorkersRequest{SessionID: "session-known"})
+	resp, err := h.service.HandleListWorkers(1001, listBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listResp schema.ListWorkersResponse
+	if err := json.Unmarshal(resp.Body, &listResp); err != nil {
+		t.Fatal(err)
+	}
+	if len(listResp.Workers) != 0 {
+		t.Fatalf("non-owner list by session should hide foreign worker, got %+v", listResp.Workers)
+	}
+}
+
+func TestService_EnsureWorker_SetsLeaseExpiryRequestedDefaultAndMax(t *testing.T) {
+	t.Parallel()
+
+	h := newTestHarness(t)
+	h.profiles.profiles["coder"] = schema.WorkerProfile{Profile: "coder", Runtime: schema.RuntimeDeterministic, NetAccess: schema.NetDeny, MaxLeaseSeconds: 120, ReusePolicy: schema.ReuseNever}
+	h.grants.grants[1001] = schema.ProfileGrant{RequesterUID: 1001, AllowedProfiles: []string{"coder"}, MaxConcurrentWorkers: 10, MaxLeaseSeconds: 90}
+
+	start := time.Now()
+	body, _ := json.Marshal(schema.EnsureWorkerRequest{RequestID: "req-exp-requested", SessionID: "session-exp-1", WorkerProfile: "coder", LeaseSeconds: 30})
+	resp, err := h.service.HandleEnsureWorker(1001, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var requested schema.EnsureWorkerResponse
+	if err := json.Unmarshal(resp.Body, &requested); err != nil {
+		t.Fatal(err)
+	}
+	if requested.Assignment.LeaseExpiresAt == nil {
+		t.Fatal("expected requested lease expiry")
+	}
+	if got := requested.Assignment.LeaseExpiresAt.Sub(start); got < 29*time.Second || got > 31*time.Second {
+		t.Fatalf("requested expiry delta = %s, want about 30s", got)
+	}
+
+	body, _ = json.Marshal(schema.EnsureWorkerRequest{RequestID: "req-exp-default", SessionID: "session-exp-2", WorkerProfile: "coder"})
+	resp, err = h.service.HandleEnsureWorker(1001, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var def schema.EnsureWorkerResponse
+	if err := json.Unmarshal(resp.Body, &def); err != nil {
+		t.Fatal(err)
+	}
+	if def.Assignment.LeaseExpiresAt == nil {
+		t.Fatal("expected default lease expiry")
+	}
+	if got := def.Assignment.LeaseExpiresAt.Sub(start); got < 89*time.Second || got > 91*time.Second {
+		t.Fatalf("default expiry delta = %s, want about grant-capped 90s", got)
+	}
+
+	body, _ = json.Marshal(schema.EnsureWorkerRequest{RequestID: "req-exp-too-long", SessionID: "session-exp-3", WorkerProfile: "coder", LeaseSeconds: 91})
+	if _, err := h.service.HandleEnsureWorker(1001, body); err == nil {
+		t.Fatal("expected request exceeding grant/profile max to fail")
+	}
+}
+
+func TestService_ExpireLeasesTerminatesExpiredWorkers(t *testing.T) {
+	t.Parallel()
+
+	h := newTestHarness(t)
+	now := time.Now()
+	past := now.Add(-time.Second)
+	future := now.Add(time.Hour)
+	if err := h.store.Add(schema.WorkerLease{WorkerID: "worker_expired", AgentUID: 60001, Profile: "coder", OwnerSessionID: "session-expired", RequesterUID: 1001, LeaseExpiresAt: &past, State: schema.LeaseRunning}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.Add(schema.WorkerLease{WorkerID: "worker_active", AgentUID: 60002, Profile: "coder", OwnerSessionID: "session-active", RequesterUID: 1001, LeaseExpiresAt: &future, State: schema.LeaseRunning}); err != nil {
+		t.Fatal(err)
+	}
+
+	expired := h.service.ExpireLeases(now)
+	if len(expired) != 1 || expired[0] != "worker_expired" {
+		t.Fatalf("expected only worker_expired, got %v", expired)
+	}
+	lease, _ := h.store.Get("worker_expired")
+	if lease.State != schema.LeaseExpired {
+		t.Fatalf("expired worker state = %q, want expired", lease.State)
+	}
+	active, _ := h.store.Get("worker_active")
+	if active.State != schema.LeaseRunning {
+		t.Fatalf("active worker state = %q, want running", active.State)
+	}
+}
+
+func TestService_EnsureWorker_ReuseLeaseScansAcrossSessions(t *testing.T) {
+	t.Parallel()
+
+	profile := schema.WorkerProfile{Profile: "ui-observer", Runtime: schema.RuntimeLocalLLM, NetAccess: schema.NetAllow, ReusePolicy: schema.ReuseLease, MaxLeaseSeconds: 300}
+	svc, store, _ := newRealPolicyService(t,
+		[]schema.WorkerProfile{profile},
+		[]schema.ProfileGrant{{RequesterUID: 1001, AllowedProfiles: []string{"ui-observer"}, MaxConcurrentWorkers: 5, MaxLeaseSeconds: 300}},
+	)
+	future := time.Now().Add(time.Minute)
+	if err := store.Add(schema.WorkerLease{WorkerID: "worker_cross_session", AgentUID: 60001, Profile: "ui-observer", OwnerSessionID: "session-old", RequesterUID: 1001, LeaseExpiresAt: &future, AssignmentTopic: "agent.work.assign.worker_cross_session", State: schema.LeaseRunning}); err != nil {
+		t.Fatal(err)
+	}
+
+	body, _ := json.Marshal(schema.EnsureWorkerRequest{RequestID: "req-cross-session", SessionID: "session-new", WorkerProfile: "ui-observer"})
+	resp, err := svc.HandleEnsureWorker(1001, body)
+	if err != nil {
+		t.Fatalf("expected ReuseLease to find compatible lease across sessions: %v", err)
+	}
+	var ensureResp schema.EnsureWorkerResponse
+	if err := json.Unmarshal(resp.Body, &ensureResp); err != nil {
+		t.Fatal(err)
+	}
+	if ensureResp.Assignment.Created || ensureResp.Assignment.WorkerID != "worker_cross_session" {
+		t.Fatalf("expected cross-session reuse, got %+v", ensureResp.Assignment)
+	}
+}
+
+func TestService_EnsureWorker_ReuseLeaseDoesNotCrossRequesterUIDs(t *testing.T) {
+	t.Parallel()
+
+	profile := schema.WorkerProfile{Profile: "ui-observer", Runtime: schema.RuntimeLocalLLM, NetAccess: schema.NetAllow, ReusePolicy: schema.ReuseLease, MaxLeaseSeconds: 300}
+	svc, store, _ := newRealPolicyService(t,
+		[]schema.WorkerProfile{profile},
+		[]schema.ProfileGrant{{RequesterUID: 1001, AllowedProfiles: []string{"ui-observer"}, MaxConcurrentWorkers: 5, MaxLeaseSeconds: 300}},
+	)
+	future := time.Now().Add(time.Minute)
+	if err := store.Add(schema.WorkerLease{WorkerID: "worker_foreign_reuse", AgentUID: 60001, Profile: "ui-observer", OwnerSessionID: "session-old", RequesterUID: 2002, LeaseExpiresAt: &future, AssignmentTopic: "agent.work.assign.worker_foreign_reuse", State: schema.LeaseRunning}); err != nil {
+		t.Fatal(err)
+	}
+
+	body, _ := json.Marshal(schema.EnsureWorkerRequest{RequestID: "req-foreign-reuse", SessionID: "session-new", WorkerProfile: "ui-observer"})
+	resp, err := svc.HandleEnsureWorker(1001, body)
+	if err != nil {
+		t.Fatalf("expected foreign lease to be skipped and a new worker spawned: %v", err)
+	}
+	var ensureResp schema.EnsureWorkerResponse
+	if err := json.Unmarshal(resp.Body, &ensureResp); err != nil {
+		t.Fatal(err)
+	}
+	if !ensureResp.Assignment.Created || ensureResp.Assignment.WorkerID == "worker_foreign_reuse" {
+		t.Fatalf("expected new worker instead of cross-requester reuse, got %+v", ensureResp.Assignment)
 	}
 }

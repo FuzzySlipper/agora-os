@@ -4,6 +4,7 @@
 package supervisor
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 	"log"
 	"net"
 	"sync/atomic"
+	"time"
 
 	"github.com/patch/agora-os/internal/bus"
 	"github.com/patch/agora-os/internal/peercred"
@@ -44,6 +46,7 @@ type LeaseStore interface {
 	Release(workerID string) error
 	List() []schema.WorkerLease
 	CountBySession(sessionID string) int
+	ExpireLeases(now time.Time) []string
 }
 
 // ProfileProvider resolves worker profile names to profile descriptors.
@@ -348,43 +351,45 @@ func (s *Service) HandleEnsureWorker(peerUID uint32, body json.RawMessage) (sche
 		return schema.Response{}, fmt.Errorf("no grant for uid %d", peerUID)
 	}
 
-	// --- Check profile lease seconds vs grant limit ---
-	if grant.MaxLeaseSeconds > 0 && profile.MaxLeaseSeconds > grant.MaxLeaseSeconds {
-		return schema.Response{}, fmt.Errorf("profile %q requests %d max lease seconds, grant allows %d",
-			profile.Profile, profile.MaxLeaseSeconds, grant.MaxLeaseSeconds)
+	// --- Resolve requested/default lease expiry before new allocations ---
+	leaseExpiresAt, err := leaseExpiry(time.Now(), req.LeaseSeconds, profile, grant)
+	if err != nil {
+		return schema.Response{}, err
 	}
 
-	// --- Check budget ---
-	if err := s.budgeter.CheckBudget(s.store, grant, req.SessionID, peerUID); err != nil {
-		return schema.Response{}, fmt.Errorf("budget exceeded: %w", err)
-	}
-
-	// --- Attempt reuse ---
-	for _, lease := range s.store.ListBySession(req.SessionID) {
+	// --- Attempt reuse before new-spawn budget enforcement ---
+	for _, lease := range s.reuseCandidates(req.SessionID, profile) {
+		if !canManageLease(peerUID, lease) {
+			continue
+		}
 		reusable, _ := s.reuser.CanReuse(lease, req, profile)
 		if reusable {
-			if err := s.store.UpdateState(lease.WorkerID, schema.LeaseRunning); err != nil {
-				return schema.Response{}, fmt.Errorf("update lease state: %w", err)
-			}
-			// Re-fetch the lease to get the updated state
-			updatedLease, found := s.store.Get(lease.WorkerID)
+			// CanReuse only returns true for already-running leases. Do not attempt
+			// a running->running state transition: the real lease store correctly
+			// rejects that as an invalid transition.
+			runningLease, found := s.store.Get(lease.WorkerID)
 			if !found {
 				return schema.Response{}, fmt.Errorf("lease disappeared: %s", lease.WorkerID)
 			}
 			s.busClient.Publish(schema.TopicAgentLifecycleReused, schema.WorkerLifecycleEvent{
 				SessionID: req.SessionID,
-				Lease:     updatedLease,
+				Lease:     runningLease,
 			})
 			return okResponse(schema.EnsureWorkerResponse{
 				Assignment: schema.WorkerAssignment{
-					WorkerID:        updatedLease.WorkerID,
+					WorkerID:        runningLease.WorkerID,
 					Created:         false,
-					Profile:         updatedLease.Profile,
-					LeaseExpiresAt:  updatedLease.LeaseExpiresAt,
-					AssignmentTopic: updatedLease.AssignmentTopic,
+					Profile:         runningLease.Profile,
+					LeaseExpiresAt:  runningLease.LeaseExpiresAt,
+					AssignmentTopic: runningLease.AssignmentTopic,
 				},
 			}), nil
 		}
+	}
+
+	// --- Check budget only for new allocation ---
+	if err := s.budgeter.CheckBudget(s.store, grant, req.SessionID, peerUID); err != nil {
+		return schema.Response{}, fmt.Errorf("budget exceeded: %w", err)
 	}
 
 	// --- Spawn new agent ---
@@ -402,6 +407,7 @@ func (s *Service) HandleEnsureWorker(peerUID uint32, body json.RawMessage) (sche
 		Profile:         req.WorkerProfile,
 		OwnerSessionID:  req.SessionID,
 		RequesterUID:    peerUID,
+		LeaseExpiresAt:  leaseExpiresAt,
 		AssignmentTopic: assignmentTopic,
 		State:           schema.LeaseRunning,
 	}
@@ -423,6 +429,7 @@ func (s *Service) HandleEnsureWorker(peerUID uint32, body json.RawMessage) (sche
 			Created:         true,
 			Agent:           *agent,
 			Profile:         req.WorkerProfile,
+			LeaseExpiresAt:  leaseExpiresAt,
 			AssignmentTopic: assignmentTopic,
 		},
 	}), nil
@@ -443,6 +450,9 @@ func (s *Service) HandleReleaseWorker(peerUID uint32, body json.RawMessage) (sch
 
 	if lease.OwnerSessionID != req.SessionID {
 		return schema.Response{}, fmt.Errorf("session %q does not own lease %q", req.SessionID, req.WorkerID)
+	}
+	if !canManageLease(peerUID, lease) {
+		return schema.Response{}, fmt.Errorf("uid %d not authorized to release worker %q", peerUID, req.WorkerID)
 	}
 
 	if err := s.store.Release(req.WorkerID); err != nil {
@@ -465,7 +475,8 @@ func (s *Service) HandleReleaseWorker(peerUID uint32, body json.RawMessage) (sch
 }
 
 // HandleTerminateWorker forcefully terminates a worker. Admin (uid 0) can
-// terminate any worker; otherwise the caller must own the session.
+// terminate any worker; otherwise the caller must be the kernel-authenticated
+// requester UID that owns the lease.
 func (s *Service) HandleTerminateWorker(peerUID uint32, body json.RawMessage) (schema.Response, error) {
 	var req schema.TerminateWorkerSupervisorRequest
 	if err := json.Unmarshal(body, &req); err != nil {
@@ -477,8 +488,9 @@ func (s *Service) HandleTerminateWorker(peerUID uint32, body json.RawMessage) (s
 		return schema.Response{}, fmt.Errorf("worker not found: %s", req.WorkerID)
 	}
 
-	// Admin (uid 0) or owning session can terminate
-	if peerUID != 0 && lease.OwnerSessionID != req.SessionID {
+	// Admin (uid 0) or the kernel-authenticated requester owner can terminate.
+	// The caller-supplied session_id is not trusted as an authorization factor.
+	if !canManageLease(peerUID, lease) {
 		return schema.Response{}, fmt.Errorf("not authorized to terminate worker %q", req.WorkerID)
 	}
 
@@ -488,7 +500,7 @@ func (s *Service) HandleTerminateWorker(peerUID uint32, body json.RawMessage) (s
 
 	updatedLease, _ := s.store.Get(req.WorkerID)
 	s.busClient.Publish(schema.TopicAgentLifecycleTerminated, schema.WorkerLifecycleEvent{
-		SessionID: req.SessionID,
+		SessionID: lease.OwnerSessionID,
 		Lease:     updatedLease,
 	})
 
@@ -510,20 +522,15 @@ func (s *Service) HandleListWorkers(peerUID uint32, body json.RawMessage) (schem
 	}
 
 	var workers []schema.WorkerLease
-	if req.SessionID != "" {
-		workers = s.store.ListBySession(req.SessionID)
-	} else {
-		// Non-admin callers only see their own workers
-		all := s.store.List()
-		if peerUID == 0 {
-			workers = all
-		} else {
-			for _, w := range all {
-				if w.RequesterUID == peerUID {
-					workers = append(workers, w)
-				}
-			}
+	all := s.store.List()
+	for _, w := range all {
+		if req.SessionID != "" && w.OwnerSessionID != req.SessionID {
+			continue
 		}
+		if peerUID != 0 && w.RequesterUID != peerUID {
+			continue
+		}
+		workers = append(workers, w)
 	}
 
 	return okResponse(schema.ListWorkersResponse{Workers: workers}), nil
@@ -542,6 +549,46 @@ func (s *Service) HandleDescribeProfiles(peerUID uint32, body json.RawMessage) (
 	return okResponse(schema.DescribeProfilesResponse{Profiles: profiles}), nil
 }
 
+// ExpireLeases marks expired running leases, publishes lifecycle events, and
+// best-effort terminates the corresponding isolation agents. It returns the
+// expired worker IDs so callers/tests can observe the operation deterministically.
+func (s *Service) ExpireLeases(now time.Time) []string {
+	expiredIDs := s.store.ExpireLeases(now)
+	for _, workerID := range expiredIDs {
+		lease, ok := s.store.Get(workerID)
+		if !ok {
+			continue
+		}
+		s.busClient.Publish(schema.TopicAgentLifecycleTerminated, schema.WorkerLifecycleEvent{
+			SessionID: lease.OwnerSessionID,
+			Lease:     lease,
+		})
+		if s.isoClient != nil {
+			if err := s.isoClient.Terminate(lease.AgentUID); err != nil {
+				log.Printf("terminate expired isolation agent %d: %v", lease.AgentUID, err)
+			}
+		}
+	}
+	return expiredIDs
+}
+
+// StartExpiryLoop periodically expires leases until ctx is cancelled.
+func (s *Service) StartExpiryLoop(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		interval = time.Minute
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			s.ExpireLeases(now)
+		}
+	}
+}
+
 // --- Helpers ---
 
 // workerProfileToSpawnRequest translates a supervisor-level WorkerProfile into
@@ -554,6 +601,40 @@ func workerProfileToSpawnRequest(name string, profile schema.WorkerProfile) sche
 		NetAccess:  profile.NetAccess,
 		WatchPaths: profile.WatchPaths,
 	}
+}
+
+func (s *Service) reuseCandidates(sessionID string, profile schema.WorkerProfile) []schema.WorkerLease {
+	if profile.ReusePolicy == schema.ReuseLease {
+		return s.store.List()
+	}
+	return s.store.ListBySession(sessionID)
+}
+
+func canManageLease(peerUID uint32, lease schema.WorkerLease) bool {
+	return peerUID == 0 || lease.RequesterUID == peerUID
+}
+
+func leaseExpiry(now time.Time, requestedSeconds int, profile schema.WorkerProfile, grant schema.ProfileGrant) (*time.Time, error) {
+	if requestedSeconds < 0 {
+		return nil, fmt.Errorf("lease_seconds must be non-negative")
+	}
+	effectiveMax := profile.MaxLeaseSeconds
+	if grant.MaxLeaseSeconds > 0 && (effectiveMax == 0 || grant.MaxLeaseSeconds < effectiveMax) {
+		effectiveMax = grant.MaxLeaseSeconds
+	}
+
+	seconds := requestedSeconds
+	if seconds == 0 {
+		seconds = effectiveMax
+	}
+	if seconds == 0 {
+		return nil, nil
+	}
+	if effectiveMax > 0 && seconds > effectiveMax {
+		return nil, fmt.Errorf("lease_seconds %d exceeds max lease seconds %d", seconds, effectiveMax)
+	}
+	expiresAt := now.Add(time.Duration(seconds) * time.Second)
+	return &expiresAt, nil
 }
 
 // generateShortSuffix returns a 4-character hex string for use in agent names.
