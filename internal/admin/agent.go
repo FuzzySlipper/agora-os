@@ -262,12 +262,16 @@ func (a *Agent) publishPending(id string, req schema.EscalationRequest, resp sch
 }
 
 // LogHumanDecision appends a human decision to the same append-only log
-// used for model evaluations. This keeps the audit trail unified.
+// used for model evaluations. This keeps the audit trail unified. Replayed
+// decisions are idempotent by decision ID so bus replays do not duplicate the
+// audit entry.
 func (a *Agent) LogHumanDecision(decision schema.HumanEscalationDecision) error {
 	entry := struct {
+		ID        string                         `json:"id,omitempty"`
 		Timestamp time.Time                      `json:"timestamp"`
 		Decision  schema.HumanEscalationDecision `json:"decision"`
 	}{
+		ID:        decision.ID,
 		Timestamp: time.Now(),
 		Decision:  decision,
 	}
@@ -275,6 +279,17 @@ func (a *Agent) LogHumanDecision(decision schema.HumanEscalationDecision) error 
 	b = append(b, '\n')
 
 	a.logMu.Lock()
+	if decision.ID != "" {
+		seen, err := loggedHumanDecisionID(a.logFile.Name(), decision.ID)
+		if err != nil {
+			a.logMu.Unlock()
+			return err
+		}
+		if seen {
+			a.logMu.Unlock()
+			return nil
+		}
+	}
 	n, err := a.logFile.Write(b)
 	if err == nil {
 		err = a.logFile.Sync()
@@ -287,6 +302,44 @@ func (a *Agent) LogHumanDecision(decision schema.HumanEscalationDecision) error 
 		return fmt.Errorf("short write log entry: wrote %d of %d bytes", n, len(b))
 	}
 	return nil
+}
+
+func loggedHumanDecisionID(path, id string) (bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false, fmt.Errorf("read decision log for idempotency: %w", err)
+	}
+	for _, line := range bytes.Split(data, []byte{'\n'}) {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal(line, &raw); err != nil {
+			return false, fmt.Errorf("decode decision log for idempotency: %w", err)
+		}
+		decisionRaw, hasDecision := raw["decision"]
+		if !hasDecision {
+			continue
+		}
+		var entryID string
+		if rawID, ok := raw["id"]; ok {
+			if err := json.Unmarshal(rawID, &entryID); err != nil {
+				return false, fmt.Errorf("decode decision log id: %w", err)
+			}
+			if entryID == id {
+				return true, nil
+			}
+		}
+		var decision schema.HumanEscalationDecision
+		if err := json.Unmarshal(decisionRaw, &decision); err != nil {
+			return false, fmt.Errorf("decode decision log decision: %w", err)
+		}
+		if decision.ID == id {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // RunDecisionLogger connects to the event bus and listens for human

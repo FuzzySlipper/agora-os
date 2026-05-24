@@ -445,14 +445,14 @@ func TestLogHumanDecision(t *testing.T) {
 	a := &Agent{logFile: logFile}
 
 	decision := schema.HumanEscalationDecision{
-		ID:         "decision-id",
-		Timestamp:  time.Now(),
-		ReviewedBy: 0,
-		Decision:   schema.DecisionApprove,
+		ID:          "decision-id",
+		Timestamp:   time.Now(),
+		ReviewedBy:  0,
+		Decision:    schema.DecisionApprove,
 		Constraints: []string{"pointer"},
-		Notes:      "approved with constraint",
-		Request:    testEscalationRequest(),
-		Response:   schema.EscalationResponse{Decision: schema.DecisionEscalate, Reasoning: "test"},
+		Notes:       "approved with constraint",
+		Request:     testEscalationRequest(),
+		Response:    schema.EscalationResponse{Decision: schema.DecisionEscalate, Reasoning: "test"},
 	}
 
 	if err := a.LogHumanDecision(decision); err != nil {
@@ -471,5 +471,52 @@ func TestLogHumanDecision(t *testing.T) {
 	}
 	if _, ok := raw["decision"]; !ok {
 		t.Error("expected log entry to contain 'decision' field")
+	}
+}
+
+func TestLogHumanDecisionDeduplicatesDecisionID(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "admin.log")
+	logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer logFile.Close()
+
+	a := &Agent{logFile: logFile}
+	decision := schema.HumanEscalationDecision{
+		ID:         "decision-id",
+		Timestamp:  time.Now(),
+		ReviewedBy: 0,
+		Decision:   schema.DecisionApprove,
+		Request:    testEscalationRequest(),
+		Response:   schema.EscalationResponse{Decision: schema.DecisionEscalate, Reasoning: "test"},
+	}
+
+	if err := a.LogHumanDecision(decision); err != nil {
+		t.Fatalf("first LogHumanDecision failed: %v", err)
+	}
+	if err := a.LogHumanDecision(decision); err != nil {
+		t.Fatalf("duplicate LogHumanDecision failed: %v", err)
+	}
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if got, want := len(lines), 1; got != want {
+		t.Fatalf("duplicate decision log entries = %d, want %d; log:\n%s", got, want, data)
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(lines[0]), &raw); err != nil {
+		t.Fatalf("unmarshal log line: %v", err)
+	}
+	var entryID string
+	if err := json.Unmarshal(raw["id"], &entryID); err != nil {
+		t.Fatalf("log entry id missing or invalid: %v", err)
+	}
+	if entryID != decision.ID {
+		t.Fatalf("log entry id = %q, want %q", entryID, decision.ID)
 	}
 }
