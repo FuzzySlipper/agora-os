@@ -22,13 +22,24 @@ func DefaultConfig() Config {
 	return Config{
 		Profiles: []schema.WorkerProfile{
 			{
+				Profile:         "repo-search",
+				Runtime:         schema.RuntimeDeterministic,
+				Tools:           []string{"find", "grep", "git"},
+				Command:         []string{"/usr/local/bin/repo-search"},
+				CPUQuota:        "50%",
+				MemoryMax:       "1G",
+				NetAccess:       schema.NetLocalOnly,
+				MaxLeaseSeconds: 900,
+				ReusePolicy:     schema.ReuseSession,
+			},
+			{
 				Profile:         "repo-inspector",
 				Runtime:         schema.RuntimeLocalLLM,
-				Tools:           []string{"fs.read", "git.diff", "ripgrep"},
+				Tools:           []string{"fs.read", "search"},
+				Command:         []string{"/usr/local/bin/repo-inspector"},
 				CPUQuota:        "50%",
-				MemoryMax:       "2G",
-				NetAccess:       schema.NetDeny,
-				WatchPaths:      []string{"/repo"},
+				MemoryMax:       "1G",
+				NetAccess:       schema.NetLocalOnly,
 				MaxLeaseSeconds: 900,
 				ReusePolicy:     schema.ReuseSession,
 			},
@@ -56,9 +67,15 @@ func DefaultConfig() Config {
 		Grants: []schema.ProfileGrant{
 			{
 				RequesterUID:         0,
-				AllowedProfiles:      []string{"repo-inspector", "patch-writer", "ui-observer"},
+				AllowedProfiles:      []string{"repo-search", "repo-inspector", "patch-writer", "ui-observer"},
 				MaxConcurrentWorkers: 5,
 				MaxLeaseSeconds:      3600,
+			},
+			{
+				RequesterUID:         60010,
+				AllowedProfiles:      []string{"repo-search", "repo-inspector"},
+				MaxConcurrentWorkers: 3,
+				MaxLeaseSeconds:      1800,
 			},
 		},
 	}

@@ -374,6 +374,30 @@ func mustDialBus(t *testing.T, sock string) *bus.Client {
 
 // --- Tests ---
 
+func TestWorkerProfileToSpawnRequestSetsWorkerEnvironment(t *testing.T) {
+	profile := schema.WorkerProfile{
+		Profile:   "repo-search",
+		Command:   []string{"/usr/local/bin/repo-search"},
+		CPUQuota:  "50%",
+		MemoryMax: "1G",
+		NetAccess: schema.NetLocalOnly,
+	}
+
+	req := workerProfileToSpawnRequest("repo-search", "worker_42", profile, "/tmp/agora-bus.sock")
+	if len(req.Command) != 1 || req.Command[0] != "/usr/local/bin/repo-search" {
+		t.Fatalf("command not propagated: %#v", req.Command)
+	}
+	if req.Env["AGORA_WORKER_ID"] != "worker_42" {
+		t.Fatalf("AGORA_WORKER_ID = %q", req.Env["AGORA_WORKER_ID"])
+	}
+	if req.Env["AGORA_PROFILE"] != "repo-search" {
+		t.Fatalf("AGORA_PROFILE = %q", req.Env["AGORA_PROFILE"])
+	}
+	if req.Env["AGORA_BUS_SOCKET"] != "/tmp/agora-bus.sock" {
+		t.Fatalf("AGORA_BUS_SOCKET = %q", req.Env["AGORA_BUS_SOCKET"])
+	}
+}
+
 func TestService_EnsureWorker_Valid(t *testing.T) {
 	t.Parallel()
 

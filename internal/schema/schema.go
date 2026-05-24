@@ -49,13 +49,14 @@ const (
 // --- Isolation Service ---
 
 type SpawnAgentRequest struct {
-	Name       string    `json:"name"`
-	UID        uint32    `json:"uid,omitempty"`        // optional requested agent uid; 0 allocates the next free uid
-	Command    []string  `json:"command,omitempty"`    // command + args to execute as the agent uid
-	CPUQuota   string    `json:"cpu_quota,omitempty"`  // e.g. "50%" -- percent of one core
-	MemoryMax  string    `json:"memory_max,omitempty"` // e.g. "512M"
-	NetAccess  NetPolicy `json:"net_access,omitempty"`
-	WatchPaths []string  `json:"watch_paths,omitempty"` // paths for audit service to monitor
+	Name       string            `json:"name"`
+	UID        uint32            `json:"uid,omitempty"`        // optional requested agent uid; 0 allocates the next free uid
+	Command    []string          `json:"command,omitempty"`    // command + args to execute as the agent uid
+	Env        map[string]string `json:"env,omitempty"`        // environment for Command when launched as a systemd unit
+	CPUQuota   string            `json:"cpu_quota,omitempty"`  // e.g. "50%" -- percent of one core
+	MemoryMax  string            `json:"memory_max,omitempty"` // e.g. "512M"
+	NetAccess  NetPolicy         `json:"net_access,omitempty"`
+	WatchPaths []string          `json:"watch_paths,omitempty"` // paths for audit service to monitor
 }
 
 type NetPolicy string

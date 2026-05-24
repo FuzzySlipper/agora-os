@@ -103,6 +103,11 @@ func (c *Client) injectSystemPrompt(msgs []ChatMessage) []ChatMessage {
 	return out
 }
 
+// Model returns the configured model name.
+func (c *Client) Model() string {
+	return c.model
+}
+
 // ChatCompletion sends a non-streaming chat-completion request and returns
 // the assistant's message content and the full response.
 func (c *Client) ChatCompletion(ctx context.Context, messages []ChatMessage) (*ChatCompletionResponse, error) {

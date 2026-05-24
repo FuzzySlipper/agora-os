@@ -100,6 +100,7 @@ type WorkerProfile struct {
 	Profile         string            `json:"profile"`
 	Runtime         WorkerRuntime     `json:"runtime"`
 	Tools           []string          `json:"tools,omitempty"`
+	Command         []string          `json:"command,omitempty"`
 	CPUQuota        string            `json:"cpu_quota,omitempty"`
 	MemoryMax       string            `json:"memory_max,omitempty"`
 	NetAccess       NetPolicy         `json:"net_access,omitempty"`

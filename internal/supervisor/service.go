@@ -394,7 +394,7 @@ func (s *Service) HandleEnsureWorker(peerUID uint32, body json.RawMessage) (sche
 
 	// --- Spawn new agent ---
 	workerID := fmt.Sprintf("worker_%d", s.nextWorkerID.Add(1))
-	spawnReq := workerProfileToSpawnRequest(req.WorkerProfile, profile)
+	spawnReq := workerProfileToSpawnRequest(req.WorkerProfile, workerID, profile, s.busClient.socketPath)
 	agent, err := s.isoClient.Spawn(spawnReq)
 	if err != nil {
 		return schema.Response{}, fmt.Errorf("spawn agent: %w", err)
@@ -593,9 +593,15 @@ func (s *Service) StartExpiryLoop(ctx context.Context, interval time.Duration) {
 
 // workerProfileToSpawnRequest translates a supervisor-level WorkerProfile into
 // an isolation service SpawnAgentRequest.
-func workerProfileToSpawnRequest(name string, profile schema.WorkerProfile) schema.SpawnAgentRequest {
+func workerProfileToSpawnRequest(name, workerID string, profile schema.WorkerProfile, busSocket string) schema.SpawnAgentRequest {
 	return schema.SpawnAgentRequest{
-		Name:       name + "-" + generateShortSuffix(),
+		Name:    name + "-" + generateShortSuffix(),
+		Command: profile.Command,
+		Env: map[string]string{
+			"AGORA_BUS_SOCKET": busSocket,
+			"AGORA_PROFILE":    name,
+			"AGORA_WORKER_ID":  workerID,
+		},
 		CPUQuota:   profile.CPUQuota,
 		MemoryMax:  profile.MemoryMax,
 		NetAccess:  profile.NetAccess,

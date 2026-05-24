@@ -24,6 +24,24 @@ func TestDefaultConfigContainsProfilesAndGrants(t *testing.T) {
 	if _, ok := profiles.Get("ui-observer"); !ok {
 		t.Fatal("default config should include ui-observer profile")
 	}
+	repoSearch, ok := profiles.Get("repo-search")
+	if !ok {
+		t.Fatal("default config should include repo-search profile")
+	}
+	if repoSearch.Runtime != schema.RuntimeDeterministic || repoSearch.CPUQuota != "50%" || repoSearch.MemoryMax != "1G" || repoSearch.NetAccess != schema.NetLocalOnly {
+		t.Fatalf("repo-search defaults do not match task spec: %+v", repoSearch)
+	}
+	repoInspector, ok := profiles.Get("repo-inspector")
+	if !ok {
+		t.Fatal("default config should include repo-inspector profile")
+	}
+	if repoInspector.Runtime != schema.RuntimeLocalLLM || repoInspector.CPUQuota != "50%" || repoInspector.MemoryMax != "1G" || repoInspector.NetAccess != schema.NetLocalOnly {
+		t.Fatalf("repo-inspector defaults do not match task spec: %+v", repoInspector)
+	}
+	grants := NewGrantRegistry(cfg.Grants)
+	if !grants.AllowedToRequest(60010, "repo-search") || !grants.AllowedToRequest(60010, "repo-inspector") {
+		t.Fatalf("3PO uid 60010 should be allowed to request repo-search and repo-inspector")
+	}
 }
 
 func TestLoadConfigReadsProfilesAndGrants(t *testing.T) {

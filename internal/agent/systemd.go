@@ -3,6 +3,7 @@ package agent
 import (
 	"fmt"
 	"os/exec"
+	"sort"
 	"time"
 
 	"github.com/patch/agora-os/internal/schema"
@@ -33,8 +34,18 @@ func (m *Manager) startProcess(uid uint32, username string, slice string, req sc
 		"--gid", username,
 		"--property", fmt.Sprintf("MemoryMax=%s", defaultStr(req.MemoryMax, "512M")),
 		"--property", fmt.Sprintf("CPUQuota=%s", defaultStr(req.CPUQuota, "50%")),
-		"--",
 	}
+	if len(req.Env) > 0 {
+		keys := make([]string, 0, len(req.Env))
+		for key := range req.Env {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			args = append(args, "--setenv", fmt.Sprintf("%s=%s", key, req.Env[key]))
+		}
+	}
+	args = append(args, "--")
 	args = append(args, req.Command...)
 
 	if err := exec.Command("systemd-run", args...).Run(); err != nil {
