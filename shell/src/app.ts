@@ -81,6 +81,7 @@ interface LifecycleEventMessage {
     body?: {
         agent?: AgentInfo;
     };
+    sender?: BusSender;
 }
 
 interface SurfaceEventMessage {
@@ -91,6 +92,7 @@ interface SurfaceEventMessage {
         event?: SurfaceEventName;
         device?: string;
     };
+    sender?: BusSender;
 }
 
 interface EscalationDecisionMessage {
@@ -98,17 +100,68 @@ interface EscalationDecisionMessage {
     body?: {
         id?: string;
     };
+    sender?: BusSender;
 }
 
-type BusEnvelope = LifecycleEventMessage | SurfaceEventMessage | EscalationDecisionMessage;
+// --- Chat / Conversation Types ---
+
+interface ConversationTurnRequest {
+    session_id: string;
+    turn_id: string;
+    prompt: string;
+    context?: unknown;
+}
+
+interface ConversationTurnResponse {
+    session_id: string;
+    turn_id: string;
+    summary: string;
+    result?: unknown;
+}
+
+interface WorkProgress {
+    task_id: string;
+    stage: string;
+    message: string;
+    step?: number;
+    max_steps?: number;
+}
+
+interface ChatMessage {
+    id: string;
+    turn_id: string;
+    role: "user" | "assistant";
+    content: string;
+    timestamp: string;
+    status?: "pending" | "streaming" | "done" | "error";
+}
+
+interface ChatSession {
+    session_id: string;
+    messages: ChatMessage[];
+    created_at: string;
+    selected_agent_uid?: number;
+}
+
+type BusEnvelope = LifecycleEventMessage | SurfaceEventMessage | EscalationDecisionMessage | BusEventBase;
 
 interface BusSender {
     uid: number;
     kind: string;
 }
 
+interface BusEventBase {
+    topic: string;
+    body?: unknown;
+    sender?: BusSender;
+}
+
 // SenderUID is the well-known uid of the root/daemon services.
 const SenderRoot = 0;
+
+// Chat / session localStorage keys
+const STORAGE_KEY_SESSION = "agora.shell.chat.session";
+const STORAGE_KEY_SELECTED_AGENT = "agora.shell.chat.selected_agent";
 
 interface AppState {
     token: string;
@@ -120,6 +173,11 @@ interface AppState {
     busStatus: ConnectionStatus;
     auditStatus: ConnectionStatus;
     refreshHandle: number | null;
+    // Chat state
+    chatSession: ChatSession;
+    chatInputHistory: string[];
+    chatHistoryIndex: number;
+    streamingResponse: string;
 }
 
 const state: AppState = {
@@ -132,6 +190,11 @@ const state: AppState = {
     busStatus: "Disconnected",
     auditStatus: "Disconnected",
     refreshHandle: null,
+    // Chat state
+    chatSession: loadChatSession(),
+    chatInputHistory: [],
+    chatHistoryIndex: -1,
+    streamingResponse: "",
 };
 
 const app = requireElement("app");
@@ -146,6 +209,11 @@ function bootstrap(): void {
         history.replaceState(null, "", window.location.pathname + window.location.search);
     }
     state.token = localStorage.getItem("agora.shell.token") || "";
+    // Restore selected agent from separate localStorage key
+    const storedAgent = localStorage.getItem(STORAGE_KEY_SELECTED_AGENT);
+    if (storedAgent) {
+        state.selectedAgent = storedAgent;
+    }
     render();
     if (state.token) {
         void connectAll();
@@ -185,6 +253,39 @@ async function refreshState(): Promise<void> {
     render();
 }
 
+function generateId(): string {
+    const buf = new Uint32Array(4);
+    crypto.getRandomValues(buf);
+    return Array.from(buf).map((n) => n.toString(36)).join("");
+}
+
+function loadChatSession(): ChatSession {
+    try {
+        const raw = localStorage.getItem(STORAGE_KEY_SESSION);
+        if (raw) {
+            const parsed = JSON.parse(raw) as ChatSession;
+            if (parsed && typeof parsed.session_id === "string" && Array.isArray(parsed.messages)) {
+                return parsed;
+            }
+        }
+    } catch {
+        // corrupted storage, reset
+    }
+    return {
+        session_id: generateId(),
+        messages: [],
+        created_at: new Date().toISOString(),
+    };
+}
+
+function saveChatSession(): void {
+    try {
+        localStorage.setItem(STORAGE_KEY_SESSION, JSON.stringify(state.chatSession));
+    } catch {
+        // storage full or unavailable; non-critical
+    }
+}
+
 function connectBus(): void {
     if (!state.token) {
         return;
@@ -204,6 +305,9 @@ function connectBus(): void {
         socket.send(JSON.stringify({ op: "sub", topic: "compositor.surface.*" }));
         socket.send(JSON.stringify({ op: "sub", topic: "compositor.advisory.surface.*" }));
         socket.send(JSON.stringify({ op: "sub", topic: "admin.escalation.*" }));
+        // Subscribe to conversation and work topics
+        socket.send(JSON.stringify({ op: "sub", topic: "conversation.turn.*" }));
+        socket.send(JSON.stringify({ op: "sub", topic: "agent.work.progress" }));
         render();
     });
     socket.addEventListener("message", (event) => {
@@ -213,7 +317,6 @@ function connectBus(): void {
         }
         if (payload.topic.startsWith("agent.lifecycle.")) {
             const msg = payload as LifecycleEventMessage & { sender?: BusSender };
-            // Require sender metadata for privileged lifecycle facts.
             if (!msg.sender || (msg.sender.uid !== SenderRoot && msg.sender.kind !== "delegated")) {
                 return;
             }
@@ -223,7 +326,6 @@ function connectBus(): void {
         }
         if (payload.topic.startsWith("compositor.surface.")) {
             const msg = payload as SurfaceEventMessage & { sender?: BusSender };
-            // Require sender metadata for privileged surface facts.
             if (!msg.sender || (msg.sender.uid !== SenderRoot && msg.sender.kind !== "delegated")) {
                 return;
             }
@@ -233,7 +335,6 @@ function connectBus(): void {
         }
         if (payload.topic === "admin.escalation.pending") {
             const msg = payload as unknown as { body?: AdminEscalationEvent; sender?: BusSender };
-            // Require sender metadata for admin escalation facts.
             if (!msg.sender || (msg.sender.uid !== SenderRoot && msg.sender.kind !== "delegated")) {
                 return;
             }
@@ -249,7 +350,6 @@ function connectBus(): void {
         }
         if (payload.topic === "admin.escalation.decided") {
             const msg = payload as EscalationDecisionMessage & { sender?: BusSender };
-            // Require sender metadata for admin escalation facts.
             if (!msg.sender || (msg.sender.uid !== SenderRoot && msg.sender.kind !== "delegated")) {
                 return;
             }
@@ -258,6 +358,25 @@ function connectBus(): void {
             }
             state.shellState.pending_escalations = state.shellState.pending_escalations.filter((entry) => entry.id !== msg.body?.id);
             render();
+            return;
+        }
+        // Handle conversation turn response
+        if (payload.topic === "conversation.turn.responded") {
+            const body = payload.body as ConversationTurnResponse | null;
+            if (body && body.turn_id && body.summary) {
+                handleConversationResponse(body);
+                render();
+            }
+            return;
+        }
+        // Handle agent work progress
+        if (payload.topic === "agent.work.progress") {
+            const body = payload.body as WorkProgress | null;
+            if (body) {
+                handleWorkProgress(body);
+                render();
+            }
+            return;
         }
     });
     socket.addEventListener("close", () => {
@@ -299,6 +418,105 @@ function connectAudit(): void {
         window.setTimeout(() => connectAudit(), 2500);
     });
 }
+
+// --- Chat / Conversation Handlers ---
+
+function submitChatPrompt(prompt: string): void {
+    if (!state.bus || state.bus.readyState !== WebSocket.OPEN) {
+        alert("Not connected to event bus. Cannot submit prompt.");
+        return;
+    }
+    const session = state.chatSession;
+    const turnId = generateId();
+    const timestamp = new Date().toISOString();
+
+    // Add user message
+    const userMsg: ChatMessage = {
+        id: generateId(),
+        turn_id: turnId,
+        role: "user",
+        content: prompt,
+        timestamp,
+    };
+    session.messages.push(userMsg);
+
+    // Add a pending assistant message
+    const assistantMsg: ChatMessage = {
+        id: generateId(),
+        turn_id: turnId,
+        role: "assistant",
+        content: "",
+        timestamp: new Date().toISOString(),
+        status: "pending",
+    };
+    session.messages.push(assistantMsg);
+    state.streamingResponse = "";
+
+    // Determine selected agent for context
+    const selectedUid = Number.parseInt(state.selectedAgent || "0", 10) || 0;
+    const context: Record<string, unknown> = {};
+    if (selectedUid > 0) {
+        context.selected_agent_uid = selectedUid;
+        const agent = state.shellState.agents.find((a) => a.uid === selectedUid);
+        if (agent) {
+            context.selected_agent_name = agent.name;
+        }
+    }
+
+    // Publish to the event bus
+    const envelope: ConversationTurnRequest = {
+        session_id: session.session_id,
+        turn_id: turnId,
+        prompt: prompt,
+        context: Object.keys(context).length > 0 ? context : undefined,
+    };
+
+    state.bus.send(JSON.stringify({ op: "pub", topic: "conversation.turn.requested", body: envelope }));
+
+    saveChatSession();
+    render();
+    scrollChatToBottom();
+}
+
+function handleConversationResponse(response: ConversationTurnResponse): void {
+    const session = state.chatSession;
+    // Find the assistant message with matching turn_id
+    const assistantMsg = session.messages.find(
+        (m) => m.role === "assistant" && m.turn_id === response.turn_id,
+    );
+    if (assistantMsg) {
+        assistantMsg.content = response.summary;
+        assistantMsg.status = "done";
+    }
+    state.streamingResponse = "";
+    saveChatSession();
+}
+
+function handleWorkProgress(progress: WorkProgress): void {
+    // Find pending assistant messages and update their status
+    const pending = state.chatSession.messages.filter(
+        (m) => m.role === "assistant" && m.status === "pending",
+    );
+    if (pending.length > 0) {
+        // Update the latest pending message with progress info
+        const latest = pending[pending.length - 1];
+        state.streamingResponse = `${progress.stage}: ${progress.message}`;
+        if (progress.step !== undefined && progress.max_steps !== undefined) {
+            state.streamingResponse += ` (${progress.step}/${progress.max_steps})`;
+        }
+    }
+}
+
+function scrollChatToBottom(): void {
+    requestAnimationFrame(() => {
+        const chatBody = document.getElementById("chat-body");
+        if (chatBody) {
+            chatBody.scrollTop = chatBody.scrollHeight;
+        }
+    });
+}
+
+// --- Lifecycle & Surface event handlers (unchanged from original) ---
 
 function applyLifecycleEvent(message: LifecycleEventMessage): void {
     const incoming = message.body?.agent;
@@ -399,11 +617,62 @@ async function decideEscalation(id: string, decision: HumanDecision, notes: stri
     render();
 }
 
+// --- Safe Markdown Rendering ---
+
+function renderSafeMarkdown(text: string): string {
+    // Escape HTML first
+    let html = escapeHtml(text);
+
+    // Block-level: code blocks (``` ... ```)
+    html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_match, _lang, code) => {
+        return `<pre class="chat-code-block">${code.trim()}</pre>`;
+    });
+
+    // Inline: code (`...`)
+    html = html.replace(/`([^`]+)`/g, (_match, code) => {
+        return `<code class="chat-inline-code">${code}</code>`;
+    });
+
+    // Bold (**text**)
+    html = html.replace(/\*\*([^*]+)\*\*/g, (_match, inner) => {
+        return `<strong>${inner}</strong>`;
+    });
+
+    // Italic (*text*)
+    html = html.replace(/\*([^*]+)\*/g, (_match, inner) => {
+        return `<em>${inner}</em>`;
+    });
+
+    // Links [text](url)
+    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, linkText, url) => {
+        const safeUrl = sanitizeUrl(url);
+        return `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer">${linkText}</a>`;
+    });
+
+    // Line breaks
+    html = html.replace(/\n/g, "<br>");
+
+    return html;
+}
+
+function sanitizeUrl(url: string): string {
+    const trimmed = url.trim();
+    // Only allow http, https, and relative URLs
+    if (/^https?:\/\//i.test(trimmed) || trimmed.startsWith("/") || trimmed.startsWith("#")) {
+        return escapeAttr(trimmed);
+    }
+    // Anything else (javascript:, data:, etc.) — return safe fallback
+    return "#invalid-url";
+}
+
+// --- Render ---
+
 function render(): void {
     const selectedUid = Number.parseInt(state.selectedAgent || "0", 10) || 0;
     const agents = state.shellState.agents;
     const surfaces = state.shellState.surfaces;
     const pendingEscalations = state.shellState.pending_escalations;
+    const selectedAgent = agents.find((a) => a.uid === selectedUid);
     const filteredAudit = selectedUid
         ? state.auditEvents.filter((event) => event.agent_uid === selectedUid)
         : state.auditEvents;
@@ -424,8 +693,8 @@ function render(): void {
             <p class="eyebrow">Human Operator Console</p>
             <h1>Agora Shell</h1>
             <p>
-              Live agent roster, compositor surfaces, audit activity, and human
-              review controls in one place.
+              Live agent roster, compositor surfaces, audit activity, human
+              review controls, and agent chat in one place.
             </p>
             <div class="stats">
               <div class="stat">
@@ -441,8 +710,8 @@ function render(): void {
                 <span class="stat-value">${pendingEscalations.length}</span>
               </div>
               <div class="stat">
-                <span class="stat-label">Audit Backlog</span>
-                <span class="stat-value">${state.auditEvents.length}</span>
+                <span class="stat-label">Chat Messages</span>
+                <span class="stat-value">${state.chatSession.messages.length}</span>
               </div>
             </div>
           </div>
@@ -460,7 +729,7 @@ function render(): void {
       </section>
 
       <section class="layout">
-        <div class="column">
+        <div class="column column-left">
           <section class="panel">
             <div class="panel-header">
               <div>
@@ -495,7 +764,36 @@ function render(): void {
           </section>
         </div>
 
-        <div class="column">
+        <div class="column column-right">
+          ${selectedAgent ? renderAgentDetailPanel(selectedAgent, surfacesByUid.get(selectedUid) || []) : ""}
+
+          <section class="panel panel-chat">
+            <div class="panel-header">
+              <div>
+                <h2 class="panel-title">Agent Chat</h2>
+                <p class="panel-subtitle">${selectedAgent ? `Chatting with agent context: ${escapeHtml(selectedAgent.name)} (UID ${selectedUid})` : "Conversation session with agent workers via the event bus."}</p>
+              </div>
+              <button id="clear-chat-button" class="button ghost">Clear session</button>
+            </div>
+            <div class="panel-body">
+              <div id="chat-body" class="chat-messages">
+                ${state.chatSession.messages.length === 0
+                    ? `<div class="chat-empty">Send a message to start a conversation with the agent system.</div>`
+                    : state.chatSession.messages.map(renderChatMessage).join("")}
+                ${state.streamingResponse ? `<div class="chat-streaming"><span class="badge cool">working</span> ${escapeHtml(state.streamingResponse)}</div>` : ""}
+              </div>
+              <div class="chat-input-area">
+                <textarea
+                  id="chat-input"
+                  class="chat-input"
+                  rows="2"
+                  placeholder="Type a message... (Enter to send, Shift+Enter for newline)"
+                ></textarea>
+                <button id="chat-send-button" class="button cool" ${state.busStatus !== "Live" ? "disabled" : ""}>Send</button>
+              </div>
+            </div>
+          </section>
+
           <section class="panel">
             <div class="panel-header">
               <div>
@@ -528,6 +826,9 @@ function render(): void {
       </section>
     </main>
   `;
+
+    // --- Event listeners ---
+
     const connectButton = document.getElementById("connect-button");
     if (connectButton instanceof HTMLButtonElement) {
         connectButton.addEventListener("click", () => {
@@ -553,10 +854,12 @@ function render(): void {
     if (agentFilter instanceof HTMLSelectElement) {
         agentFilter.addEventListener("change", () => {
             state.selectedAgent = agentFilter.value;
+            localStorage.setItem(STORAGE_KEY_SELECTED_AGENT, state.selectedAgent);
             render();
         });
     }
 
+    // Surface grant buttons
     for (const button of queryButtons("[data-grant-surface]")) {
         button.addEventListener("click", async () => {
             const surfaceId = button.dataset.grantSurface ?? "";
@@ -576,6 +879,7 @@ function render(): void {
         });
     }
 
+    // Escalation decision buttons
     for (const button of queryButtons("[data-escalation-action]")) {
         button.addEventListener("click", async () => {
             const id = button.dataset.escalationId ?? "";
@@ -603,6 +907,65 @@ function render(): void {
             }
         });
     }
+
+    // Chat input handler
+    const chatInput = document.getElementById("chat-input") as HTMLTextAreaElement | null;
+    const chatSendButton = document.getElementById("chat-send-button") as HTMLButtonElement | null;
+
+    if (chatInput) {
+        // Restore current input from history index
+        chatInput.focus();
+
+        chatInput.addEventListener("keydown", (event) => {
+            if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                sendChatFromInput();
+            }
+        });
+    }
+
+    if (chatSendButton) {
+        chatSendButton.addEventListener("click", () => {
+            sendChatFromInput();
+        });
+    }
+
+    // Clear chat button
+    const clearChatButton = document.getElementById("clear-chat-button");
+    if (clearChatButton instanceof HTMLButtonElement) {
+        clearChatButton.addEventListener("click", () => {
+            state.chatSession = {
+                session_id: generateId(),
+                messages: [],
+                created_at: new Date().toISOString(),
+            };
+            state.streamingResponse = "";
+            saveChatSession();
+            render();
+        });
+    }
+}
+
+function sendChatFromInput(): void {
+    const chatInput = document.getElementById("chat-input") as HTMLTextAreaElement | null;
+    if (!chatInput) {
+        return;
+    }
+    const prompt = chatInput.value.trim();
+    if (!prompt) {
+        return;
+    }
+
+    // Save to input history
+    state.chatInputHistory.push(prompt);
+    state.chatHistoryIndex = -1;
+
+    // Submit
+    submitChatPrompt(prompt);
+
+    // Clear input
+    chatInput.value = "";
+    chatInput.style.height = "auto";
 }
 
 function renderAgentCard(agent: AgentInfo, surfaces: TrackedSurface[]): string {
@@ -696,6 +1059,85 @@ function renderEscalationCard(event: AdminEscalationEvent): string {
         <button class="button warn" data-escalation-action="deny" data-escalation-id="${escapeAttr(event.id)}">Deny</button>
       </div>
     </article>
+  `;
+}
+
+function renderAgentDetailPanel(agent: AgentInfo, surfaces: TrackedSurface[]): string {
+    const agentSurfaces = surfaces.length > 0
+        ? surfaces.map((s) => `<span class="chat-agent-surface">${escapeHtml(s.surface.title || s.surface.app_id || s.surface.id)} (${escapeHtml(s.last_event)})</span>`).join("")
+        : "<span class=\"chat-agent-surface\">No surfaces</span>";
+
+    return `
+    <section class="panel panel-agent-detail">
+      <div class="panel-header">
+        <div>
+          <h2 class="panel-title">Selected Agent: ${escapeHtml(agent.name)}</h2>
+          <p class="panel-subtitle">UID ${agent.uid} | ${escapeHtml(agent.status)} | Slice ${escapeHtml(agent.slice || "n/a")}</p>
+        </div>
+      </div>
+      <div class="panel-body">
+        <div class="agent-detail-grid">
+          <div class="agent-detail-item">
+            <span class="agent-detail-label">CPU Quota</span>
+            <span class="agent-detail-value">${escapeHtml(agent.cpu_quota || "default")}</span>
+          </div>
+          <div class="agent-detail-item">
+            <span class="agent-detail-label">Memory</span>
+            <span class="agent-detail-value">${escapeHtml(agent.memory_max || "default")}</span>
+          </div>
+          <div class="agent-detail-item">
+            <span class="agent-detail-label">Network</span>
+            <span class="agent-detail-value">${escapeHtml(agent.net_access || "deny")}</span>
+          </div>
+          <div class="agent-detail-item">
+            <span class="agent-detail-label">Created</span>
+            <span class="agent-detail-value">${formatTime(agent.created_at)}</span>
+          </div>
+        </div>
+        <div class="agent-detail-surfaces">
+          <span class="agent-detail-label">Surfaces:</span>
+          <div class="agent-detail-surfaces-list">${agentSurfaces}</div>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderChatMessage(msg: ChatMessage): string {
+    const isUser = msg.role === "user";
+    const isPending = msg.status === "pending";
+    const isError = msg.status === "error";
+    const cssClass = isUser ? "chat-msg-user" : "chat-msg-assistant";
+    const roleLabel = isUser ? "You" : "Agent";
+
+    let contentHtml: string;
+    if (isPending) {
+        contentHtml = `<span class="chat-pending-indicator">Thinking<span class="chat-dot-anim">.</span><span class="chat-dot-anim">.</span><span class="chat-dot-anim">.</span></span>`;
+    } else if (isError) {
+        contentHtml = `<span class="chat-error">${escapeHtml(msg.content)}</span>`;
+    } else if (isUser) {
+        contentHtml = `<p>${escapeHtml(msg.content)}</p>`;
+    } else {
+        contentHtml = renderSafeMarkdown(msg.content);
+    }
+
+    const statusBadge = isPending
+        ? `<span class="badge cool">working</span>`
+        : isError
+        ? `<span class="badge danger">error</span>`
+        : msg.status === "streaming"
+        ? `<span class="badge cool">streaming</span>`
+        : "";
+
+    return `
+    <div class="chat-message ${cssClass}">
+      <div class="chat-msg-header">
+        <span class="chat-msg-role">${roleLabel}</span>
+        <span class="chat-msg-time">${formatTime(msg.timestamp)}</span>
+        ${statusBadge}
+      </div>
+      <div class="chat-msg-body">${contentHtml}</div>
+    </div>
   `;
 }
 
