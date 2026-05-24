@@ -69,6 +69,7 @@ Run agentctl <command> --help for command-specific flags.
 func cmdSpawn(args []string, pretty bool) error {
 	fs := flag.NewFlagSet("spawn", flag.ExitOnError)
 	name := fs.String("name", "", "agent name (required)")
+	uid := fs.Uint("uid", 0, "requested agent uid; 0 allocates the next free uid")
 	cpu := fs.String("cpu", "", "CPU quota, e.g. 50%")
 	mem := fs.String("mem", "", "memory limit, e.g. 512M")
 	netPolicy := fs.String("net", "", "network policy: deny, local_only, allow")
@@ -80,6 +81,7 @@ func cmdSpawn(args []string, pretty bool) error {
 
 	req := schema.SpawnAgentRequest{
 		Name:      *name,
+		UID:       uint32(*uid),
 		CPUQuota:  *cpu,
 		MemoryMax: *mem,
 		NetAccess: schema.NetPolicy(*netPolicy),

@@ -10,11 +10,11 @@ import (
 // --- Socket Paths ---
 
 const (
-	SocketDir       = "/run/agent-os"
-	IsolationSocket = "/run/agent-os/isolation.sock"
-	AdminSocket     = "/run/agent-os/admin-agent.sock"
-	AuditSocket     = "/run/agent-os/audit.sock"
-	BusSocket       = "/run/agent-os/bus.sock"
+	SocketDir        = "/run/agent-os"
+	IsolationSocket  = "/run/agent-os/isolation.sock"
+	AdminSocket      = "/run/agent-os/admin-agent.sock"
+	AuditSocket      = "/run/agent-os/audit.sock"
+	BusSocket        = "/run/agent-os/bus.sock"
 	SupervisorSocket = "/run/agent-os/agent-supervisor.sock"
 )
 
@@ -50,6 +50,7 @@ const (
 
 type SpawnAgentRequest struct {
 	Name       string    `json:"name"`
+	UID        uint32    `json:"uid,omitempty"`        // optional requested agent uid; 0 allocates the next free uid
 	Command    []string  `json:"command,omitempty"`    // command + args to execute as the agent uid
 	CPUQuota   string    `json:"cpu_quota,omitempty"`  // e.g. "50%" -- percent of one core
 	MemoryMax  string    `json:"memory_max,omitempty"` // e.g. "512M"

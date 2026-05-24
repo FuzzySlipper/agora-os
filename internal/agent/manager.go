@@ -106,11 +106,20 @@ func (m *Manager) Spawn(req schema.SpawnAgentRequest) (*schema.AgentInfo, error)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	uid := m.nextUID
+	uid := req.UID
+	if uid == 0 {
+		uid = m.nextUID
+	} else if uid < schema.AgentUIDBase || uid >= schema.AgentUIDMax {
+		return nil, fmt.Errorf("requested uid %d outside agent range [%d,%d)", uid, schema.AgentUIDBase, schema.AgentUIDMax)
+	} else if _, exists := m.agents[uid]; exists {
+		return nil, fmt.Errorf("requested uid %d already active", uid)
+	}
 	if uid >= schema.AgentUIDMax {
 		return nil, fmt.Errorf("agent uid pool exhausted")
 	}
-	m.nextUID++
+	if uid >= m.nextUID {
+		m.nextUID = uid + 1
+	}
 
 	username := fmt.Sprintf("agent-%s-%d", req.Name, uid)
 
@@ -300,5 +309,3 @@ func discoverActiveCmds() map[uint32]bool {
 	}
 	return cmds
 }
-
-
