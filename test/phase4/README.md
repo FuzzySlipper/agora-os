@@ -78,6 +78,51 @@ agent-sim \
   --scenario test/phase4/scenarios/surface_awareness.json
 ```
 
+### Go Integration Tests
+
+Live LLM integration tests are in `internal/agentsim/` and **require a live
+den-nimo LLM endpoint on the LAN** (default: `http://192.168.1.23:13305`).
+They are gated behind the `integration` build tag so they never run under
+plain `go test ./...`.
+
+Run all integration tests:
+```sh
+go test -tags integration -timeout 3600s ./internal/agentsim/
+```
+
+Run specific test groups:
+```sh
+# Smoke test — single observe-act cycle
+go test -tags integration -run TestIntegration_OllamaBrainSmoke -timeout 300s ./internal/agentsim/
+
+# OpenAI brain with Gemma 4 / Qwen 3.6
+go test -tags integration -run 'TestIntegration_OpenAIBrain_Gemma4|TestIntegration_OpenAIBrain_Qwen35B' -timeout 300s ./internal/agentsim/
+
+# Full scenario battery (runs all scenarios against both models)
+go test -tags integration -run TestIntegration_AllScenarios -timeout 3600s ./internal/agentsim/
+
+# Qwen brevity comparison
+go test -tags integration -run TestIntegration_QwenBrevity -timeout 600s ./internal/agentsim/
+
+# OpenAIBrain vs OllamaBrain endpoint comparison
+go test -tags integration -run TestIntegration_QwenOllama -timeout 300s ./internal/agentsim/
+```
+
+Default local config:
+- `test/phase4/dennimo.defaults.json` records the LAN den-nimo defaults:
+  - Ollama-compatible base URL: `http://192.168.1.23:13305`
+  - OpenAI-compatible base URL: `http://192.168.1.23:13305/v1`
+  - Gemma model: `Gemma-4-26B-A4B-it-GGUF`
+  - Qwen model: `Qwen3.6-35B-A3B-GGUF`
+- `internal/agentsim/dennimo_defaults_test.go` loads that config for the
+  integration-tag-gated Go tests.
+
+Environment overrides:
+- `AGORA_LLM_BASE_URL` — override the Ollama-compatible den-nimo base URL.
+- `AGORA_LLM_ENDPOINT` — override the OpenAI-compatible den-nimo base URL.
+- `AGORA_LLM_MODEL` — override the default model (default from the config file:
+  `Gemma-4-26B-A4B-it-GGUF`).
+
 ## Scenario Corpus
 
 Eight scenarios covering four categories, each with a negative/adversarial

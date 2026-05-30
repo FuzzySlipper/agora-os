@@ -2,15 +2,19 @@ package llm
 
 // ChatMessage is a single message in the chat-completion conversation.
 type ChatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role             string `json:"role"`
+	Content          string `json:"content"`
+	ReasoningContent string `json:"reasoning_content,omitempty"`
 }
 
 // ChatCompletionRequest mirrors the OpenAI /v1/chat/completions request body.
 type ChatCompletionRequest struct {
-	Model    string        `json:"model"`
-	Messages []ChatMessage `json:"messages"`
-	Stream   bool          `json:"stream,omitempty"`
+	Model       string        `json:"model"`
+	Messages    []ChatMessage `json:"messages"`
+	MaxTokens   int           `json:"max_tokens,omitempty"`
+	Temperature *float64      `json:"temperature,omitempty"`
+	Seed        *int64        `json:"seed,omitempty"`
+	Stream      bool          `json:"stream,omitempty"`
 }
 
 // ChatCompletionResponse mirrors the OpenAI non-streaming response body.
@@ -21,6 +25,7 @@ type ChatCompletionResponse struct {
 	Model   string   `json:"model"`
 	Choices []Choice `json:"choices"`
 	Usage   *Usage   `json:"usage,omitempty"`
+	Error   *APIError `json:"error,omitempty"`
 }
 
 // Choice is a single completion choice in a non-streaming response.
@@ -57,4 +62,11 @@ type ChoiceChunk struct {
 type Delta struct {
 	Role    string `json:"role,omitempty"`
 	Content string `json:"content,omitempty"`
+}
+
+// APIError represents an error returned by the OpenAI-compatible API.
+type APIError struct {
+	Message string `json:"message"`
+	Type    string `json:"type"`
+	Code    string `json:"code,omitempty"`
 }

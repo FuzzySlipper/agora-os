@@ -1,0 +1,9 @@
+{
+  "endpoint": "http://192.168.1.23:13305",
+  "openai_endpoint": "http://192.168.1.23:13305/v1",
+  "default_model": "Gemma-4-26B-A4B-it-GGUF",
+  "gemma_model": "Gemma-4-26B-A4B-it-GGUF",
+  "qwen_model": "Qwen3.6-35B-A3B-GGUF",
+  "temperature": 0.7,
+  "seed": 42
+}

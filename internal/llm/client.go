@@ -24,6 +24,9 @@ type Client struct {
 	endpoint     string
 	model        string
 	systemPrompt string
+	maxTokens    int
+	temperature  *float64
+	seed         *int64
 	httpClient   *http.Client
 }
 
@@ -55,6 +58,27 @@ func WithSystemPrompt(prompt string) ClientOption {
 func WithHTTPClient(hc *http.Client) ClientOption {
 	return func(c *Client) {
 		c.httpClient = hc
+	}
+}
+
+// WithMaxTokens sets the maximum number of tokens to generate.
+func WithMaxTokens(n int) ClientOption {
+	return func(c *Client) {
+		c.maxTokens = n
+	}
+}
+
+// WithTemperature sets the sampling temperature.
+func WithTemperature(t float64) ClientOption {
+	return func(c *Client) {
+		c.temperature = &t
+	}
+}
+
+// WithSeed sets a deterministic seed for sampling.
+func WithSeed(s int64) ClientOption {
+	return func(c *Client) {
+		c.seed = &s
 	}
 }
 
@@ -112,9 +136,12 @@ func (c *Client) Model() string {
 // the assistant's message content and the full response.
 func (c *Client) ChatCompletion(ctx context.Context, messages []ChatMessage) (*ChatCompletionResponse, error) {
 	reqBody := ChatCompletionRequest{
-		Model:    c.model,
-		Messages: c.injectSystemPrompt(messages),
-		Stream:   false,
+		Model:       c.model,
+		Messages:    c.injectSystemPrompt(messages),
+		MaxTokens:   c.maxTokens,
+		Temperature: c.temperature,
+		Seed:        c.seed,
+		Stream:      false,
 	}
 
 	reqJSON, err := json.Marshal(reqBody)
