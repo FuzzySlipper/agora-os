@@ -13,11 +13,7 @@ import (
 	"time"
 )
 
-const (
-	defaultEndpoint = "http://192.168.1.23:13305"
-	defaultModel    = "Qwen3.6-35B-A3B-GGUF"
-	chatPath        = "/v1/chat/completions"
-)
+const chatPath = "/v1/chat/completions"
 
 // Client sends chat-completion requests to an OpenAI-compatible HTTP endpoint.
 type Client struct {
@@ -84,15 +80,16 @@ func WithSeed(s int64) ClientOption {
 
 // NewClient creates a Client with optional overrides.
 // Defaults are read from AGORA_LLM_ENDPOINT and AGORA_LLM_MODEL, falling
-// back to the built-in defaults.
+// back to AGORA_LLM_CONFIG or the package defaults config file.
 func NewClient(opts ...ClientOption) *Client {
+	defaults := loadDefaultsConfig()
 	endpoint := os.Getenv("AGORA_LLM_ENDPOINT")
 	if endpoint == "" {
-		endpoint = defaultEndpoint
+		endpoint = defaults.Endpoint
 	}
 	model := os.Getenv("AGORA_LLM_MODEL")
 	if model == "" {
-		model = defaultModel
+		model = defaults.Model
 	}
 
 	c := &Client{

@@ -19,12 +19,24 @@ import (
 // ---------------------------------------------------------------------------
 
 func resetEnv() func() {
+	oldConfig := os.Getenv("AGORA_LLM_CONFIG")
 	oldEndpoint := os.Getenv("AGORA_LLM_ENDPOINT")
 	oldModel := os.Getenv("AGORA_LLM_MODEL")
 	return func() {
+		os.Setenv("AGORA_LLM_CONFIG", oldConfig)
 		os.Setenv("AGORA_LLM_ENDPOINT", oldEndpoint)
 		os.Setenv("AGORA_LLM_MODEL", oldModel)
 	}
+}
+
+func writeTempDefaultsConfig(t *testing.T, endpoint, model string) string {
+	t.Helper()
+	path := t.TempDir() + "/llm-defaults.json"
+	data := fmt.Sprintf(`{"endpoint":%q,"model":%q}`, endpoint, model)
+	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+		t.Fatalf("write temp defaults config: %v", err)
+	}
+	return path
 }
 
 func assertNoErr(t *testing.T, err error) {
@@ -47,6 +59,34 @@ func assertErrContains(t *testing.T, err error, want string) {
 // ---------------------------------------------------------------------------
 // Env defaults / overrides
 // ---------------------------------------------------------------------------
+
+func TestNewClient_ConfigFileDefaults(t *testing.T) {
+	cleanup := resetEnv()
+	defer cleanup()
+
+	var gotModel string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req llm.ChatCompletionRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		gotModel = req.Model
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(llm.ChatCompletionResponse{
+			Choices: []llm.Choice{{Message: llm.ChatMessage{Role: "assistant", Content: "ok"}}},
+		})
+	}))
+	defer srv.Close()
+
+	os.Setenv("AGORA_LLM_CONFIG", writeTempDefaultsConfig(t, srv.URL, "config-model"))
+	os.Unsetenv("AGORA_LLM_ENDPOINT")
+	os.Unsetenv("AGORA_LLM_MODEL")
+
+	c := llm.NewClient()
+	_, err := c.ChatCompletion(context.Background(), nil)
+	assertNoErr(t, err)
+	if gotModel != "config-model" {
+		t.Errorf("model = %q, want config-model", gotModel)
+	}
+}
 
 func TestNewClient_EnvDefaults(t *testing.T) {
 	cleanup := resetEnv()

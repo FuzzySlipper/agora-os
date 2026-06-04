@@ -23,8 +23,9 @@ WEBVIEW_LAUNCHER="${WEBVIEW_LAUNCHER:-${BIN_DIR}/webview-launcher}"
 CONFIG_DIR="${CONFIG_DIR:-/etc/agent-os}"
 RUNTIME_DIR="${RUNTIME_DIR:-/run/agent-os}"
 PROMPT_FILE="${AMBASSADOR_PROMPT:-${CONFIG_DIR}/ambassador-system-prompt.md}"
-LLM_ENDPOINT="${AGORA_LLM_ENDPOINT:-http://192.168.1.23:13305}"
-LLM_MODEL="${AGORA_LLM_MODEL:-Qwen3.6-35B-A3B-GGUF}"
+LLM_CONFIG_FILE="${AGORA_LLM_CONFIG:-${CONFIG_DIR}/llm-defaults.json}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_LLM_DEFAULTS="${SCRIPT_DIR}/../internal/llm/defaults.json"
 
 if [[ ${EUID} -ne 0 ]]; then
     echo "error: scripts/bootstrap-3po.sh must be run as root" >&2
@@ -43,6 +44,34 @@ fi
 
 mkdir -p "${CONFIG_DIR}" "${RUNTIME_DIR}"
 chmod 755 "${CONFIG_DIR}" "${RUNTIME_DIR}"
+
+if [[ ! -f "${LLM_CONFIG_FILE}" ]]; then
+    if [[ -f "${REPO_LLM_DEFAULTS}" ]]; then
+        install -m 644 -o root -g root "${REPO_LLM_DEFAULTS}" "${LLM_CONFIG_FILE}"
+    else
+        echo "error: LLM defaults config not found at ${LLM_CONFIG_FILE}; set AGORA_LLM_CONFIG or install internal/llm/defaults.json" >&2
+        exit 1
+    fi
+fi
+
+read_llm_config_value() {
+    local key="$1"
+    python3 - "$LLM_CONFIG_FILE" "$key" <<'PY'
+import json
+import sys
+
+path, key = sys.argv[1:]
+with open(path, "r", encoding="utf-8") as f:
+    data = json.load(f)
+value = data.get(key, "")
+if not isinstance(value, str) or not value:
+    raise SystemExit(f"missing required string key {key!r} in {path}")
+print(value)
+PY
+}
+
+LLM_ENDPOINT="${AGORA_LLM_ENDPOINT:-$(read_llm_config_value endpoint)}"
+LLM_MODEL="${AGORA_LLM_MODEL:-$(read_llm_config_value model)}"
 
 if [[ ! -f "${PROMPT_FILE}" ]]; then
     cat >"${PROMPT_FILE}" <<'EOF'

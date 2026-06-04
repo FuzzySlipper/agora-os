@@ -1,0 +1,4 @@
+{
+  "endpoint": "http://192.168.1.23:13305",
+  "model": "Qwen3.6-35B-A3B-GGUF"
+}
