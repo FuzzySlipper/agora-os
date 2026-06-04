@@ -11,6 +11,19 @@ important behavior is in-process input mediation rather than just Go-side state.
 Phase 3 testing uses the same graphical guest setup, but now the acceptance
 target is the full shell/webview loop rather than only the grant path.
 
+## Controlled X11/Xvfb fixture lane
+
+`test/fixtures/x11-xvfb/` is reserved for deterministic commodity UI
+automation fixtures. That lane is useful for browser/component smokes,
+agent-sim comparison pages, fixed-size screenshots, and similar tests where
+Wayland compositor identity is intentionally irrelevant.
+
+An X11/Xvfb pass is **not** production desktop evidence. It does not validate
+Wayland isolation, Agora compositor bridge grants, input mediation, clipboard
+mediation, surface ownership, audit attribution, or Wayland compatibility. Any
+test that asserts those properties must run through the real Wayland/VM path:
+`test/phase2.sh`, `test/phase3.sh`, or a future compositor computer-use probe.
+
 ## Use the VM for authoritative Phase 1 checks
 
 - Validate `SO_PEERCRED` behavior in the disposable VM.

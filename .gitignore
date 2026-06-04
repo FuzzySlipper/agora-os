@@ -60,6 +60,7 @@ build/
 dist/
 out/
 local/
+test/fixtures/x11-xvfb/artifacts/
 .claude/
 .codex/
 .codex
