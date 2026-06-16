@@ -2,7 +2,6 @@
 Description=Agora OS Wayfire compositor session (agent on VT1)
 Documentation=https://github.com/FuzzySlipper/agora-os
 Wants=event-bus.service compositor-bridge.service
-Requires=event-bus.service compositor-bridge.service
 After=systemd-user-sessions.service event-bus.service compositor-bridge.service
 Conflicts=display-manager.service sddm.service
 
