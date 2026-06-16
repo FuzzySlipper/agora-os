@@ -10,15 +10,11 @@ Conflicts=display-manager.service sddm.service
 Type=simple
 # Prepare the agent runtime dir when this replaces the display manager on boot.
 ExecStartPre=/usr/bin/install -d -o agent -g agents -m 0700 /run/user/1001
-ExecStart=/usr/bin/openvt -c 1 -f -- /usr/bin/runuser -u agent -- /usr/bin/bash -lc 'export XDG_RUNTIME_DIR=/run/user/1001; export XDG_CURRENT_DESKTOP=wayfire; exec /usr/bin/dbus-run-session -- /usr/bin/wayfire -c /home/agent/.config/wayfire.ini'
+ExecStart=/usr/bin/openvt -c 1 -f -s -w -- /usr/bin/runuser -u agent -- /usr/bin/bash -lc 'export XDG_RUNTIME_DIR=/run/user/1001; export XDG_CURRENT_DESKTOP=wayfire; exec /usr/bin/dbus-run-session -- /usr/bin/wayfire -c /home/agent/.config/wayfire.ini'
 Restart=on-failure
 RestartSec=3s
 User=root
 Group=root
-StandardInput=tty
-TTYPath=/dev/tty1
-TTYReset=yes
-TTYVHangup=yes
 StandardOutput=journal
 StandardError=journal
 
