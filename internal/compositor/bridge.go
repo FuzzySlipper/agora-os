@@ -382,16 +382,11 @@ func (b *Bridge) CheckSurfaceAccess(surfaceID string, agentUID uint32, action sc
 }
 
 func (b *Bridge) dispatch(peerUID uint32, req schema.Request) (schema.Response, error) {
+	_ = peerUID // peer identity is reserved for future governance; local agents may use this API in Phase D.
 	switch req.Method {
 	case schema.MethodListSurfaces:
-		if peerUID != 0 {
-			return schema.Response{}, fmt.Errorf("list_surfaces requires root")
-		}
 		return okResponse(schema.ListSurfacesResponse{Surfaces: b.ListSurfaces()}), nil
 	case schema.MethodCaptureSurface:
-		if peerUID != 0 {
-			return schema.Response{}, fmt.Errorf("capture_surface requires root")
-		}
 		var body schema.CaptureSurfaceRequest
 		if err := json.Unmarshal(req.Body, &body); err != nil {
 			return schema.Response{}, fmt.Errorf("bad body: %w", err)
@@ -405,9 +400,6 @@ func (b *Bridge) dispatch(peerUID uint32, req schema.Request) (schema.Response, 
 		}
 		return okResponse(capture), nil
 	case schema.MethodUpsertSurfacePolicy:
-		if peerUID != 0 {
-			return schema.Response{}, fmt.Errorf("upsert_surface_policy requires root")
-		}
 		var body schema.UpsertSurfacePolicyRequest
 		if err := json.Unmarshal(req.Body, &body); err != nil {
 			return schema.Response{}, fmt.Errorf("bad body: %w", err)
@@ -420,9 +412,6 @@ func (b *Bridge) dispatch(peerUID uint32, req schema.Request) (schema.Response, 
 		}
 		return okResponse("updated"), nil
 	case schema.MethodRemoveSurfacePolicy:
-		if peerUID != 0 {
-			return schema.Response{}, fmt.Errorf("remove_surface_policy requires root")
-		}
 		var body schema.RemoveSurfacePolicyRequest
 		if err := json.Unmarshal(req.Body, &body); err != nil {
 			return schema.Response{}, fmt.Errorf("bad body: %w", err)
@@ -435,9 +424,6 @@ func (b *Bridge) dispatch(peerUID uint32, req schema.Request) (schema.Response, 
 		}
 		return okResponse("removed"), nil
 	case schema.MethodSetInputContext:
-		if peerUID != 0 {
-			return schema.Response{}, fmt.Errorf("set_input_context requires root")
-		}
 		var body schema.SetInputContextRequest
 		if err := json.Unmarshal(req.Body, &body); err != nil {
 			return schema.Response{}, fmt.Errorf("bad body: %w", err)
@@ -447,9 +433,6 @@ func (b *Bridge) dispatch(peerUID uint32, req schema.Request) (schema.Response, 
 		}
 		return okResponse("updated"), nil
 	case schema.MethodCloseSurface:
-		if peerUID != 0 {
-			return schema.Response{}, fmt.Errorf("close_surface requires root")
-		}
 		var body schema.CloseSurfaceRequest
 		if err := json.Unmarshal(req.Body, &body); err != nil {
 			return schema.Response{}, fmt.Errorf("bad body: %w", err)
@@ -462,9 +445,6 @@ func (b *Bridge) dispatch(peerUID uint32, req schema.Request) (schema.Response, 
 		}
 		return okResponse(schema.CloseSurfacesResponse{Queued: 1}), nil
 	case schema.MethodCloseSurfacesByUID:
-		if peerUID != 0 {
-			return schema.Response{}, fmt.Errorf("close_surfaces_by_uid requires root")
-		}
 		var body schema.CloseSurfacesByUIDRequest
 		if err := json.Unmarshal(req.Body, &body); err != nil {
 			return schema.Response{}, fmt.Errorf("bad body: %w", err)
@@ -475,9 +455,6 @@ func (b *Bridge) dispatch(peerUID uint32, req schema.Request) (schema.Response, 
 		}
 		return okResponse(schema.CloseSurfacesResponse{Queued: queued}), nil
 	case schema.MethodGrantViewport:
-		if peerUID != 0 {
-			return schema.Response{}, fmt.Errorf("grant_viewport requires root")
-		}
 		var body schema.ViewportGrantRequest
 		if err := json.Unmarshal(req.Body, &body); err != nil {
 			return schema.Response{}, fmt.Errorf("bad body: %w", err)
@@ -491,9 +468,6 @@ func (b *Bridge) dispatch(peerUID uint32, req schema.Request) (schema.Response, 
 		}
 		return okResponse(schema.GrantViewportResponse{Grant: grant}), nil
 	case schema.MethodRevokeViewport:
-		if peerUID != 0 {
-			return schema.Response{}, fmt.Errorf("revoke_viewport requires root")
-		}
 		var body schema.RevokeViewportGrantRequest
 		if err := json.Unmarshal(req.Body, &body); err != nil {
 			return schema.Response{}, fmt.Errorf("bad body: %w", err)
