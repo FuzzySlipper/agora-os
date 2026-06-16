@@ -26,6 +26,8 @@ func main() {
 
 	var err error
 	switch args[0] {
+	case "capture":
+		err = cmdCapture(args[1:], *pretty)
 	case "grant-viewport":
 		err = cmdGrantViewport(args[1:], *pretty)
 	case "revoke-viewport":
@@ -54,6 +56,7 @@ func usage() {
 	fmt.Fprintf(os.Stderr, `Usage: compositorctl [--pretty] <command> [flags]
 
 Commands:
+  capture            Capture a tracked surface to a PNG artifact
   grant-viewport     Record an explicit viewport grant for an agent on a surface
   revoke-viewport    Revoke a previously granted viewport
   check-access       Ask the compositor bridge whether an agent may access a surface
@@ -63,6 +66,29 @@ Commands:
 
 Run compositorctl <command> --help for command-specific flags.
 `)
+}
+
+func cmdCapture(args []string, pretty bool) error {
+	fs := flag.NewFlagSet("capture", flag.ExitOnError)
+	surfaceID := fs.String("surface", "", "surface ID (required)")
+	format := fs.String("format", "png", "capture format")
+	fs.Parse(args)
+
+	if *surfaceID == "" {
+		return fmt.Errorf("--surface is required")
+	}
+	if *format != "png" {
+		return fmt.Errorf("only --format png is supported")
+	}
+
+	resp, err := call(compositorSock, schema.MethodCaptureSurface, schema.CaptureSurfaceRequest{
+		SurfaceID: *surfaceID,
+		Format:    *format,
+	})
+	if err != nil {
+		return err
+	}
+	return printJSON(resp, pretty)
 }
 
 func cmdGrantViewport(args []string, pretty bool) error {

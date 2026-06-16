@@ -9,6 +9,7 @@ const (
 
 const (
 	MethodListSurfaces        = "list_surfaces"
+	MethodCaptureSurface      = "capture_surface"
 	MethodUpsertSurfacePolicy = "upsert_surface_policy"
 	MethodRemoveSurfacePolicy = "remove_surface_policy"
 	MethodSetInputContext     = "set_input_context"
@@ -37,6 +38,8 @@ type CompositorPluginMessageType string
 
 const (
 	PluginMessageSurfaceEvent       CompositorPluginMessageType = "surface_event"
+	PluginMessageCaptureSurface     CompositorPluginMessageType = "capture_surface"
+	PluginMessageCaptureResponse    CompositorPluginMessageType = "capture_response"
 	PluginMessagePolicyReplace      CompositorPluginMessageType = "policy_replace"
 	PluginMessagePolicyUpsert       CompositorPluginMessageType = "policy_upsert"
 	PluginMessagePolicyRemove       CompositorPluginMessageType = "policy_remove"
@@ -77,11 +80,19 @@ type CompositorClientIdentity struct {
 }
 
 type CompositorPluginEvent struct {
-	Type    CompositorPluginMessageType `json:"type"`
-	Event   CompositorSurfaceEventName  `json:"event,omitempty"`
-	Device  string                      `json:"device,omitempty"`
-	Surface CompositorSurface           `json:"surface"`
-	Client  CompositorClientIdentity    `json:"client"`
+	Type       CompositorPluginMessageType `json:"type"`
+	Event      CompositorSurfaceEventName  `json:"event,omitempty"`
+	Device     string                      `json:"device,omitempty"`
+	Surface    CompositorSurface           `json:"surface"`
+	Client     CompositorClientIdentity    `json:"client"`
+	RequestID  string                      `json:"request_id,omitempty"`
+	SurfaceID  string                      `json:"surface_id,omitempty"`
+	OK         bool                        `json:"ok,omitempty"`
+	Width      uint32                      `json:"width,omitempty"`
+	Height     uint32                      `json:"height,omitempty"`
+	Format     string                      `json:"format,omitempty"`
+	DataBase64 string                      `json:"data_base64,omitempty"`
+	Error      string                      `json:"error,omitempty"`
 }
 
 type CompositorSurfacePolicy struct {
@@ -94,6 +105,24 @@ type CompositorSurfacePolicy struct {
 type CompositorPolicyReplace struct {
 	Type     CompositorPluginMessageType `json:"type"`
 	Surfaces []CompositorSurfacePolicy   `json:"surfaces,omitempty"`
+}
+
+type CompositorCaptureSurface struct {
+	Type      CompositorPluginMessageType `json:"type"`
+	RequestID string                      `json:"request_id"`
+	SurfaceID string                      `json:"surface_id"`
+}
+
+type CompositorCapturePluginResponse struct {
+	Type       CompositorPluginMessageType `json:"type"`
+	RequestID  string                      `json:"request_id"`
+	SurfaceID  string                      `json:"surface_id"`
+	OK         bool                        `json:"ok"`
+	Width      uint32                      `json:"width,omitempty"`
+	Height     uint32                      `json:"height,omitempty"`
+	Format     string                      `json:"format,omitempty"`
+	DataBase64 string                      `json:"data_base64,omitempty"`
+	Error      string                      `json:"error,omitempty"`
 }
 
 type CompositorPolicyUpsert struct {
@@ -138,6 +167,22 @@ type CompositorBusEvent struct {
 
 type ListSurfacesResponse struct {
 	Surfaces []CompositorTrackedSurface `json:"surfaces,omitempty"`
+}
+
+type CaptureSurfaceRequest struct {
+	SurfaceID string `json:"surface_id"`
+	Format    string `json:"format,omitempty"`
+	MaxWidth  uint32 `json:"max_width,omitempty"`
+	MaxHeight uint32 `json:"max_height,omitempty"`
+}
+
+type CaptureSurfaceResponse struct {
+	SurfaceID string `json:"surface_id"`
+	Path      string `json:"path"`
+	Width     uint32 `json:"width"`
+	Height    uint32 `json:"height"`
+	Format    string `json:"format"`
+	SHA256    string `json:"sha256"`
 }
 
 type UpsertSurfacePolicyRequest struct {
