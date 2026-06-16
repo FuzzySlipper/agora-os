@@ -1,0 +1,24 @@
+[Unit]
+Description=Agora OS compositor bridge
+Documentation=https://github.com/FuzzySlipper/agora-os
+Wants=network.target event-bus.service
+After=network.target event-bus.service
+Requires=event-bus.service
+
+[Service]
+Type=simple
+ExecStartPre=/usr/bin/install -d -o root -g agents -m 0775 /run/agent-os
+ExecStartPre=/usr/bin/install -d -o root -g root -m 0755 /var/log/agent-os
+Environment=AGORA_COMPOSITOR_UID=1001
+Environment=AGORA_COMPOSITOR_GID=1002
+Environment=AGORA_COMPOSITOR_GRANT_LOG=/var/log/agent-os/compositor-grants.jsonl
+ExecStart=/usr/local/bin/compositor-bridge
+Restart=on-failure
+RestartSec=2s
+User=root
+Group=root
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
