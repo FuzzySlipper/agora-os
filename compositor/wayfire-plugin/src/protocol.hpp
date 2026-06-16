@@ -42,6 +42,7 @@ enum class bridge_message_kind
     input_context,
     close_surface,
     close_surfaces_by_uid,
+    capture_surface,
 };
 
 struct bridge_message_t
@@ -49,6 +50,7 @@ struct bridge_message_t
     bridge_message_kind kind = bridge_message_kind::invalid;
     std::vector<surface_policy_t> policies;
     std::string surface_id;
+    std::string request_id;
     std::optional<uint32_t> actor_uid;
     std::optional<uint32_t> owner_uid;
 };
@@ -158,6 +160,30 @@ inline std::string encode_surface_event(std::string_view event_name, const surfa
         << "\"pid\":" << client.pid << ","
         << "\"uid\":" << client.uid << ","
         << "\"gid\":" << client.gid << "}}";
+    return out.str();
+}
+
+inline std::string encode_capture_response(std::string_view request_id, std::string_view surface_id,
+    bool ok, uint32_t width, uint32_t height, std::string_view format, std::string_view data_base64,
+    std::string_view error = "")
+{
+    std::ostringstream out;
+    out << "{\"type\":\"capture_response\","
+        << "\"request_id\":\"" << json_escape(request_id) << "\","
+        << "\"surface_id\":\"" << json_escape(surface_id) << "\","
+        << "\"ok\":" << (ok ? "true" : "false");
+    if (ok)
+    {
+        out << ",\"width\":" << width
+            << ",\"height\":" << height
+            << ",\"format\":\"" << json_escape(format) << "\""
+            << ",\"data_base64\":\"" << json_escape(data_base64) << "\"";
+    } else
+    {
+        out << ",\"error\":\"" << json_escape(error) << "\"";
+    }
+
+    out << "}";
     return out.str();
 }
 
@@ -414,6 +440,14 @@ inline bridge_message_t parse_bridge_message(const std::string& line)
     {
         message.kind = bridge_message_kind::close_surfaces_by_uid;
         message.owner_uid = find_uint_field(line, "owner_uid");
+        return message;
+    }
+
+    if (*type == "capture_surface")
+    {
+        message.kind = bridge_message_kind::capture_surface;
+        message.request_id = find_string_field(line, "request_id").value_or("");
+        message.surface_id = find_string_field(line, "surface_id").value_or("");
         return message;
     }
 

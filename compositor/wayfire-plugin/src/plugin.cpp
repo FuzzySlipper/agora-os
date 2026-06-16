@@ -7,7 +7,9 @@
 #include <sys/un.h>
 #include <unistd.h>
 #include <wayland-server-core.h>
+#include <wayland-server-protocol.h>
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cerrno>
@@ -106,6 +108,129 @@ agora::protocol::surface_snapshot_t snapshot_view(wayfire_view view)
     snapshot.title = view->get_title();
     snapshot.role = role_to_string(view->role);
     return snapshot;
+}
+
+void append_u32_be(std::vector<uint8_t>& out, uint32_t value)
+{
+    out.push_back(static_cast<uint8_t>((value >> 24) & 0xff));
+    out.push_back(static_cast<uint8_t>((value >> 16) & 0xff));
+    out.push_back(static_cast<uint8_t>((value >> 8) & 0xff));
+    out.push_back(static_cast<uint8_t>(value & 0xff));
+}
+
+uint32_t crc32_bytes(const uint8_t *data, size_t size)
+{
+    uint32_t crc = 0xffffffffu;
+    for (size_t i = 0; i < size; ++i)
+    {
+        crc ^= data[i];
+        for (int bit = 0; bit < 8; ++bit)
+        {
+            crc = (crc >> 1) ^ (0xedb88320u & (0u - (crc & 1u)));
+        }
+    }
+
+    return crc ^ 0xffffffffu;
+}
+
+uint32_t adler32_bytes(const uint8_t *data, size_t size)
+{
+    uint32_t a = 1;
+    uint32_t b = 0;
+    for (size_t i = 0; i < size; ++i)
+    {
+        a = (a + data[i]) % 65521u;
+        b = (b + a) % 65521u;
+    }
+
+    return (b << 16) | a;
+}
+
+void append_png_chunk(std::vector<uint8_t>& png, const char type[4], const std::vector<uint8_t>& data)
+{
+    append_u32_be(png, static_cast<uint32_t>(data.size()));
+    size_t chunk_start = png.size();
+    png.insert(png.end(), type, type + 4);
+    png.insert(png.end(), data.begin(), data.end());
+    append_u32_be(png, crc32_bytes(png.data() + chunk_start, png.size() - chunk_start));
+}
+
+std::vector<uint8_t> zlib_store_uncompressed(const std::vector<uint8_t>& data)
+{
+    std::vector<uint8_t> out;
+    out.push_back(0x78);
+    out.push_back(0x01);
+
+    size_t offset = 0;
+    while (offset < data.size())
+    {
+        size_t remaining = data.size() - offset;
+        uint16_t block_len = static_cast<uint16_t>(std::min<size_t>(remaining, 65535));
+        bool final_block = (offset + block_len) == data.size();
+        out.push_back(final_block ? 0x01 : 0x00);
+        out.push_back(static_cast<uint8_t>(block_len & 0xff));
+        out.push_back(static_cast<uint8_t>((block_len >> 8) & 0xff));
+        uint16_t nlen = static_cast<uint16_t>(~block_len);
+        out.push_back(static_cast<uint8_t>(nlen & 0xff));
+        out.push_back(static_cast<uint8_t>((nlen >> 8) & 0xff));
+        out.insert(out.end(), data.begin() + offset, data.begin() + offset + block_len);
+        offset += block_len;
+    }
+
+    append_u32_be(out, adler32_bytes(data.data(), data.size()));
+    return out;
+}
+
+std::vector<uint8_t> encode_png_rgba(uint32_t width, uint32_t height, const std::vector<uint8_t>& rgba)
+{
+    std::vector<uint8_t> scanlines;
+    scanlines.reserve(static_cast<size_t>(height) * (1 + static_cast<size_t>(width) * 4));
+    for (uint32_t y = 0; y < height; ++y)
+    {
+        scanlines.push_back(0);
+        auto row_start = rgba.begin() + (static_cast<size_t>(y) * width * 4);
+        scanlines.insert(scanlines.end(), row_start, row_start + (static_cast<size_t>(width) * 4));
+    }
+
+    std::vector<uint8_t> png = {0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a};
+    std::vector<uint8_t> ihdr;
+    append_u32_be(ihdr, width);
+    append_u32_be(ihdr, height);
+    ihdr.push_back(8); // bit depth
+    ihdr.push_back(6); // RGBA
+    ihdr.push_back(0); // deflate
+    ihdr.push_back(0); // filter
+    ihdr.push_back(0); // no interlace
+    append_png_chunk(png, "IHDR", ihdr);
+    append_png_chunk(png, "IDAT", zlib_store_uncompressed(scanlines));
+    append_png_chunk(png, "IEND", {});
+    return png;
+}
+
+std::string base64_encode(const std::vector<uint8_t>& data)
+{
+    static constexpr char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    out.reserve(((data.size() + 2) / 3) * 4);
+    for (size_t i = 0; i < data.size(); i += 3)
+    {
+        uint32_t value = static_cast<uint32_t>(data[i]) << 16;
+        if (i + 1 < data.size())
+        {
+            value |= static_cast<uint32_t>(data[i + 1]) << 8;
+        }
+        if (i + 2 < data.size())
+        {
+            value |= static_cast<uint32_t>(data[i + 2]);
+        }
+
+        out.push_back(alphabet[(value >> 18) & 0x3f]);
+        out.push_back(alphabet[(value >> 12) & 0x3f]);
+        out.push_back((i + 1 < data.size()) ? alphabet[(value >> 6) & 0x3f] : '=');
+        out.push_back((i + 2 < data.size()) ? alphabet[value & 0x3f] : '=');
+    }
+
+    return out;
 }
 
 class bridge_client_t
@@ -343,6 +468,12 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
     }
 
   private:
+    struct pending_capture_request_t
+    {
+        std::string request_id;
+        std::string surface_id;
+    };
+
     static int handle_close_wake(int fd, uint32_t mask, void *data)
     {
         return static_cast<agora_bridge_plugin_t*>(data)->process_close_wake(fd, mask);
@@ -392,6 +523,7 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         views_by_surface_.clear();
         pending_close_surfaces_.clear();
         pending_close_owner_uids_.clear();
+        pending_capture_requests_.clear();
         pending_surface_resync_ = false;
     }
 
@@ -418,15 +550,22 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
 
         std::vector<std::string> close_surfaces;
         std::vector<uint32_t> close_owner_uids;
+        std::vector<pending_capture_request_t> capture_requests;
         bool should_resync = false;
         std::unordered_map<std::string, wayfire_view> views;
         {
             std::lock_guard lock(state_mutex_);
             close_surfaces.swap(pending_close_surfaces_);
             close_owner_uids.swap(pending_close_owner_uids_);
+            capture_requests.swap(pending_capture_requests_);
             should_resync = pending_surface_resync_;
             pending_surface_resync_ = false;
             views = views_by_surface_;
+        }
+
+        for (const auto& request : capture_requests)
+        {
+            process_capture_request(request, views);
         }
 
         if (should_resync)
@@ -498,6 +637,104 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         }
 
         notify_close_wake();
+    }
+
+    void queue_capture_surface(std::string request_id, std::string surface_id)
+    {
+        if (request_id.empty())
+        {
+            request_id = surface_id;
+        }
+
+        {
+            std::lock_guard lock(state_mutex_);
+            pending_capture_requests_.push_back({std::move(request_id), std::move(surface_id)});
+        }
+
+        notify_close_wake();
+    }
+
+    void send_capture_error(const pending_capture_request_t& request, std::string_view error)
+    {
+        if (!bridge_)
+        {
+            return;
+        }
+
+        bridge_->send_line(agora::protocol::encode_capture_response(
+            request.request_id, request.surface_id, false, 0, 0, "png", "", error));
+    }
+
+    void process_capture_request(const pending_capture_request_t& request,
+        const std::unordered_map<std::string, wayfire_view>& views)
+    {
+        if (!bridge_)
+        {
+            return;
+        }
+
+        auto view_it = views.find(request.surface_id);
+        if ((view_it == views.end()) || !view_it->second)
+        {
+            send_capture_error(request, "surface not found");
+            return;
+        }
+
+        auto view = view_it->second;
+        wlr_surface *surface = view->get_wlr_surface();
+        if (!surface || !surface->current.buffer)
+        {
+            send_capture_error(request, "surface buffer not available");
+            return;
+        }
+
+        uint32_t width = static_cast<uint32_t>(surface->current.buffer_width);
+        uint32_t height = static_cast<uint32_t>(surface->current.buffer_height);
+        if ((width == 0) || (height == 0))
+        {
+            send_capture_error(request, "surface buffer has empty dimensions");
+            return;
+        }
+
+        void *data = nullptr;
+        uint32_t format = 0;
+        size_t stride = 0;
+        if (!wlr_buffer_begin_data_ptr_access(surface->current.buffer,
+            WLR_BUFFER_DATA_PTR_ACCESS_READ, &data, &format, &stride))
+        {
+            send_capture_error(request, "surface buffer does not support CPU readback");
+            return;
+        }
+
+        std::vector<uint8_t> rgba(static_cast<size_t>(width) * height * 4);
+        bool supported_format = (format == WL_SHM_FORMAT_ARGB8888) || (format == WL_SHM_FORMAT_XRGB8888);
+        if (supported_format)
+        {
+            const auto *bytes = static_cast<const uint8_t*>(data);
+            for (uint32_t y = 0; y < height; ++y)
+            {
+                const uint8_t *src = bytes + (static_cast<size_t>(y) * stride);
+                uint8_t *dst = rgba.data() + (static_cast<size_t>(y) * width * 4);
+                for (uint32_t x = 0; x < width; ++x)
+                {
+                    dst[x * 4 + 0] = src[x * 4 + 2];
+                    dst[x * 4 + 1] = src[x * 4 + 1];
+                    dst[x * 4 + 2] = src[x * 4 + 0];
+                    dst[x * 4 + 3] = (format == WL_SHM_FORMAT_ARGB8888) ? src[x * 4 + 3] : 0xff;
+                }
+            }
+        }
+        wlr_buffer_end_data_ptr_access(surface->current.buffer);
+
+        if (!supported_format)
+        {
+            send_capture_error(request, "unsupported shm buffer format");
+            return;
+        }
+
+        auto png = encode_png_rgba(width, height, rgba);
+        bridge_->send_line(agora::protocol::encode_capture_response(
+            request.request_id, request.surface_id, true, width, height, "png", base64_encode(png)));
     }
 
     void queue_surface_resync()
@@ -591,6 +828,9 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
                 queue_close_surfaces_by_uid(*message.owner_uid);
             }
             break;
+          case agora::protocol::bridge_message_kind::capture_surface:
+            queue_capture_surface(message.request_id, message.surface_id);
+            break;
           case agora::protocol::bridge_message_kind::invalid:
             break;
         }
@@ -635,6 +875,7 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
     std::unordered_map<std::string, wayfire_view> views_by_surface_;
     std::vector<std::string> pending_close_surfaces_;
     std::vector<uint32_t> pending_close_owner_uids_;
+    std::vector<pending_capture_request_t> pending_capture_requests_;
     bool pending_surface_resync_ = false;
     int close_wake_fd_ = -1;
     wl_event_source *close_wake_source_ = nullptr;
