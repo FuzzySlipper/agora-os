@@ -112,10 +112,12 @@ class bridge_client_t
 {
   public:
     using message_handler_t = std::function<void(const agora::protocol::bridge_message_t&)>;
+    using connected_handler_t = std::function<void()>;
 
-    bridge_client_t(std::string socket_path, message_handler_t on_message) :
+    bridge_client_t(std::string socket_path, message_handler_t on_message, connected_handler_t on_connected) :
         socket_path_(std::move(socket_path)),
-        on_message_(std::move(on_message))
+        on_message_(std::move(on_message)),
+        on_connected_(std::move(on_connected))
     {}
 
     ~bridge_client_t()
@@ -218,6 +220,11 @@ class bridge_client_t
 
         fd_.store(fd);
         LOGI("agora-bridge: connected to ", socket_path_);
+        if (on_connected_)
+        {
+            on_connected_();
+        }
+
         return true;
     }
 
@@ -283,6 +290,7 @@ class bridge_client_t
 
     std::string socket_path_;
     message_handler_t on_message_;
+    connected_handler_t on_connected_;
     std::atomic<bool> running_{false};
     std::thread worker_;
     std::mutex write_mutex_;
@@ -301,6 +309,10 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
             [this] (const agora::protocol::bridge_message_t& message)
         {
             handle_bridge_message(message);
+        },
+            [this]
+        {
+            queue_surface_resync();
         });
         bridge_->start();
 
@@ -380,6 +392,7 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         views_by_surface_.clear();
         pending_close_surfaces_.clear();
         pending_close_owner_uids_.clear();
+        pending_surface_resync_ = false;
     }
 
     int process_close_wake(int fd, uint32_t mask)
@@ -405,12 +418,20 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
 
         std::vector<std::string> close_surfaces;
         std::vector<uint32_t> close_owner_uids;
+        bool should_resync = false;
         std::unordered_map<std::string, wayfire_view> views;
         {
             std::lock_guard lock(state_mutex_);
             close_surfaces.swap(pending_close_surfaces_);
             close_owner_uids.swap(pending_close_owner_uids_);
+            should_resync = pending_surface_resync_;
+            pending_surface_resync_ = false;
             views = views_by_surface_;
+        }
+
+        if (should_resync)
+        {
+            resync_surfaces();
         }
 
         std::unordered_map<std::string, wayfire_view> targets;
@@ -477,6 +498,30 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         }
 
         notify_close_wake();
+    }
+
+    void queue_surface_resync()
+    {
+        {
+            std::lock_guard lock(state_mutex_);
+            pending_surface_resync_ = true;
+        }
+
+        notify_close_wake();
+    }
+
+    void resync_surfaces()
+    {
+        for (auto view : wf::get_core().get_all_views())
+        {
+            if (!view)
+            {
+                continue;
+            }
+
+            track_view(view);
+            emit_surface_event("mapped", view);
+        }
     }
 
     void notify_close_wake()
@@ -590,6 +635,7 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
     std::unordered_map<std::string, wayfire_view> views_by_surface_;
     std::vector<std::string> pending_close_surfaces_;
     std::vector<uint32_t> pending_close_owner_uids_;
+    bool pending_surface_resync_ = false;
     int close_wake_fd_ = -1;
     wl_event_source *close_wake_source_ = nullptr;
     wayfire_view keyboard_focus_view_;
