@@ -31,7 +31,6 @@
 #include <wayfire/plugin.hpp>
 #include <wayfire/seat.hpp>
 #include <wayfire/signal-definitions.hpp>
-#include <wayfire/unstable/wlr-surface-node.hpp>
 #include <wayfire/util/log.hpp>
 #include <wayfire/view-helpers.hpp>
 #include <wayfire/view.hpp>
@@ -233,81 +232,6 @@ std::string base64_encode(const std::vector<uint8_t>& data)
     }
 
     return out;
-}
-
-struct capture_surface_pick_t
-{
-    wlr_surface *surface = nullptr;
-};
-
-void pick_capture_surface(wlr_surface *surface, int, int, void *data)
-{
-    auto *pick = static_cast<capture_surface_pick_t*>(data);
-    if (pick->surface || !surface || !surface->current.buffer ||
-        (surface->current.buffer_width <= 0) || (surface->current.buffer_height <= 0))
-    {
-        return;
-    }
-
-    pick->surface = surface;
-}
-
-wlr_surface *find_capture_surface_in_node(const wf::scene::node_ptr& node)
-{
-    if (!node)
-    {
-        return nullptr;
-    }
-
-    if (auto *surface_node = dynamic_cast<wf::scene::wlr_surface_node_t*>(node.get()))
-    {
-        auto *surface = surface_node->get_surface();
-        if (surface && surface->current.buffer &&
-            (surface->current.buffer_width > 0) && (surface->current.buffer_height > 0))
-        {
-            return surface;
-        }
-    }
-
-    for (const auto& child : node->get_children())
-    {
-        if (auto *surface = find_capture_surface_in_node(child))
-        {
-            return surface;
-        }
-    }
-
-    return nullptr;
-}
-
-wlr_surface *find_capture_surface(wayfire_view view)
-{
-    if (!view)
-    {
-        return nullptr;
-    }
-
-    if (auto *surface = find_capture_surface_in_node(view->get_surface_root_node()))
-    {
-        return surface;
-    }
-
-    wlr_surface *root = view->get_wlr_surface();
-    if (!root)
-    {
-        return nullptr;
-    }
-
-    capture_surface_pick_t pick;
-    if (root->current.buffer && (root->current.buffer_width > 0) && (root->current.buffer_height > 0))
-    {
-        pick.surface = root;
-    } else
-    {
-        wlr_surface_for_each_surface(root, pick_capture_surface, &pick);
-    }
-
-    return pick.surface;
 }
 
 class bridge_client_t
