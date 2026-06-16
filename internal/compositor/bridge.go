@@ -397,6 +397,7 @@ func (b *Bridge) launchAppAsPeer(peerUID uint32, req schema.LaunchAppRequest) (s
 	if _, ok := req.Env["DISPLAY"]; !ok {
 		env = append(env, "DISPLAY=")
 	}
+	env = withA11yLaunchEnv(env, req.Env)
 	for key, value := range req.Env {
 		env = append(env, key+"="+value)
 	}
@@ -1928,6 +1929,46 @@ func (b *Bridge) dispatch(peerUID uint32, req schema.Request) (schema.Response, 
 			return schema.Response{}, fmt.Errorf("bad body: %w", err)
 		}
 		resp, err := b.CaptureOutput(body)
+		if err != nil {
+			return schema.Response{}, err
+		}
+		return okResponse(resp), nil
+	case schema.MethodA11yTree:
+		var body schema.A11yTreeRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			return schema.Response{}, fmt.Errorf("bad body: %w", err)
+		}
+		resp, err := b.A11yTree(body)
+		if err != nil {
+			return schema.Response{}, err
+		}
+		return okResponse(resp), nil
+	case schema.MethodA11ySemantic:
+		var body schema.A11yTreeRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			return schema.Response{}, fmt.Errorf("bad body: %w", err)
+		}
+		resp, err := b.A11ySemantic(body)
+		if err != nil {
+			return schema.Response{}, err
+		}
+		return okResponse(resp), nil
+	case schema.MethodA11yFind:
+		var body schema.A11yFindRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			return schema.Response{}, fmt.Errorf("bad body: %w", err)
+		}
+		resp, err := b.A11yFind(body)
+		if err != nil {
+			return schema.Response{}, err
+		}
+		return okResponse(resp), nil
+	case schema.MethodA11yClick:
+		var body schema.A11yClickRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			return schema.Response{}, fmt.Errorf("bad body: %w", err)
+		}
+		resp, err := b.A11yClick(body)
 		if err != nil {
 			return schema.Response{}, err
 		}
