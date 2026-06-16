@@ -28,6 +28,14 @@ func main() {
 	switch args[0] {
 	case "capture":
 		err = cmdCapture(args[1:], *pretty)
+	case "session":
+		err = cmdSession(args[1:], *pretty)
+	case "launch":
+		err = cmdLaunch(args[1:], *pretty)
+	case "list-processes":
+		err = cmdListProcesses(args[1:], *pretty)
+	case "terminate":
+		err = cmdTerminate(args[1:], *pretty)
 	case "move":
 		err = cmdMove(args[1:], *pretty)
 	case "click":
@@ -65,6 +73,10 @@ func usage() {
 
 Commands:
   capture            Capture a tracked surface to a PNG artifact
+  session            Create, list, get, reset, or destroy compositor sessions
+  launch             Launch a Wayland client and track its process/surfaces
+  list-processes     List tracked compositor-launched processes
+  terminate          Terminate a tracked launch and close its surfaces
   move               Move pointer over a tracked surface
   click              Send a pointer click to a tracked surface
   key                Send a key press/release pair to a tracked surface
@@ -78,6 +90,126 @@ Commands:
 
 Run compositorctl <command> --help for command-specific flags.
 `)
+}
+
+type envFlags map[string]string
+
+func (e *envFlags) String() string {
+	if e == nil {
+		return ""
+	}
+	parts := make([]string, 0, len(*e))
+	for k, v := range *e {
+		parts = append(parts, k+"="+v)
+	}
+	return strings.Join(parts, ",")
+}
+
+func (e *envFlags) Set(value string) error {
+	if *e == nil {
+		*e = make(map[string]string)
+	}
+	key, val, ok := strings.Cut(value, "=")
+	if !ok || key == "" {
+		return fmt.Errorf("env must be KEY=VALUE")
+	}
+	(*e)[key] = val
+	return nil
+}
+
+func cmdSession(args []string, pretty bool) error {
+	if len(args) == 0 {
+		return fmt.Errorf("session subcommand is required: create, list, get, reset, destroy")
+	}
+	switch args[0] {
+	case "create":
+		fs := flag.NewFlagSet("session create", flag.ExitOnError)
+		label := fs.String("label", "", "session label")
+		projectID := fs.String("project-id", "", "Den project id")
+		taskID := fs.Int("task-id", 0, "Den task id")
+		ashaScenario := fs.String("asha-scenario", "", "ASHA scenario id")
+		repoCommit := fs.String("repo-commit", "", "repo commit")
+		repoBranch := fs.String("repo-branch", "", "repo branch")
+		runtimeMode := fs.String("asha-runtime-mode", "", "ASHA runtime mode")
+		artifactRoot := fs.String("artifact-root", "", "artifact root path")
+		auditID := fs.String("audit-correlation-id", "", "audit correlation id")
+		fs.Parse(args[1:])
+		return callAndPrint(schema.MethodCreateSession, schema.CreateSessionRequest{
+			Label: *label, ProjectID: *projectID, TaskID: *taskID, ASHAScenarioID: *ashaScenario,
+			RepoCommit: *repoCommit, RepoBranch: *repoBranch, ASHARuntimeMode: *runtimeMode,
+			ArtifactRoot: *artifactRoot, AuditCorrelationID: *auditID,
+		}, pretty)
+	case "list":
+		return callAndPrint(schema.MethodListSessions, nil, pretty)
+	case "get", "reset", "destroy":
+		fs := flag.NewFlagSet("session "+args[0], flag.ExitOnError)
+		sessionID := fs.String("session", "", "session id (required)")
+		fs.Parse(args[1:])
+		if *sessionID == "" {
+			return fmt.Errorf("--session is required")
+		}
+		method := map[string]string{"get": schema.MethodGetSession, "reset": schema.MethodResetSession, "destroy": schema.MethodDestroySession}[args[0]]
+		return callAndPrint(method, schema.SessionRequest{SessionID: *sessionID}, pretty)
+	default:
+		return fmt.Errorf("unknown session subcommand: %s", args[0])
+	}
+}
+
+func cmdLaunch(args []string, pretty bool) error {
+	fs := flag.NewFlagSet("launch", flag.ExitOnError)
+	cmd := fs.String("cmd", "", "command to launch (required)")
+	sessionID := fs.String("session", "", "session id")
+	cwd := fs.String("cwd", "", "working directory")
+	runAsUID := fs.Uint("uid", 0, "run process as UID (bridge must have permission; default bridge policy may choose agent)")
+	runAsGID := fs.Uint("gid", 0, "run process as GID (bridge must have permission; default bridge policy may choose agent)")
+	expectedAppID := fs.String("expected-app-id", "", "expected compositor app id")
+	expectedTitle := fs.String("expected-title", "", "expected surface title substring")
+	waitSurface := fs.Bool("wait-surface", false, "wait for first matching surface")
+	waitTimeout := fs.Int("wait-timeout-ms", 5000, "surface wait timeout in milliseconds")
+	env := envFlags{}
+	fs.Var(&env, "env", "environment variable KEY=VALUE; may be repeated")
+	fs.Parse(args)
+	if *cmd == "" {
+		return fmt.Errorf("--cmd is required")
+	}
+	req := schema.LaunchAppRequest{
+		SessionID: *sessionID, Command: *cmd, Cwd: *cwd, Env: env, ExpectedAppID: *expectedAppID,
+		ExpectedTitle: *expectedTitle, WaitSurface: *waitSurface, WaitTimeoutMs: *waitTimeout,
+	}
+	if *runAsUID != 0 {
+		uid := uint32(*runAsUID)
+		req.RunAsUID = &uid
+	}
+	if *runAsGID != 0 {
+		gid := uint32(*runAsGID)
+		req.RunAsGID = &gid
+	}
+	return callAndPrint(schema.MethodLaunchApp, req, pretty)
+}
+
+func cmdListProcesses(args []string, pretty bool) error {
+	fs := flag.NewFlagSet("list-processes", flag.ExitOnError)
+	sessionID := fs.String("session", "", "session id")
+	fs.Parse(args)
+	return callAndPrint(schema.MethodListProcesses, schema.ListProcessesRequest{SessionID: *sessionID}, pretty)
+}
+
+func cmdTerminate(args []string, pretty bool) error {
+	fs := flag.NewFlagSet("terminate", flag.ExitOnError)
+	launchID := fs.String("launch-id", "", "launch id (required)")
+	fs.Parse(args)
+	if *launchID == "" {
+		return fmt.Errorf("--launch-id is required")
+	}
+	return callAndPrint(schema.MethodTerminateLaunch, schema.TerminateLaunchRequest{LaunchID: *launchID}, pretty)
+}
+
+func callAndPrint(method string, body any, pretty bool) error {
+	resp, err := call(compositorSock, method, body)
+	if err != nil {
+		return err
+	}
+	return printJSON(resp, pretty)
 }
 
 func cmdCapture(args []string, pretty bool) error {

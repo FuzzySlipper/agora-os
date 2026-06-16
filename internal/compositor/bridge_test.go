@@ -353,6 +353,185 @@ func TestHandlePluginConnRejectsUnauthorizedPeer(t *testing.T) {
 	<-done
 }
 
+func TestSessionLifecycleAndLaunchTracking(t *testing.T) {
+	bridge, err := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	session := bridge.CreateSession(schema.CreateSessionRequest{Label: "asha-scenario-42", ProjectID: "agora-os", TaskID: 2543, ASHAScenarioID: "scenario-42"})
+	if session.SessionID == "" || session.Label != "asha-scenario-42" || session.ProjectID != "agora-os" || session.TaskID != 2543 {
+		t.Fatalf("unexpected session: %+v", session)
+	}
+
+	launch, err := bridge.LaunchApp(schema.LaunchAppRequest{SessionID: session.SessionID, Command: "sleep 30"})
+	if err != nil {
+		t.Fatalf("LaunchApp: %v", err)
+	}
+	if launch.LaunchID == "" || launch.PID == 0 || launch.SessionID != session.SessionID {
+		t.Fatalf("unexpected launch: %+v", launch)
+	}
+
+	processes := bridge.ListProcesses(session.SessionID)
+	if len(processes) != 1 || processes[0].LaunchID != launch.LaunchID || processes[0].Status != "running" {
+		t.Fatalf("unexpected processes: %+v", processes)
+	}
+
+	detail, err := bridge.GetSession(session.SessionID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if len(detail.Processes) != 1 || detail.Processes[0].LaunchID != launch.LaunchID {
+		t.Fatalf("session detail missing process: %+v", detail)
+	}
+
+	term, err := bridge.TerminateLaunch(launch.LaunchID)
+	if err != nil {
+		t.Fatalf("TerminateLaunch: %v", err)
+	}
+	if !term.SignalSent {
+		t.Fatalf("expected signal sent, got %+v", term)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		processes = bridge.ListProcesses(session.SessionID)
+		if len(processes) == 1 && processes[0].Status == "exited" {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if len(processes) != 1 || processes[0].Status != "exited" {
+		t.Fatalf("process did not exit: %+v", processes)
+	}
+
+	if err := bridge.DestroySession(session.SessionID); err != nil {
+		t.Fatalf("DestroySession: %v", err)
+	}
+	if _, err := bridge.GetSession(session.SessionID); err == nil {
+		t.Fatal("expected destroyed session to be missing")
+	}
+}
+
+func TestSurfaceAssociationPrefersPIDAndDoesNotStealAcrossLaunches(t *testing.T) {
+	bridge, err := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	now := time.Now().Add(-time.Second)
+	bridge.mu.Lock()
+	bridge.sessions["session-a"] = schema.CompositorSession{SessionID: "session-a", CreatedAt: now, LastUsedAt: now}
+	bridge.sessions["session-b"] = schema.CompositorSession{SessionID: "session-b", CreatedAt: now, LastUsedAt: now}
+	bridge.launches["launch-a"] = &launchRecord{expectedAppID: "same-app", process: schema.CompositorLaunchProcess{LaunchID: "launch-a", SessionID: "session-a", PID: 111, Status: "running", StartedAt: now}}
+	bridge.launches["launch-b"] = &launchRecord{expectedAppID: "same-app", process: schema.CompositorLaunchProcess{LaunchID: "launch-b", SessionID: "session-b", PID: 222, Status: "running", StartedAt: now}}
+	bridge.mu.Unlock()
+
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{
+		Type:    schema.PluginMessageSurfaceEvent,
+		Event:   schema.SurfaceEventMapped,
+		Surface: schema.CompositorSurface{ID: "view-b", AppID: "same-app"},
+		Client:  schema.CompositorClientIdentity{PID: 222, UID: 1001},
+	})
+
+	procsA := bridge.ListProcesses("session-a")
+	procsB := bridge.ListProcesses("session-b")
+	if len(procsA) != 1 || len(procsA[0].Surfaces) != 0 {
+		t.Fatalf("session A stole surface: %+v", procsA)
+	}
+	if len(procsB) != 1 || len(procsB[0].Surfaces) != 1 || procsB[0].Surfaces[0] != "view-b" {
+		t.Fatalf("session B missing exact-PID surface: %+v", procsB)
+	}
+}
+
+func TestAmbiguousHintsDoNotBindOrStealSurfaces(t *testing.T) {
+	bridge, err := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	now := time.Now().Add(-time.Second)
+	bridge.mu.Lock()
+	bridge.sessions["session-a"] = schema.CompositorSession{SessionID: "session-a", CreatedAt: now, LastUsedAt: now}
+	bridge.sessions["session-b"] = schema.CompositorSession{SessionID: "session-b", CreatedAt: now, LastUsedAt: now}
+	bridge.launches["launch-a"] = &launchRecord{expectedAppID: "same-app", process: schema.CompositorLaunchProcess{LaunchID: "launch-a", SessionID: "session-a", PID: 111, Status: "running", StartedAt: now}}
+	bridge.launches["launch-b"] = &launchRecord{expectedAppID: "same-app", process: schema.CompositorLaunchProcess{LaunchID: "launch-b", SessionID: "session-b", PID: 222, Status: "running", StartedAt: now}}
+	bridge.mu.Unlock()
+
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{
+		Type:    schema.PluginMessageSurfaceEvent,
+		Event:   schema.SurfaceEventMapped,
+		Surface: schema.CompositorSurface{ID: "view-ambiguous", AppID: "same-app"},
+		Client:  schema.CompositorClientIdentity{PID: 999, UID: 1001},
+	})
+
+	if procs := bridge.ListProcesses("session-a"); len(procs) != 1 || len(procs[0].Surfaces) != 0 {
+		t.Fatalf("ambiguous hint bound to session A: %+v", procs)
+	}
+	if procs := bridge.ListProcesses("session-b"); len(procs) != 1 || len(procs[0].Surfaces) != 0 {
+		t.Fatalf("ambiguous hint bound to session B: %+v", procs)
+	}
+}
+
+func TestStaleExitedPIDDoesNotBindReusedPIDSurface(t *testing.T) {
+	bridge, err := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	now := time.Now().Add(-time.Second)
+	bridge.mu.Lock()
+	bridge.sessions["session-old"] = schema.CompositorSession{SessionID: "session-old", CreatedAt: now, LastUsedAt: now}
+	bridge.launches["launch-old"] = &launchRecord{process: schema.CompositorLaunchProcess{LaunchID: "launch-old", SessionID: "session-old", PID: 444, Status: "exited", StartedAt: now}}
+	bridge.mu.Unlock()
+
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{
+		Type:    schema.PluginMessageSurfaceEvent,
+		Event:   schema.SurfaceEventMapped,
+		Surface: schema.CompositorSurface{ID: "view-reused-pid", AppID: "other"},
+		Client:  schema.CompositorClientIdentity{PID: 444, UID: 1001},
+	})
+
+	if procs := bridge.ListProcesses("session-old"); len(procs) != 1 || len(procs[0].Surfaces) != 0 {
+		t.Fatalf("stale exited launch captured reused pid surface: %+v", procs)
+	}
+}
+
+func TestResetSessionClosesSurfacesForExitedLaunches(t *testing.T) {
+	bridge, err := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	server, client, cleanup := unixSocketPair(t)
+	defer cleanup()
+	go bridge.HandlePluginConn(server)
+	dec := json.NewDecoder(client)
+	readInitialSync(t, dec)
+
+	now := time.Now().Add(-time.Second)
+	bridge.mu.Lock()
+	bridge.sessions["session-x"] = schema.CompositorSession{SessionID: "session-x", CreatedAt: now, LastUsedAt: now}
+	bridge.launches["launch-x"] = &launchRecord{process: schema.CompositorLaunchProcess{LaunchID: "launch-x", SessionID: "session-x", PID: 333, Status: "exited", StartedAt: now}}
+	bridge.surfaces["view-x"] = schema.CompositorTrackedSurface{Surface: schema.CompositorSurface{ID: "view-x"}, Client: schema.CompositorClientIdentity{PID: 333}, UpdatedAt: now}
+	bridge.surfaceLaunch["view-x"] = "launch-x"
+	bridge.mu.Unlock()
+
+	resetDone := make(chan error, 1)
+	go func() { resetDone <- bridge.ResetSession("session-x") }()
+	var closeMsg schema.CompositorCloseSurface
+	if err := dec.Decode(&closeMsg); err != nil {
+		t.Fatalf("decode close surface: %v", err)
+	}
+	if closeMsg.Type != schema.PluginMessageCloseSurface || closeMsg.SurfaceID != "view-x" {
+		t.Fatalf("got close msg %+v, want view-x", closeMsg)
+	}
+	select {
+	case err := <-resetDone:
+		if err != nil {
+			t.Fatalf("ResetSession: %v", err)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("timed out waiting for reset")
+	}
+}
+
 func TestDispatchAllowsNonRootListSurfaces(t *testing.T) {
 	bridge, err := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
 	if err != nil {
