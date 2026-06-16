@@ -757,15 +757,31 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         }
 
         auto view = view_it->second;
-        wlr_surface *surface = find_capture_surface(view);
-        if (!surface)
+        auto bbox = view->get_bounding_box();
+        if ((bbox.width <= 0) || (bbox.height <= 0))
         {
-            send_capture_error(request, "surface buffer not available");
+            send_capture_error(request, "surface has empty dimensions");
             return;
         }
 
-        uint32_t width = static_cast<uint32_t>(surface->current.buffer_width);
-        uint32_t height = static_cast<uint32_t>(surface->current.buffer_height);
+        wf::auxilliary_buffer_t snapshot_buffer;
+        auto allocation = snapshot_buffer.allocate({bbox.width, bbox.height});
+        if (allocation == wf::buffer_reallocation_result_t::FAILED)
+        {
+            send_capture_error(request, "snapshot buffer allocation failed");
+            return;
+        }
+        view->take_snapshot(snapshot_buffer);
+
+        wlr_buffer *capture_buffer = snapshot_buffer.get_buffer();
+        if (!capture_buffer)
+        {
+            send_capture_error(request, "snapshot buffer not available");
+            return;
+        }
+
+        uint32_t width = static_cast<uint32_t>(bbox.width);
+        uint32_t height = static_cast<uint32_t>(bbox.height);
         if ((width == 0) || (height == 0))
         {
             send_capture_error(request, "surface buffer has empty dimensions");
@@ -775,7 +791,7 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         void *data = nullptr;
         uint32_t format = 0;
         size_t stride = 0;
-        if (!wlr_buffer_begin_data_ptr_access(surface->current.buffer,
+        if (!wlr_buffer_begin_data_ptr_access(capture_buffer,
             WLR_BUFFER_DATA_PTR_ACCESS_READ, &data, &format, &stride))
         {
             send_capture_error(request, "surface buffer does not support CPU readback");
@@ -800,7 +816,7 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
                 }
             }
         }
-        wlr_buffer_end_data_ptr_access(surface->current.buffer);
+        wlr_buffer_end_data_ptr_access(capture_buffer);
 
         if (!supported_format)
         {
