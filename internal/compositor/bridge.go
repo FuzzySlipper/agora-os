@@ -56,6 +56,8 @@ type Bridge struct {
 	actorUID       *uint32
 	captureSeq     uint64
 	captureWaiters map[string]chan schema.CompositorCapturePluginResponse
+	inputSeq       uint64
+	inputWaiters   map[string]chan schema.CompositorInputPluginResponse
 }
 
 func New(bus publisher, cfg Config) (*Bridge, error) {
@@ -71,6 +73,7 @@ func New(bus publisher, cfg Config) (*Bridge, error) {
 		policies:         make(map[string]schema.CompositorSurfacePolicy),
 		grants:           make(map[string]map[uint32]schema.SurfaceAccessGrant),
 		captureWaiters:   make(map[string]chan schema.CompositorCapturePluginResponse),
+		inputWaiters:     make(map[string]chan schema.CompositorInputPluginResponse),
 	}, nil
 }
 
@@ -119,6 +122,16 @@ func (b *Bridge) HandlePluginConn(conn net.Conn) {
 				Format:     msg.Format,
 				DataBase64: msg.DataBase64,
 				Error:      msg.Error,
+			})
+		case schema.PluginMessageInputResponse:
+			b.handleInputResponse(schema.CompositorInputPluginResponse{
+				Type:      msg.Type,
+				RequestID: msg.RequestID,
+				SurfaceID: msg.SurfaceID,
+				OK:        msg.OK,
+				Accepted:  msg.Accepted,
+				Rejected:  msg.Rejected,
+				Error:     msg.Error,
 			})
 		}
 	}
@@ -229,6 +242,66 @@ func (b *Bridge) CaptureSurface(req schema.CaptureSurfaceRequest) (schema.Captur
 		Height:    pluginResp.Height,
 		Format:    pluginResp.Format,
 		SHA256:    hex.EncodeToString(sum[:]),
+	}, nil
+}
+
+func (b *Bridge) InjectInput(req schema.InjectInputRequest) (schema.InjectInputResponse, error) {
+	b.mu.Lock()
+	if _, ok := b.surfaces[req.SurfaceID]; !ok {
+		b.mu.Unlock()
+		return schema.InjectInputResponse{}, fmt.Errorf("surface %s not found", req.SurfaceID)
+	}
+	if b.plugin == nil {
+		b.mu.Unlock()
+		return schema.InjectInputResponse{}, fmt.Errorf("no plugin connected")
+	}
+	if len(req.Events) == 0 {
+		b.mu.Unlock()
+		return schema.InjectInputResponse{}, fmt.Errorf("at least one input event is required")
+	}
+	b.inputSeq++
+	requestID := fmt.Sprintf("input-%d-%d", time.Now().UnixNano(), b.inputSeq)
+	ch := make(chan schema.CompositorInputPluginResponse, 1)
+	b.inputWaiters[requestID] = ch
+	session := b.plugin
+	b.mu.Unlock()
+
+	defer func() {
+		b.mu.Lock()
+		delete(b.inputWaiters, requestID)
+		b.mu.Unlock()
+	}()
+
+	coordinateSpace := req.CoordinateSpace
+	if coordinateSpace == "" {
+		coordinateSpace = "surface"
+	}
+	if err := session.Send(schema.CompositorInjectInput{
+		Type:            schema.PluginMessageInjectInput,
+		RequestID:       requestID,
+		SurfaceID:       req.SurfaceID,
+		CoordinateSpace: coordinateSpace,
+		Events:          req.Events,
+	}); err != nil {
+		return schema.InjectInputResponse{}, err
+	}
+
+	var pluginResp schema.CompositorInputPluginResponse
+	select {
+	case pluginResp = <-ch:
+	case <-time.After(5 * time.Second):
+		return schema.InjectInputResponse{}, fmt.Errorf("input injection timed out")
+	}
+	if !pluginResp.OK {
+		if pluginResp.Error == "" {
+			pluginResp.Error = "input injection failed"
+		}
+		return schema.InjectInputResponse{}, fmt.Errorf("%s", pluginResp.Error)
+	}
+	return schema.InjectInputResponse{
+		SurfaceID: pluginResp.SurfaceID,
+		Accepted:  pluginResp.Accepted,
+		Rejected:  pluginResp.Rejected,
 	}, nil
 }
 
@@ -399,6 +472,19 @@ func (b *Bridge) dispatch(peerUID uint32, req schema.Request) (schema.Response, 
 			return schema.Response{}, err
 		}
 		return okResponse(capture), nil
+	case schema.MethodInjectInput:
+		var body schema.InjectInputRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			return schema.Response{}, fmt.Errorf("bad body: %w", err)
+		}
+		if body.SurfaceID == "" {
+			return schema.Response{}, fmt.Errorf("surface_id is required")
+		}
+		resp, err := b.InjectInput(body)
+		if err != nil {
+			return schema.Response{}, err
+		}
+		return okResponse(resp), nil
 	case schema.MethodUpsertSurfacePolicy:
 		var body schema.UpsertSurfacePolicyRequest
 		if err := json.Unmarshal(req.Body, &body); err != nil {
@@ -499,6 +585,19 @@ func (b *Bridge) dispatch(peerUID uint32, req schema.Request) (schema.Response, 
 func (b *Bridge) handleCaptureResponse(resp schema.CompositorCapturePluginResponse) {
 	b.mu.RLock()
 	waiter := b.captureWaiters[resp.RequestID]
+	b.mu.RUnlock()
+	if waiter == nil {
+		return
+	}
+	select {
+	case waiter <- resp:
+	default:
+	}
+}
+
+func (b *Bridge) handleInputResponse(resp schema.CompositorInputPluginResponse) {
+	b.mu.RLock()
+	waiter := b.inputWaiters[resp.RequestID]
 	b.mu.RUnlock()
 	if waiter == nil {
 		return

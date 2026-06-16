@@ -28,6 +28,14 @@ func main() {
 	switch args[0] {
 	case "capture":
 		err = cmdCapture(args[1:], *pretty)
+	case "move":
+		err = cmdMove(args[1:], *pretty)
+	case "click":
+		err = cmdClick(args[1:], *pretty)
+	case "key":
+		err = cmdKey(args[1:], *pretty)
+	case "type":
+		err = cmdType(args[1:], *pretty)
 	case "grant-viewport":
 		err = cmdGrantViewport(args[1:], *pretty)
 	case "revoke-viewport":
@@ -57,6 +65,10 @@ func usage() {
 
 Commands:
   capture            Capture a tracked surface to a PNG artifact
+  move               Move pointer over a tracked surface
+  click              Send a pointer click to a tracked surface
+  key                Send a key press/release pair to a tracked surface
+  type               Type ASCII text into a tracked surface
   grant-viewport     Record an explicit viewport grant for an agent on a surface
   revoke-viewport    Revoke a previously granted viewport
   check-access       Ask the compositor bridge whether an agent may access a surface
@@ -84,6 +96,89 @@ func cmdCapture(args []string, pretty bool) error {
 	resp, err := call(compositorSock, schema.MethodCaptureSurface, schema.CaptureSurfaceRequest{
 		SurfaceID: *surfaceID,
 		Format:    *format,
+	})
+	if err != nil {
+		return err
+	}
+	return printJSON(resp, pretty)
+}
+
+func cmdMove(args []string, pretty bool) error {
+	fs := flag.NewFlagSet("move", flag.ExitOnError)
+	surfaceID := fs.String("surface", "", "surface ID (required)")
+	x := fs.Float64("x", 0, "surface-local x coordinate")
+	y := fs.Float64("y", 0, "surface-local y coordinate")
+	fs.Parse(args)
+	if *surfaceID == "" {
+		return fmt.Errorf("--surface is required")
+	}
+	return sendInput(*surfaceID, []schema.CompositorInputEvent{{Type: "pointer_move", X: *x, Y: *y}}, pretty)
+}
+
+func cmdClick(args []string, pretty bool) error {
+	fs := flag.NewFlagSet("click", flag.ExitOnError)
+	surfaceID := fs.String("surface", "", "surface ID (required)")
+	x := fs.Float64("x", 0, "surface-local x coordinate")
+	y := fs.Float64("y", 0, "surface-local y coordinate")
+	button := fs.Uint("button", 0x110, "linux input button code (default BTN_LEFT)")
+	fs.Parse(args)
+	if *surfaceID == "" {
+		return fmt.Errorf("--surface is required")
+	}
+	events := []schema.CompositorInputEvent{
+		{Type: "pointer_move", X: *x, Y: *y},
+		{Type: "pointer_button", X: *x, Y: *y, Button: uint32(*button), State: "pressed"},
+		{Type: "pointer_button", X: *x, Y: *y, Button: uint32(*button), State: "released"},
+	}
+	return sendInput(*surfaceID, events, pretty)
+}
+
+func cmdKey(args []string, pretty bool) error {
+	fs := flag.NewFlagSet("key", flag.ExitOnError)
+	surfaceID := fs.String("surface", "", "surface ID (required)")
+	key := fs.String("key", "", "key name or linux input keycode")
+	fs.Parse(args)
+	if *surfaceID == "" || *key == "" {
+		return fmt.Errorf("--surface and --key are required")
+	}
+	keycode, err := keycodeFor(*key)
+	if err != nil {
+		return err
+	}
+	events := []schema.CompositorInputEvent{
+		{Type: "key", Keycode: keycode, State: "pressed"},
+		{Type: "key", Keycode: keycode, State: "released"},
+	}
+	return sendInput(*surfaceID, events, pretty)
+}
+
+func cmdType(args []string, pretty bool) error {
+	fs := flag.NewFlagSet("type", flag.ExitOnError)
+	surfaceID := fs.String("surface", "", "surface ID (required)")
+	text := fs.String("text", "", "ASCII text to type")
+	fs.Parse(args)
+	if *surfaceID == "" {
+		return fmt.Errorf("--surface is required")
+	}
+	events := make([]schema.CompositorInputEvent, 0, len(*text)*2)
+	for _, ch := range *text {
+		keycode, err := keycodeForRune(ch)
+		if err != nil {
+			return err
+		}
+		events = append(events,
+			schema.CompositorInputEvent{Type: "key", Keycode: keycode, State: "pressed"},
+			schema.CompositorInputEvent{Type: "key", Keycode: keycode, State: "released"},
+		)
+	}
+	return sendInput(*surfaceID, events, pretty)
+}
+
+func sendInput(surfaceID string, events []schema.CompositorInputEvent, pretty bool) error {
+	resp, err := call(compositorSock, schema.MethodInjectInput, schema.InjectInputRequest{
+		SurfaceID:       surfaceID,
+		CoordinateSpace: "surface",
+		Events:          events,
 	})
 	if err != nil {
 		return err
@@ -187,6 +282,46 @@ func cmdListSurfaces(pretty bool) error {
 		return err
 	}
 	return printJSON(resp, pretty)
+}
+
+func keycodeFor(raw string) (uint32, error) {
+	if raw == "" {
+		return 0, fmt.Errorf("empty key")
+	}
+	var numeric uint32
+	if _, err := fmt.Sscanf(raw, "%d", &numeric); err == nil && numeric != 0 {
+		return numeric, nil
+	}
+	lower := strings.ToLower(raw)
+	if len(lower) == 1 {
+		return keycodeForRune(rune(lower[0]))
+	}
+	keycodes := map[string]uint32{
+		"return": 28, "enter": 28, "space": 57, "tab": 15, "escape": 1, "esc": 1,
+		"backspace": 14, "delete": 111, "left": 105, "right": 106, "up": 103, "down": 108,
+	}
+	if code, ok := keycodes[lower]; ok {
+		return code, nil
+	}
+	return 0, fmt.Errorf("unsupported key %q", raw)
+}
+
+func keycodeForRune(ch rune) (uint32, error) {
+	if ch >= 'A' && ch <= 'Z' {
+		ch += 'a' - 'A'
+	}
+	letters := map[rune]uint32{
+		'a': 30, 'b': 48, 'c': 46, 'd': 32, 'e': 18, 'f': 33, 'g': 34,
+		'h': 35, 'i': 23, 'j': 36, 'k': 37, 'l': 38, 'm': 50, 'n': 49,
+		'o': 24, 'p': 25, 'q': 16, 'r': 19, 's': 31, 't': 20, 'u': 22,
+		'v': 47, 'w': 17, 'x': 45, 'y': 21, 'z': 44,
+		' ': 57, '\n': 28, '\t': 15,
+		'1': 2, '2': 3, '3': 4, '4': 5, '5': 6, '6': 7, '7': 8, '8': 9, '9': 10, '0': 11,
+	}
+	if code, ok := letters[ch]; ok {
+		return code, nil
+	}
+	return 0, fmt.Errorf("unsupported character %q", ch)
 }
 
 func parseActions(raw string) []schema.CompositorAccessAction {
