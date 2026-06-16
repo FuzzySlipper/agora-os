@@ -8,7 +8,25 @@ const (
 )
 
 const (
+	ErrorSurfaceNotFound         = "surface_not_found"
+	ErrorSurfaceStale            = "surface_stale"
+	ErrorCaptureDenied           = "capture_denied"
+	ErrorCaptureBlackFrame       = "capture_black_frame"
+	ErrorInputDenied             = "input_denied"
+	ErrorGrantExpired            = "grant_expired"
+	ErrorAppNotReady             = "app_not_ready"
+	ErrorFrameTimeout            = "frame_timeout"
+	ErrorSemanticTreeUnavailable = "semantic_tree_unavailable"
+	ErrorCompositorUnavailable   = "compositor_unavailable"
+	ErrorBackendUnsupported      = "backend_unsupported"
+	ErrorSessionNotFound         = "session_not_found"
+	ErrorInvalidCoordinates      = "invalid_coordinates"
+	ErrorProtocolError           = "protocol_error"
+)
+
+const (
 	MethodListSurfaces        = "list_surfaces"
+	MethodGetSurface          = "get_surface"
 	MethodCaptureSurface      = "capture_surface"
 	MethodInjectInput         = "inject_input"
 	MethodCreateSession       = "create_session"
@@ -19,6 +37,22 @@ const (
 	MethodLaunchApp           = "launch_app"
 	MethodListProcesses       = "list_processes"
 	MethodTerminateLaunch     = "terminate_launch"
+	MethodWaitForSurface      = "wait_for_surface"
+	MethodWaitForFrame        = "wait_for_frame"
+	MethodWaitForAppReady     = "wait_for_app_ready"
+	MethodWaitForRenderIdle   = "wait_for_render_idle"
+	MethodWaitForNoPending    = "wait_for_no_pending"
+	MethodListArtifacts       = "list_artifacts"
+	MethodGetArtifact         = "get_artifact"
+	MethodExportArtifacts     = "export_artifacts"
+	MethodCreateOutput        = "create_output"
+	MethodDestroyOutput       = "destroy_output"
+	MethodResizeOutput        = "resize_output"
+	MethodSetOutputScale      = "set_output_scale"
+	MethodListOutputs         = "list_outputs"
+	MethodMoveSurfaceToOutput = "move_surface_to_output"
+	MethodListOutputSurfaces  = "list_output_surfaces"
+	MethodCaptureOutput       = "capture_output"
 	MethodUpsertSurfacePolicy = "upsert_surface_policy"
 	MethodRemoveSurfacePolicy = "remove_surface_policy"
 	MethodSetInputContext     = "set_input_context"
@@ -51,6 +85,8 @@ const (
 	PluginMessageCaptureResponse    CompositorPluginMessageType = "capture_response"
 	PluginMessageInjectInput        CompositorPluginMessageType = "inject_input"
 	PluginMessageInputResponse      CompositorPluginMessageType = "input_response"
+	PluginMessagePlaceSurface       CompositorPluginMessageType = "place_surface"
+	PluginMessagePlaceResponse      CompositorPluginMessageType = "place_response"
 	PluginMessagePolicyReplace      CompositorPluginMessageType = "policy_replace"
 	PluginMessagePolicyUpsert       CompositorPluginMessageType = "policy_upsert"
 	PluginMessagePolicyRemove       CompositorPluginMessageType = "policy_remove"
@@ -65,6 +101,7 @@ const (
 	SurfaceEventMapped      CompositorSurfaceEventName = "mapped"
 	SurfaceEventUnmapped    CompositorSurfaceEventName = "unmapped"
 	SurfaceEventFocused     CompositorSurfaceEventName = "focused"
+	SurfaceEventFrameDone   CompositorSurfaceEventName = "frame_done"
 	SurfaceEventInputDenied CompositorSurfaceEventName = "input_denied"
 )
 
@@ -77,11 +114,16 @@ const (
 )
 
 type CompositorSurface struct {
-	ID            string `json:"id"`
-	WayfireViewID uint32 `json:"wayfire_view_id"`
-	AppID         string `json:"app_id,omitempty"`
-	Title         string `json:"title,omitempty"`
-	Role          string `json:"role,omitempty"`
+	ID            string           `json:"id"`
+	WayfireViewID uint32           `json:"wayfire_view_id"`
+	AppID         string           `json:"app_id,omitempty"`
+	Title         string           `json:"title,omitempty"`
+	Role          string           `json:"role,omitempty"`
+	Geometry      *SurfaceGeometry `json:"geometry,omitempty"`
+	PixelSize     *SurfaceGeometry `json:"pixel_size,omitempty"`
+	ScaleFactor   float64          `json:"scale_factor,omitempty"`
+	Visible       *bool            `json:"visible,omitempty"`
+	OutputID      string           `json:"output_id,omitempty"`
 }
 
 type CompositorClientIdentity struct {
@@ -195,12 +237,37 @@ type CompositorCloseSurfacesByUID struct {
 	OwnerUID uint32                      `json:"owner_uid"`
 }
 
+type SurfaceGeometry struct {
+	X      int `json:"x"`
+	Y      int `json:"y"`
+	Width  int `json:"width"`
+	Height int `json:"height"`
+}
+
+type SurfaceGrantState struct {
+	OwnerUID     uint32   `json:"owner_uid"`
+	GrantedUIDs  []uint32 `json:"granted_uids,omitempty"`
+	GrantActions []string `json:"grant_actions,omitempty"`
+}
+
 type CompositorTrackedSurface struct {
-	Surface   CompositorSurface          `json:"surface"`
-	Client    CompositorClientIdentity   `json:"client"`
-	LastEvent CompositorSurfaceEventName `json:"last_event"`
-	Device    string                     `json:"device,omitempty"`
-	UpdatedAt time.Time                  `json:"updated_at"`
+	Surface              CompositorSurface          `json:"surface"`
+	Client               CompositorClientIdentity   `json:"client"`
+	LastEvent            CompositorSurfaceEventName `json:"last_event"`
+	Device               string                     `json:"device,omitempty"`
+	UpdatedAt            time.Time                  `json:"updated_at"`
+	Geometry             *SurfaceGeometry           `json:"geometry,omitempty"`
+	Focused              bool                       `json:"focused"`
+	PixelSize            *SurfaceGeometry           `json:"pixel_size,omitempty"`
+	ScaleFactor          float64                    `json:"scale_factor,omitempty"`
+	Capturable           bool                       `json:"capturable"`
+	InputInjectable      bool                       `json:"input_injectable"`
+	FrameCount           uint64                     `json:"frame_count"`
+	LastPresentTimestamp *time.Time                 `json:"last_present_timestamp,omitempty"`
+	Visible              bool                       `json:"visible"`
+	SessionID            string                     `json:"session_id,omitempty"`
+	OutputID             string                     `json:"output_id,omitempty"`
+	GrantState           *SurfaceGrantState         `json:"grant_state,omitempty"`
 }
 
 type CompositorBusEvent struct {
@@ -214,20 +281,71 @@ type ListSurfacesResponse struct {
 	Surfaces []CompositorTrackedSurface `json:"surfaces,omitempty"`
 }
 
-type CaptureSurfaceRequest struct {
+type GetSurfaceRequest struct {
 	SurfaceID string `json:"surface_id"`
-	Format    string `json:"format,omitempty"`
-	MaxWidth  uint32 `json:"max_width,omitempty"`
-	MaxHeight uint32 `json:"max_height,omitempty"`
+}
+
+type CaptureSurfaceRequest struct {
+	SurfaceID             string `json:"surface_id"`
+	Format                string `json:"format,omitempty"`
+	MaxWidth              uint32 `json:"max_width,omitempty"`
+	MaxHeight             uint32 `json:"max_height,omitempty"`
+	Export                bool   `json:"export,omitempty"`
+	SessionID             string `json:"session_id,omitempty"`
+	EvidenceClass         string `json:"evidence_class,omitempty"`
+	ASHACommandSequenceID string `json:"asha_command_sequence_id,omitempty"`
 }
 
 type CaptureSurfaceResponse struct {
-	SurfaceID string `json:"surface_id"`
-	Path      string `json:"path"`
-	Width     uint32 `json:"width"`
-	Height    uint32 `json:"height"`
-	Format    string `json:"format"`
-	SHA256    string `json:"sha256"`
+	SurfaceID string          `json:"surface_id"`
+	RequestID string          `json:"request_id,omitempty"`
+	Path      string          `json:"path"`
+	Width     uint32          `json:"width"`
+	Height    uint32          `json:"height"`
+	Format    string          `json:"format"`
+	SHA256    string          `json:"sha256"`
+	Artifact  *ArtifactRecord `json:"artifact,omitempty"`
+}
+
+type ArtifactRecord struct {
+	ArtifactID            string    `json:"artifact_id"`
+	SessionID             string    `json:"session_id"`
+	SurfaceID             string    `json:"surface_id"`
+	RequestID             string    `json:"request_id"`
+	ImagePath             string    `json:"image_path"`
+	IndexPath             string    `json:"index_path"`
+	Width                 uint32    `json:"width"`
+	Height                uint32    `json:"height"`
+	Format                string    `json:"format"`
+	SHA256                string    `json:"sha256"`
+	CaptureBackend        string    `json:"capture_backend"`
+	EvidenceClass         string    `json:"evidence_class"`
+	Timestamp             time.Time `json:"timestamp"`
+	ASHACommandSequenceID string    `json:"asha_command_sequence_id,omitempty"`
+	Warnings              []string  `json:"warnings,omitempty"`
+}
+
+type ListArtifactsRequest struct {
+	SessionID string `json:"session_id"`
+}
+
+type ListArtifactsResponse struct {
+	Artifacts []ArtifactRecord `json:"artifacts,omitempty"`
+}
+
+type GetArtifactRequest struct {
+	ArtifactID string `json:"artifact_id"`
+}
+
+type ExportArtifactsRequest struct {
+	SessionID string `json:"session_id"`
+	To        string `json:"to"`
+}
+
+type ExportArtifactsResponse struct {
+	SessionID string   `json:"session_id"`
+	To        string   `json:"to"`
+	Copied    []string `json:"copied,omitempty"`
 }
 
 type InjectInputRequest struct {
@@ -301,6 +419,7 @@ type LaunchAppRequest struct {
 	RunAsGID      *uint32           `json:"run_as_gid,omitempty"`
 	ExpectedAppID string            `json:"expected_app_id,omitempty"`
 	ExpectedTitle string            `json:"expected_title,omitempty"`
+	Output        string            `json:"output,omitempty"`
 	WaitSurface   bool              `json:"wait_surface,omitempty"`
 	WaitTimeoutMs int               `json:"wait_timeout_ms,omitempty"`
 }
@@ -328,6 +447,140 @@ type TerminateLaunchResponse struct {
 	LaunchID       string   `json:"launch_id"`
 	SignalSent     bool     `json:"signal_sent"`
 	ClosedSurfaces []string `json:"closed_surfaces,omitempty"`
+}
+
+type WaitForSurfaceRequest struct {
+	SessionID string `json:"session_id,omitempty"`
+	AppID     string `json:"app_id,omitempty"`
+	Title     string `json:"title,omitempty"`
+	TimeoutMs int    `json:"timeout_ms,omitempty"`
+}
+
+type WaitForSurfaceResponse struct {
+	Surface CompositorTrackedSurface `json:"surface"`
+}
+
+type WaitForFrameRequest struct {
+	SurfaceID  string `json:"surface_id"`
+	AfterFrame uint64 `json:"after_frame,omitempty"`
+	TimeoutMs  int    `json:"timeout_ms,omitempty"`
+}
+
+type WaitForFrameResponse struct {
+	SurfaceID  string    `json:"surface_id"`
+	FrameCount uint64    `json:"frame_count"`
+	Timestamp  time.Time `json:"timestamp"`
+}
+
+type WaitForAppReadyRequest struct {
+	LaunchID  string `json:"launch_id"`
+	TimeoutMs int    `json:"timeout_ms,omitempty"`
+}
+
+type WaitForRenderIdleRequest struct {
+	SurfaceID string `json:"surface_id"`
+	IdleMs    int    `json:"idle_ms"`
+	TimeoutMs int    `json:"timeout_ms,omitempty"`
+}
+
+type WaitForNoPendingRequest struct {
+	SurfaceID string `json:"surface_id"`
+	TimeoutMs int    `json:"timeout_ms,omitempty"`
+}
+
+type WaitGenericResponse struct {
+	OK        bool      `json:"ok"`
+	SurfaceID string    `json:"surface_id,omitempty"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+// Logical outputs are fixed-resolution viewport zones mapped onto the physical
+// Wayfire output. They provide the ASHA virtual-output contract without relying
+// on a backend-specific virtual-output creation protocol.
+type LogicalOutput struct {
+	Name           string    `json:"name"`
+	Width          int       `json:"width"`
+	Height         int       `json:"height"`
+	Scale          float64   `json:"scale"`
+	Mode           string    `json:"mode"`
+	PhysicalX      int       `json:"physical_x"`
+	PhysicalY      int       `json:"physical_y"`
+	PhysicalWidth  int       `json:"physical_width"`
+	PhysicalHeight int       `json:"physical_height"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	Surfaces       []string  `json:"surfaces,omitempty"`
+}
+
+type OutputRequest struct {
+	Name string `json:"name"`
+}
+
+type CreateOutputRequest struct {
+	Name   string  `json:"name"`
+	Width  int     `json:"width"`
+	Height int     `json:"height"`
+	Scale  float64 `json:"scale,omitempty"`
+}
+
+type ResizeOutputRequest struct {
+	Name   string `json:"name"`
+	Width  int    `json:"width"`
+	Height int    `json:"height"`
+}
+
+type SetOutputScaleRequest struct {
+	Name  string  `json:"name"`
+	Scale float64 `json:"scale"`
+}
+
+type ListOutputsResponse struct {
+	Outputs []LogicalOutput `json:"outputs,omitempty"`
+}
+
+type MoveSurfaceToOutputRequest struct {
+	SurfaceID string `json:"surface_id"`
+	Output    string `json:"output"`
+}
+
+type MoveSurfaceToOutputResponse struct {
+	SurfaceID string          `json:"surface_id"`
+	Output    string          `json:"output"`
+	Geometry  SurfaceGeometry `json:"geometry"`
+}
+
+type ListOutputSurfacesResponse struct {
+	Output   LogicalOutput              `json:"output"`
+	Surfaces []CompositorTrackedSurface `json:"surfaces,omitempty"`
+}
+
+type CaptureOutputRequest struct {
+	Name                  string `json:"name"`
+	Export                bool   `json:"export,omitempty"`
+	SessionID             string `json:"session_id,omitempty"`
+	EvidenceClass         string `json:"evidence_class,omitempty"`
+	ASHACommandSequenceID string `json:"asha_command_sequence_id,omitempty"`
+}
+
+type CaptureOutputResponse struct {
+	Output   string                   `json:"output"`
+	Captures []CaptureSurfaceResponse `json:"captures,omitempty"`
+	Warnings []string                 `json:"warnings,omitempty"`
+}
+
+type CompositorPlaceSurface struct {
+	Type      string          `json:"type"`
+	RequestID string          `json:"request_id"`
+	SurfaceID string          `json:"surface_id"`
+	Geometry  SurfaceGeometry `json:"geometry"`
+}
+
+type CompositorPlacePluginResponse struct {
+	Type      string `json:"type"`
+	RequestID string `json:"request_id"`
+	SurfaceID string `json:"surface_id"`
+	OK        bool   `json:"ok"`
+	Error     string `json:"error,omitempty"`
 }
 
 type UpsertSurfacePolicyRequest struct {

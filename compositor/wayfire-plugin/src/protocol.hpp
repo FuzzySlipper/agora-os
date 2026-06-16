@@ -31,6 +31,12 @@ struct surface_snapshot_t
     std::string app_id;
     std::string title;
     std::string role;
+    int32_t x = 0;
+    int32_t y = 0;
+    int32_t width = 0;
+    int32_t height = 0;
+    double scale_factor = 1.0;
+    std::string output_id;
 };
 
 enum class bridge_message_kind
@@ -44,6 +50,7 @@ enum class bridge_message_kind
     close_surfaces_by_uid,
     capture_surface,
     inject_input,
+    place_surface,
 };
 
 enum class input_event_kind
@@ -79,6 +86,10 @@ struct bridge_message_t
     std::string request_id;
     std::string coordinate_space;
     std::vector<input_event_t> input_events;
+    int32_t x = 0;
+    int32_t y = 0;
+    int32_t width = 0;
+    int32_t height = 0;
     std::optional<uint32_t> actor_uid;
     std::optional<uint32_t> owner_uid;
 };
@@ -183,7 +194,15 @@ inline std::string encode_surface_event(std::string_view event_name, const surfa
         << "\"wayfire_view_id\":" << surface.wayfire_view_id << ","
         << "\"app_id\":\"" << json_escape(surface.app_id) << "\","
         << "\"title\":\"" << json_escape(surface.title) << "\","
-        << "\"role\":\"" << json_escape(surface.role) << "\"},"
+        << "\"role\":\"" << json_escape(surface.role) << "\","
+        << "\"geometry\":{" << "\"x\":" << surface.x << "," << "\"y\":" << surface.y << ","
+        << "\"width\":" << surface.width << "," << "\"height\":" << surface.height << "},"
+        << "\"pixel_size\":{" << "\"x\":0,\"y\":0,"
+        << "\"width\":" << static_cast<int32_t>(surface.width * surface.scale_factor) << ","
+        << "\"height\":" << static_cast<int32_t>(surface.height * surface.scale_factor) << "},"
+        << "\"scale_factor\":" << surface.scale_factor << ","
+        << "\"visible\":true,"
+        << "\"output_id\":\"" << json_escape(surface.output_id) << "\"},"
         << "\"client\":{"
         << "\"pid\":" << client.pid << ","
         << "\"uid\":" << client.uid << ","
@@ -211,6 +230,23 @@ inline std::string encode_capture_response(std::string_view request_id, std::str
         out << ",\"error\":\"" << json_escape(error) << "\"";
     }
 
+    out << "}";
+    return out.str();
+}
+
+
+inline std::string encode_place_response(std::string_view request_id, std::string_view surface_id,
+    bool ok, std::string_view error = "")
+{
+    std::ostringstream out;
+    out << "{\"type\":\"place_response\","
+        << "\"request_id\":\"" << json_escape(request_id) << "\","
+        << "\"surface_id\":\"" << json_escape(surface_id) << "\","
+        << "\"ok\":" << (ok ? "true" : "false");
+    if (!ok || !error.empty())
+    {
+        out << ",\"error\":\"" << json_escape(error) << "\"";
+    }
     out << "}";
     return out.str();
 }
@@ -568,6 +604,23 @@ inline bridge_message_t parse_bridge_message(const std::string& line)
         message.kind = bridge_message_kind::capture_surface;
         message.request_id = find_string_field(line, "request_id").value_or("");
         message.surface_id = find_string_field(line, "surface_id").value_or("");
+        return message;
+    }
+
+
+    if (*type == "place_surface")
+    {
+        message.kind = bridge_message_kind::place_surface;
+        message.request_id = find_string_field(line, "request_id").value_or("");
+        message.surface_id = find_string_field(line, "surface_id").value_or("");
+        auto geom = find_braced_region(line, "geometry", '{', '}');
+        if (geom.has_value())
+        {
+            message.x = find_int_field(*geom, "x").value_or(0);
+            message.y = find_int_field(*geom, "y").value_or(0);
+            message.width = find_int_field(*geom, "width").value_or(0);
+            message.height = find_int_field(*geom, "height").value_or(0);
+        }
         return message;
     }
 
