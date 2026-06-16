@@ -364,7 +364,11 @@ func TestSessionLifecycleAndLaunchTracking(t *testing.T) {
 		t.Fatalf("unexpected session: %+v", session)
 	}
 
-	launch, err := bridge.LaunchApp(schema.LaunchAppRequest{SessionID: session.SessionID, Command: "sleep 30"})
+	if session.SessionToken == "" {
+		t.Fatalf("expected session token")
+	}
+
+	launch, err := bridge.LaunchApp(schema.LaunchAppRequest{SessionID: session.SessionID, SessionToken: session.SessionToken, Command: "sleep 30"})
 	if err != nil {
 		t.Fatalf("LaunchApp: %v", err)
 	}

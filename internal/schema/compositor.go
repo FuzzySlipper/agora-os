@@ -1,6 +1,9 @@
 package schema
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 const (
 	CompositorPluginSocket  = "/run/agent-os/compositor-bridge.sock"
@@ -20,6 +23,8 @@ const (
 	ErrorCompositorUnavailable   = "compositor_unavailable"
 	ErrorBackendUnsupported      = "backend_unsupported"
 	ErrorSessionNotFound         = "session_not_found"
+	ErrorSessionTokenRequired    = "session_token_required"
+	ErrorAppCommandUnavailable   = "app_command_unavailable"
 	ErrorInvalidCoordinates      = "invalid_coordinates"
 	ErrorProtocolError           = "protocol_error"
 )
@@ -57,6 +62,8 @@ const (
 	MethodA11ySemantic        = "a11y_semantic"
 	MethodA11yFind            = "a11y_find"
 	MethodA11yClick           = "a11y_click"
+	MethodAppCommand          = "app_command"
+	MethodAppResult           = "app_result"
 	MethodUpsertSurfacePolicy = "upsert_surface_policy"
 	MethodRemoveSurfacePolicy = "remove_surface_policy"
 	MethodSetInputContext     = "set_input_context"
@@ -296,6 +303,8 @@ type CaptureSurfaceRequest struct {
 	MaxHeight             uint32 `json:"max_height,omitempty"`
 	Export                bool   `json:"export,omitempty"`
 	SessionID             string `json:"session_id,omitempty"`
+	SessionToken          string `json:"session_token,omitempty"`
+	AuditCorrelationID    string `json:"audit_correlation_id,omitempty"`
 	EvidenceClass         string `json:"evidence_class,omitempty"`
 	ASHACommandSequenceID string `json:"asha_command_sequence_id,omitempty"`
 }
@@ -323,6 +332,7 @@ type ArtifactRecord struct {
 	Format                string    `json:"format"`
 	SHA256                string    `json:"sha256"`
 	CaptureBackend        string    `json:"capture_backend"`
+	AuditCorrelationID    string    `json:"audit_correlation_id,omitempty"`
 	EvidenceClass         string    `json:"evidence_class"`
 	Timestamp             time.Time `json:"timestamp"`
 	ASHACommandSequenceID string    `json:"asha_command_sequence_id,omitempty"`
@@ -353,9 +363,12 @@ type ExportArtifactsResponse struct {
 }
 
 type InjectInputRequest struct {
-	SurfaceID       string                 `json:"surface_id"`
-	CoordinateSpace string                 `json:"coordinate_space,omitempty"`
-	Events          []CompositorInputEvent `json:"events"`
+	SurfaceID          string                 `json:"surface_id"`
+	SessionID          string                 `json:"session_id,omitempty"`
+	SessionToken       string                 `json:"session_token,omitempty"`
+	AuditCorrelationID string                 `json:"audit_correlation_id,omitempty"`
+	CoordinateSpace    string                 `json:"coordinate_space,omitempty"`
+	Events             []CompositorInputEvent `json:"events"`
 }
 
 type InjectInputResponse struct {
@@ -369,6 +382,8 @@ type CompositorSession struct {
 	Label              string                     `json:"label,omitempty"`
 	ProjectID          string                     `json:"project_id,omitempty"`
 	TaskID             int                        `json:"task_id,omitempty"`
+	AgentIdentity      string                     `json:"agent_identity,omitempty"`
+	SessionToken       string                     `json:"session_token,omitempty"`
 	ASHAScenarioID     string                     `json:"asha_scenario_id,omitempty"`
 	RepoCommit         string                     `json:"repo_commit,omitempty"`
 	RepoBranch         string                     `json:"repo_branch,omitempty"`
@@ -385,6 +400,7 @@ type CreateSessionRequest struct {
 	Label              string `json:"label,omitempty"`
 	ProjectID          string `json:"project_id,omitempty"`
 	TaskID             int    `json:"task_id,omitempty"`
+	AgentIdentity      string `json:"agent_identity,omitempty"`
 	ASHAScenarioID     string `json:"asha_scenario_id,omitempty"`
 	RepoCommit         string `json:"repo_commit,omitempty"`
 	RepoBranch         string `json:"repo_branch,omitempty"`
@@ -415,17 +431,19 @@ type CompositorLaunchProcess struct {
 }
 
 type LaunchAppRequest struct {
-	SessionID     string            `json:"session_id,omitempty"`
-	Command       string            `json:"command"`
-	Cwd           string            `json:"cwd,omitempty"`
-	Env           map[string]string `json:"env,omitempty"`
-	RunAsUID      *uint32           `json:"run_as_uid,omitempty"`
-	RunAsGID      *uint32           `json:"run_as_gid,omitempty"`
-	ExpectedAppID string            `json:"expected_app_id,omitempty"`
-	ExpectedTitle string            `json:"expected_title,omitempty"`
-	Output        string            `json:"output,omitempty"`
-	WaitSurface   bool              `json:"wait_surface,omitempty"`
-	WaitTimeoutMs int               `json:"wait_timeout_ms,omitempty"`
+	SessionID          string            `json:"session_id,omitempty"`
+	Command            string            `json:"command"`
+	Cwd                string            `json:"cwd,omitempty"`
+	Env                map[string]string `json:"env,omitempty"`
+	SessionToken       string            `json:"session_token,omitempty"`
+	AuditCorrelationID string            `json:"audit_correlation_id,omitempty"`
+	RunAsUID           *uint32           `json:"run_as_uid,omitempty"`
+	RunAsGID           *uint32           `json:"run_as_gid,omitempty"`
+	ExpectedAppID      string            `json:"expected_app_id,omitempty"`
+	ExpectedTitle      string            `json:"expected_title,omitempty"`
+	Output             string            `json:"output,omitempty"`
+	WaitSurface        bool              `json:"wait_surface,omitempty"`
+	WaitTimeoutMs      int               `json:"wait_timeout_ms,omitempty"`
 }
 
 type LaunchAppResponse struct {
@@ -444,7 +462,8 @@ type ListProcessesResponse struct {
 }
 
 type TerminateLaunchRequest struct {
-	LaunchID string `json:"launch_id"`
+	LaunchID     string `json:"launch_id"`
+	SessionToken string `json:"session_token,omitempty"`
 }
 
 type TerminateLaunchResponse struct {
@@ -562,6 +581,8 @@ type CaptureOutputRequest struct {
 	Name                  string `json:"name"`
 	Export                bool   `json:"export,omitempty"`
 	SessionID             string `json:"session_id,omitempty"`
+	SessionToken          string `json:"session_token,omitempty"`
+	AuditCorrelationID    string `json:"audit_correlation_id,omitempty"`
 	EvidenceClass         string `json:"evidence_class,omitempty"`
 	ASHACommandSequenceID string `json:"asha_command_sequence_id,omitempty"`
 }
@@ -633,6 +654,39 @@ type A11yClickResponse struct {
 	ActionIndex int    `json:"action_index"`
 	ActionName  string `json:"action_name,omitempty"`
 	OK          bool   `json:"ok"`
+}
+
+type AppCommandRequest struct {
+	SurfaceID          string          `json:"surface_id"`
+	Command            json.RawMessage `json:"command"`
+	SessionID          string          `json:"session_id,omitempty"`
+	SessionToken       string          `json:"session_token,omitempty"`
+	AuditCorrelationID string          `json:"audit_correlation_id,omitempty"`
+	TimeoutMs          int             `json:"timeout_ms,omitempty"`
+}
+
+type AppCommandResponse struct {
+	RequestID          string                    `json:"request_id"`
+	SurfaceID          string                    `json:"surface_id"`
+	Endpoint           string                    `json:"endpoint"`
+	StatusCode         int                       `json:"status_code,omitempty"`
+	Result             json.RawMessage           `json:"result,omitempty"`
+	StartedAt          time.Time                 `json:"started_at"`
+	CompletedAt        time.Time                 `json:"completed_at"`
+	Before             *CompositorTrackedSurface `json:"before,omitempty"`
+	After              *CompositorTrackedSurface `json:"after,omitempty"`
+	SessionID          string                    `json:"session_id,omitempty"`
+	AuditCorrelationID string                    `json:"audit_correlation_id,omitempty"`
+}
+
+type AppResultRequest struct {
+	RequestID    string `json:"request_id"`
+	SessionID    string `json:"session_id,omitempty"`
+	SessionToken string `json:"session_token,omitempty"`
+}
+
+type AppResultResponse struct {
+	Command AppCommandResponse `json:"command"`
 }
 
 type UpsertSurfacePolicyRequest struct {
