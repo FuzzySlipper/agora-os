@@ -10,6 +10,7 @@ const (
 const (
 	MethodListSurfaces        = "list_surfaces"
 	MethodCaptureSurface      = "capture_surface"
+	MethodInjectInput         = "inject_input"
 	MethodUpsertSurfacePolicy = "upsert_surface_policy"
 	MethodRemoveSurfacePolicy = "remove_surface_policy"
 	MethodSetInputContext     = "set_input_context"
@@ -40,6 +41,8 @@ const (
 	PluginMessageSurfaceEvent       CompositorPluginMessageType = "surface_event"
 	PluginMessageCaptureSurface     CompositorPluginMessageType = "capture_surface"
 	PluginMessageCaptureResponse    CompositorPluginMessageType = "capture_response"
+	PluginMessageInjectInput        CompositorPluginMessageType = "inject_input"
+	PluginMessageInputResponse      CompositorPluginMessageType = "input_response"
 	PluginMessagePolicyReplace      CompositorPluginMessageType = "policy_replace"
 	PluginMessagePolicyUpsert       CompositorPluginMessageType = "policy_upsert"
 	PluginMessagePolicyRemove       CompositorPluginMessageType = "policy_remove"
@@ -92,6 +95,8 @@ type CompositorPluginEvent struct {
 	Height     uint32                      `json:"height,omitempty"`
 	Format     string                      `json:"format,omitempty"`
 	DataBase64 string                      `json:"data_base64,omitempty"`
+	Accepted   uint32                      `json:"accepted,omitempty"`
+	Rejected   uint32                      `json:"rejected,omitempty"`
 	Error      string                      `json:"error,omitempty"`
 }
 
@@ -123,6 +128,38 @@ type CompositorCapturePluginResponse struct {
 	Format     string                      `json:"format,omitempty"`
 	DataBase64 string                      `json:"data_base64,omitempty"`
 	Error      string                      `json:"error,omitempty"`
+}
+
+type CompositorInputEvent struct {
+	Type     string  `json:"type"`
+	X        float64 `json:"x,omitempty"`
+	Y        float64 `json:"y,omitempty"`
+	Button   uint32  `json:"button,omitempty"`
+	Keycode  uint32  `json:"keycode,omitempty"`
+	State    string  `json:"state,omitempty"`
+	Value    float64 `json:"value,omitempty"`
+	Discrete int32   `json:"discrete,omitempty"`
+	Axis     uint32  `json:"axis,omitempty"`
+	TouchID  int32   `json:"touch_id,omitempty"`
+	Phase    string  `json:"phase,omitempty"`
+}
+
+type CompositorInjectInput struct {
+	Type            CompositorPluginMessageType `json:"type"`
+	RequestID       string                      `json:"request_id"`
+	SurfaceID       string                      `json:"surface_id"`
+	CoordinateSpace string                      `json:"coordinate_space,omitempty"`
+	Events          []CompositorInputEvent      `json:"events"`
+}
+
+type CompositorInputPluginResponse struct {
+	Type      CompositorPluginMessageType `json:"type"`
+	RequestID string                      `json:"request_id"`
+	SurfaceID string                      `json:"surface_id"`
+	OK        bool                        `json:"ok"`
+	Accepted  uint32                      `json:"accepted"`
+	Rejected  uint32                      `json:"rejected"`
+	Error     string                      `json:"error,omitempty"`
 }
 
 type CompositorPolicyUpsert struct {
@@ -183,6 +220,18 @@ type CaptureSurfaceResponse struct {
 	Height    uint32 `json:"height"`
 	Format    string `json:"format"`
 	SHA256    string `json:"sha256"`
+}
+
+type InjectInputRequest struct {
+	SurfaceID       string                 `json:"surface_id"`
+	CoordinateSpace string                 `json:"coordinate_space,omitempty"`
+	Events          []CompositorInputEvent `json:"events"`
+}
+
+type InjectInputResponse struct {
+	SurfaceID string `json:"surface_id"`
+	Accepted  uint32 `json:"accepted"`
+	Rejected  uint32 `json:"rejected"`
 }
 
 type UpsertSurfacePolicyRequest struct {
