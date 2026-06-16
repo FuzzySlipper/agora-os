@@ -35,8 +35,11 @@ type Request struct {
 }
 
 type Response struct {
-	OK   bool            `json:"ok"`
-	Body json.RawMessage `json:"body,omitempty"`
+	OK           bool            `json:"ok"`
+	Body         json.RawMessage `json:"body,omitempty"`
+	ErrorClass   string          `json:"error_class,omitempty"`
+	ErrorMessage string          `json:"error_message,omitempty"`
+	ErrorDetail  json.RawMessage `json:"error_detail,omitempty"`
 }
 
 // --- Agent UID Range ---

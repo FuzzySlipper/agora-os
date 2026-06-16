@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -32,6 +33,42 @@ type Config struct {
 	GrantLogPath     string
 }
 
+type classifiedError struct {
+	class   string
+	message string
+}
+
+func (e classifiedError) Error() string { return e.message }
+
+func compositorError(class, format string, args ...any) error {
+	return classifiedError{class: class, message: fmt.Sprintf(format, args...)}
+}
+
+func classifyError(err error) (string, string) {
+	if err == nil {
+		return "", ""
+	}
+	var ce classifiedError
+	if ok := errors.As(err, &ce); ok {
+		return ce.class, ce.message
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "not found") && strings.Contains(msg, "surface"):
+		return schema.ErrorSurfaceNotFound, msg
+	case strings.Contains(msg, "session") && strings.Contains(msg, "not found"):
+		return schema.ErrorSessionNotFound, msg
+	case strings.Contains(msg, "no plugin connected"):
+		return schema.ErrorCompositorUnavailable, msg
+	case strings.Contains(msg, "capture timed out") || strings.Contains(msg, "frame") && strings.Contains(msg, "timed out"):
+		return schema.ErrorFrameTimeout, msg
+	case strings.Contains(msg, "unsupported"):
+		return schema.ErrorBackendUnsupported, msg
+	default:
+		return schema.ErrorProtocolError, msg
+	}
+}
+
 type pluginSession struct {
 	conn net.Conn
 	enc  *json.Encoder
@@ -49,11 +86,12 @@ func (s *pluginSession) Close() error {
 }
 
 type launchRecord struct {
-	process       schema.CompositorLaunchProcess
-	cmd           *exec.Cmd
-	done          chan struct{}
-	expectedAppID string
-	expectedTitle string
+	process        schema.CompositorLaunchProcess
+	cmd            *exec.Cmd
+	done           chan struct{}
+	expectedAppID  string
+	expectedTitle  string
+	expectedOutput string
 }
 
 type Bridge struct {
@@ -71,11 +109,16 @@ type Bridge struct {
 	captureWaiters map[string]chan schema.CompositorCapturePluginResponse
 	inputSeq       uint64
 	inputWaiters   map[string]chan schema.CompositorInputPluginResponse
+	placeSeq       uint64
+	placeWaiters   map[string]chan schema.CompositorPlacePluginResponse
 	sessionSeq     uint64
 	launchSeq      uint64
 	sessions       map[string]schema.CompositorSession
 	launches       map[string]*launchRecord
 	surfaceLaunch  map[string]string
+	artifacts      map[string]schema.ArtifactRecord
+	outputs        map[string]schema.LogicalOutput
+	surfaceOutput  map[string]string
 }
 
 func New(bus publisher, cfg Config) (*Bridge, error) {
@@ -92,9 +135,13 @@ func New(bus publisher, cfg Config) (*Bridge, error) {
 		grants:           make(map[string]map[uint32]schema.SurfaceAccessGrant),
 		captureWaiters:   make(map[string]chan schema.CompositorCapturePluginResponse),
 		inputWaiters:     make(map[string]chan schema.CompositorInputPluginResponse),
+		placeWaiters:     make(map[string]chan schema.CompositorPlacePluginResponse),
 		sessions:         make(map[string]schema.CompositorSession),
 		launches:         make(map[string]*launchRecord),
 		surfaceLaunch:    make(map[string]string),
+		artifacts:        make(map[string]schema.ArtifactRecord),
+		outputs:          make(map[string]schema.LogicalOutput),
+		surfaceOutput:    make(map[string]string),
 	}, nil
 }
 
@@ -144,6 +191,8 @@ func (b *Bridge) HandlePluginConn(conn net.Conn) {
 				DataBase64: msg.DataBase64,
 				Error:      msg.Error,
 			})
+		case schema.PluginMessagePlaceResponse:
+			b.handlePlaceResponse(schema.CompositorPlacePluginResponse{Type: string(msg.Type), RequestID: msg.RequestID, SurfaceID: msg.SurfaceID, OK: msg.OK, Error: msg.Error})
 		case schema.PluginMessageInputResponse:
 			b.handleInputResponse(schema.CompositorInputPluginResponse{
 				Type:      msg.Type,
@@ -163,19 +212,19 @@ func (b *Bridge) HandleControlConn(conn net.Conn) {
 
 	peerUID, err := peercred.PeerUID(conn)
 	if err != nil {
-		writeError(conn, fmt.Sprintf("peer credentials: %v", err))
+		writeError(conn, fmt.Errorf("peer credentials: %w", err))
 		return
 	}
 
 	var req schema.Request
 	if err := json.NewDecoder(conn).Decode(&req); err != nil {
-		writeError(conn, fmt.Sprintf("decode: %v", err))
+		writeError(conn, fmt.Errorf("decode: %w", err))
 		return
 	}
 
 	resp, err := b.dispatch(peerUID, req)
 	if err != nil {
-		writeError(conn, err.Error())
+		writeError(conn, err)
 		return
 	}
 	if err := json.NewEncoder(conn).Encode(resp); err != nil {
@@ -189,7 +238,7 @@ func (b *Bridge) ListSurfaces() []schema.CompositorTrackedSurface {
 
 	surfaces := make([]schema.CompositorTrackedSurface, 0, len(b.surfaces))
 	for _, surface := range b.surfaces {
-		surfaces = append(surfaces, surface)
+		surfaces = append(surfaces, b.decorateSurfaceLocked(surface))
 	}
 	sort.Slice(surfaces, func(i, j int) bool {
 		return surfaces[i].Surface.ID < surfaces[j].Surface.ID
@@ -236,7 +285,7 @@ func (b *Bridge) GetSession(sessionID string) (schema.CompositorSession, error) 
 	defer b.mu.RUnlock()
 	session, ok := b.sessions[sessionID]
 	if !ok {
-		return schema.CompositorSession{}, fmt.Errorf("session %s not found", sessionID)
+		return schema.CompositorSession{}, compositorError(schema.ErrorSessionNotFound, "session %s not found", sessionID)
 	}
 	return b.hydrateSessionLocked(session), nil
 }
@@ -265,7 +314,7 @@ func (b *Bridge) ResetSession(sessionID string) error {
 	b.mu.RLock()
 	if _, ok := b.sessions[sessionID]; !ok {
 		b.mu.RUnlock()
-		return fmt.Errorf("session %s not found", sessionID)
+		return compositorError(schema.ErrorSessionNotFound, "session %s not found", sessionID)
 	}
 	launchIDs := make([]string, 0)
 	for id, launch := range b.launches {
@@ -301,7 +350,19 @@ func (b *Bridge) LaunchApp(req schema.LaunchAppRequest) (schema.LaunchAppRespons
 		_, ok := b.sessions[req.SessionID]
 		b.mu.RUnlock()
 		if !ok {
-			return schema.LaunchAppResponse{}, fmt.Errorf("session %s not found", req.SessionID)
+			return schema.LaunchAppResponse{}, compositorError(schema.ErrorSessionNotFound, "session %s not found", req.SessionID)
+		}
+	}
+	if req.Output != "" {
+		b.mu.RLock()
+		_, ok := b.outputs[req.Output]
+		b.mu.RUnlock()
+		if !ok {
+			return schema.LaunchAppResponse{}, fmt.Errorf("output %s not found", req.Output)
+		}
+		req.WaitSurface = true
+		if req.WaitTimeoutMs <= 0 {
+			req.WaitTimeoutMs = 10000
 		}
 	}
 
@@ -345,7 +406,7 @@ func (b *Bridge) LaunchApp(req schema.LaunchAppRequest) (schema.LaunchAppRespons
 		Status:    "running",
 		StartedAt: now,
 	}
-	b.launches[launchID] = &launchRecord{process: process, cmd: cmd, done: make(chan struct{}), expectedAppID: req.ExpectedAppID, expectedTitle: req.ExpectedTitle}
+	b.launches[launchID] = &launchRecord{process: process, cmd: cmd, done: make(chan struct{}), expectedAppID: req.ExpectedAppID, expectedTitle: req.ExpectedTitle, expectedOutput: req.Output}
 	if req.SessionID != "" {
 		session := b.sessions[req.SessionID]
 		session.LastUsedAt = now
@@ -360,9 +421,23 @@ func (b *Bridge) LaunchApp(req schema.LaunchAppRequest) (schema.LaunchAppRespons
 		if timeout <= 0 {
 			timeout = 5 * time.Second
 		}
-		if surface, ok := b.waitForLaunchSurface(launchID, timeout); ok {
-			resp.Surface = &surface
+		surface, ok := b.waitForLaunchSurface(launchID, timeout)
+		if !ok {
+			_, _ = b.TerminateLaunch(launchID)
+			return schema.LaunchAppResponse{}, compositorError(schema.ErrorAppNotReady, "launch %s did not map a matching surface before timeout", launchID)
 		}
+		if req.Output != "" {
+			moved, err := b.MoveSurfaceToOutput(surface.Surface.ID, req.Output)
+			if err != nil {
+				_, _ = b.TerminateLaunch(launchID)
+				return schema.LaunchAppResponse{}, err
+			}
+			surface.OutputID = moved.Output
+			surface.Geometry = &moved.Geometry
+			surface.Surface.Geometry = &moved.Geometry
+			surface.Surface.OutputID = moved.Output
+		}
+		resp.Surface = &surface
 	}
 	return resp, nil
 }
@@ -585,11 +660,11 @@ func (b *Bridge) CaptureSurface(req schema.CaptureSurfaceRequest) (schema.Captur
 	b.mu.Lock()
 	if _, ok := b.surfaces[req.SurfaceID]; !ok {
 		b.mu.Unlock()
-		return schema.CaptureSurfaceResponse{}, fmt.Errorf("surface %s not found", req.SurfaceID)
+		return schema.CaptureSurfaceResponse{}, compositorError(schema.ErrorSurfaceNotFound, "surface %s not found", req.SurfaceID)
 	}
 	if b.plugin == nil {
 		b.mu.Unlock()
-		return schema.CaptureSurfaceResponse{}, fmt.Errorf("no plugin connected")
+		return schema.CaptureSurfaceResponse{}, compositorError(schema.ErrorCompositorUnavailable, "no plugin connected")
 	}
 	b.captureSeq++
 	requestID := fmt.Sprintf("capture-%d-%d", time.Now().UnixNano(), b.captureSeq)
@@ -619,10 +694,7 @@ func (b *Bridge) CaptureSurface(req schema.CaptureSurfaceRequest) (schema.Captur
 		return schema.CaptureSurfaceResponse{}, fmt.Errorf("capture timed out")
 	}
 	if !pluginResp.OK {
-		if pluginResp.Error == "" {
-			pluginResp.Error = "capture failed"
-		}
-		return schema.CaptureSurfaceResponse{}, fmt.Errorf("%s", pluginResp.Error)
+		return schema.CaptureSurfaceResponse{}, classifyCapturePluginError(pluginResp.Error)
 	}
 	if pluginResp.Format != "png" {
 		return schema.CaptureSurfaceResponse{}, fmt.Errorf("unsupported capture response format %q", pluginResp.Format)
@@ -632,33 +704,76 @@ func (b *Bridge) CaptureSurface(req schema.CaptureSurfaceRequest) (schema.Captur
 	if err != nil {
 		return schema.CaptureSurfaceResponse{}, fmt.Errorf("decode capture png: %w", err)
 	}
-	if err := os.MkdirAll("/run/agent-os/captures", 0755); err != nil {
+	sessionID := req.SessionID
+	if sessionID == "" {
+		b.mu.RLock()
+		if surface, ok := b.surfaces[req.SurfaceID]; ok {
+			sessionID = surface.SessionID
+		}
+		b.mu.RUnlock()
+	}
+	dir := "/run/agent-os/captures"
+	if req.Export {
+		if sessionID == "" {
+			sessionID = "unscoped"
+		}
+		dir = filepath.Join("/run/agent-os/artifacts", sessionID, requestID)
+	}
+	if err := os.MkdirAll(dir, 0755); err != nil {
 		return schema.CaptureSurfaceResponse{}, err
 	}
-	path := filepath.Join("/run/agent-os/captures", requestID+".png")
+	path := filepath.Join(dir, requestID+".png")
 	if err := os.WriteFile(path, png, 0644); err != nil {
 		return schema.CaptureSurfaceResponse{}, err
 	}
 	sum := sha256.Sum256(png)
-	return schema.CaptureSurfaceResponse{
+	sha := hex.EncodeToString(sum[:])
+	b.recordFramePresented(pluginResp.SurfaceID)
+	resp := schema.CaptureSurfaceResponse{
 		SurfaceID: pluginResp.SurfaceID,
+		RequestID: requestID,
 		Path:      path,
 		Width:     pluginResp.Width,
 		Height:    pluginResp.Height,
 		Format:    pluginResp.Format,
-		SHA256:    hex.EncodeToString(sum[:]),
-	}, nil
+		SHA256:    sha,
+	}
+	if req.Export {
+		evidenceClass := req.EvidenceClass
+		if evidenceClass == "" {
+			evidenceClass = "surface_screenshot"
+		}
+		now := time.Now()
+		artifact := schema.ArtifactRecord{
+			ArtifactID: requestID, SessionID: sessionID, SurfaceID: pluginResp.SurfaceID, RequestID: requestID,
+			ImagePath: path, IndexPath: filepath.Join(dir, "index.json"), Width: pluginResp.Width, Height: pluginResp.Height,
+			Format: pluginResp.Format, SHA256: sha, CaptureBackend: "plugin_readback", EvidenceClass: evidenceClass,
+			Timestamp: now, ASHACommandSequenceID: req.ASHACommandSequenceID,
+		}
+		if sessionID == "unscoped" {
+			artifact.Warnings = append(artifact.Warnings, "capture was not associated with a compositor session")
+		}
+		indexBytes, _ := json.MarshalIndent(artifact, "", "  ")
+		if err := os.WriteFile(artifact.IndexPath, indexBytes, 0644); err != nil {
+			return schema.CaptureSurfaceResponse{}, err
+		}
+		b.mu.Lock()
+		b.artifacts[artifact.ArtifactID] = artifact
+		b.mu.Unlock()
+		resp.Artifact = &artifact
+	}
+	return resp, nil
 }
 
 func (b *Bridge) InjectInput(req schema.InjectInputRequest) (schema.InjectInputResponse, error) {
 	b.mu.Lock()
 	if _, ok := b.surfaces[req.SurfaceID]; !ok {
 		b.mu.Unlock()
-		return schema.InjectInputResponse{}, fmt.Errorf("surface %s not found", req.SurfaceID)
+		return schema.InjectInputResponse{}, compositorError(schema.ErrorSurfaceNotFound, "surface %s not found", req.SurfaceID)
 	}
 	if b.plugin == nil {
 		b.mu.Unlock()
-		return schema.InjectInputResponse{}, fmt.Errorf("no plugin connected")
+		return schema.InjectInputResponse{}, compositorError(schema.ErrorCompositorUnavailable, "no plugin connected")
 	}
 	if len(req.Events) == 0 {
 		b.mu.Unlock()
@@ -859,11 +974,683 @@ func (b *Bridge) CheckSurfaceAccess(surfaceID string, agentUID uint32, action sc
 	return schema.SurfaceAccessCheckResponse{Allowed: allowed, Reason: reason}
 }
 
+func (b *Bridge) CreateOutput(req schema.CreateOutputRequest) (schema.LogicalOutput, error) {
+	if req.Name == "" {
+		return schema.LogicalOutput{}, fmt.Errorf("name is required")
+	}
+	if req.Width <= 0 {
+		req.Width = 1280
+	}
+	if req.Height <= 0 {
+		req.Height = 720
+	}
+	if req.Scale <= 0 {
+		req.Scale = 1
+	}
+	now := time.Now()
+	b.mu.Lock()
+	out := b.outputs[req.Name]
+	if out.CreatedAt.IsZero() {
+		out.CreatedAt = now
+	}
+	out.Name, out.Width, out.Height, out.Scale, out.Mode = req.Name, req.Width, req.Height, req.Scale, "logical_physical_tile"
+	out.UpdatedAt = now
+	b.outputs[req.Name] = out
+	b.layoutOutputsLocked()
+	out = b.outputs[req.Name]
+	b.mu.Unlock()
+	if err := b.applyAllOutputAssignments(); err != nil {
+		return schema.LogicalOutput{}, err
+	}
+	return out, nil
+}
+
+func (b *Bridge) DestroyOutput(name string) error {
+	b.mu.Lock()
+	if _, ok := b.outputs[name]; !ok {
+		b.mu.Unlock()
+		return fmt.Errorf("output %s not found", name)
+	}
+	delete(b.outputs, name)
+	for surfaceID, output := range b.surfaceOutput {
+		if output == name {
+			delete(b.surfaceOutput, surfaceID)
+		}
+	}
+	b.layoutOutputsLocked()
+	b.mu.Unlock()
+	return b.applyAllOutputAssignments()
+}
+
+func (b *Bridge) ResizeOutput(req schema.ResizeOutputRequest) (schema.LogicalOutput, error) {
+	b.mu.Lock()
+	out, ok := b.outputs[req.Name]
+	if !ok {
+		b.mu.Unlock()
+		return schema.LogicalOutput{}, fmt.Errorf("output %s not found", req.Name)
+	}
+	if req.Width <= 0 || req.Height <= 0 {
+		b.mu.Unlock()
+		return schema.LogicalOutput{}, fmt.Errorf("width and height must be positive")
+	}
+	out.Width, out.Height, out.UpdatedAt = req.Width, req.Height, time.Now()
+	b.outputs[req.Name] = out
+	b.layoutOutputsLocked()
+	out = b.outputs[req.Name]
+	b.mu.Unlock()
+	if err := b.applyOutputAssignments(req.Name); err != nil {
+		return schema.LogicalOutput{}, err
+	}
+	return out, nil
+}
+
+func (b *Bridge) SetOutputScale(req schema.SetOutputScaleRequest) (schema.LogicalOutput, error) {
+	b.mu.Lock()
+	out, ok := b.outputs[req.Name]
+	if !ok {
+		b.mu.Unlock()
+		return schema.LogicalOutput{}, fmt.Errorf("output %s not found", req.Name)
+	}
+	if req.Scale <= 0 {
+		b.mu.Unlock()
+		return schema.LogicalOutput{}, fmt.Errorf("scale must be positive")
+	}
+	out.Scale, out.UpdatedAt = req.Scale, time.Now()
+	b.outputs[req.Name] = out
+	b.mu.Unlock()
+	return out, nil
+}
+
+func (b *Bridge) ListOutputs() []schema.LogicalOutput {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	outs := make([]schema.LogicalOutput, 0, len(b.outputs))
+	for _, out := range b.outputs {
+		outs = append(outs, b.decorateOutputLocked(out))
+	}
+	sort.Slice(outs, func(i, j int) bool { return outs[i].Name < outs[j].Name })
+	return outs
+}
+
+func (b *Bridge) MoveSurfaceToOutput(surfaceID, outputName string) (schema.MoveSurfaceToOutputResponse, error) {
+	b.mu.RLock()
+	surface, ok := b.surfaces[surfaceID]
+	if !ok {
+		b.mu.RUnlock()
+		return schema.MoveSurfaceToOutputResponse{}, compositorError(schema.ErrorSurfaceNotFound, "surface %s not found", surfaceID)
+	}
+	out, ok := b.outputs[outputName]
+	if !ok {
+		b.mu.RUnlock()
+		return schema.MoveSurfaceToOutputResponse{}, fmt.Errorf("output %s not found", outputName)
+	}
+	_ = surface
+	geom := schema.SurfaceGeometry{X: out.PhysicalX, Y: out.PhysicalY, Width: out.PhysicalWidth, Height: out.PhysicalHeight}
+	if geom.Width <= 0 {
+		geom.Width = out.Width
+	}
+	if geom.Height <= 0 {
+		geom.Height = out.Height
+	}
+	b.mu.RUnlock()
+
+	if err := b.placeSurface(surfaceID, geom); err != nil {
+		return schema.MoveSurfaceToOutputResponse{}, err
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	surface = b.surfaces[surfaceID]
+	surface.OutputID = outputName
+	surface.Geometry = &geom
+	surface.Surface.Geometry = &geom
+	surface.Surface.OutputID = outputName
+	surface.UpdatedAt = time.Now()
+	b.surfaces[surfaceID] = surface
+	b.surfaceOutput[surfaceID] = outputName
+	return schema.MoveSurfaceToOutputResponse{SurfaceID: surfaceID, Output: outputName, Geometry: geom}, nil
+}
+
+func (b *Bridge) placeSurface(surfaceID string, geom schema.SurfaceGeometry) error {
+	b.mu.Lock()
+	if b.plugin == nil {
+		b.mu.Unlock()
+		return compositorError(schema.ErrorCompositorUnavailable, "no plugin connected")
+	}
+	b.placeSeq++
+	requestID := fmt.Sprintf("place-%d-%d", time.Now().UnixNano(), b.placeSeq)
+	ch := make(chan schema.CompositorPlacePluginResponse, 1)
+	b.placeWaiters[requestID] = ch
+	session := b.plugin
+	b.mu.Unlock()
+
+	defer func() {
+		b.mu.Lock()
+		delete(b.placeWaiters, requestID)
+		b.mu.Unlock()
+	}()
+
+	if err := session.Send(schema.CompositorPlaceSurface{Type: string(schema.PluginMessagePlaceSurface), RequestID: requestID, SurfaceID: surfaceID, Geometry: geom}); err != nil {
+		return err
+	}
+
+	deadline := time.After(10 * time.Second)
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case resp := <-ch:
+			if !resp.OK {
+				if resp.Error == "" {
+					resp.Error = "placement failed"
+				}
+				return compositorError(schema.ErrorProtocolError, "place surface failed: %s", resp.Error)
+			}
+			return nil
+		case <-ticker.C:
+			if b.surfaceGeometryMatches(surfaceID, geom) {
+				return nil
+			}
+		case <-deadline:
+			return compositorError(schema.ErrorFrameTimeout, "place surface timed out")
+		}
+	}
+}
+
+func (b *Bridge) surfaceGeometryMatches(surfaceID string, geom schema.SurfaceGeometry) bool {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	surface, ok := b.surfaces[surfaceID]
+	if !ok || surface.Geometry == nil {
+		return false
+	}
+	current := *surface.Geometry
+	return absInt(current.X-geom.X) <= 2 && absInt(current.Y-geom.Y) <= 2 &&
+		absInt(current.Width-geom.Width) <= 8 && absInt(current.Height-geom.Height) <= 16
+}
+
+func absInt(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
+func (b *Bridge) ListOutputSurfaces(name string) (schema.ListOutputSurfacesResponse, error) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	out, ok := b.outputs[name]
+	if !ok {
+		return schema.ListOutputSurfacesResponse{}, fmt.Errorf("output %s not found", name)
+	}
+	var surfaces []schema.CompositorTrackedSurface
+	for _, surface := range b.surfaces {
+		if b.surfaceOutput[surface.Surface.ID] == name {
+			surfaces = append(surfaces, b.decorateSurfaceLocked(surface))
+		}
+	}
+	sort.Slice(surfaces, func(i, j int) bool { return surfaces[i].Surface.ID < surfaces[j].Surface.ID })
+	return schema.ListOutputSurfacesResponse{Output: b.decorateOutputLocked(out), Surfaces: surfaces}, nil
+}
+
+func (b *Bridge) CaptureOutput(req schema.CaptureOutputRequest) (schema.CaptureOutputResponse, error) {
+	listed, err := b.ListOutputSurfaces(req.Name)
+	if err != nil {
+		return schema.CaptureOutputResponse{}, err
+	}
+	resp := schema.CaptureOutputResponse{Output: req.Name}
+	if len(listed.Surfaces) == 0 {
+		resp.Warnings = append(resp.Warnings, "output has no surfaces to capture")
+	}
+	for _, surface := range listed.Surfaces {
+		cap, err := b.CaptureSurface(schema.CaptureSurfaceRequest{SurfaceID: surface.Surface.ID, Export: req.Export, SessionID: req.SessionID, EvidenceClass: req.EvidenceClass, ASHACommandSequenceID: req.ASHACommandSequenceID})
+		if err != nil {
+			resp.Warnings = append(resp.Warnings, fmt.Sprintf("capture %s: %v", surface.Surface.ID, err))
+			continue
+		}
+		resp.Captures = append(resp.Captures, cap)
+	}
+	return resp, nil
+}
+
+func (b *Bridge) applyOutputAssignments(name string) error {
+	b.mu.RLock()
+	var surfaceIDs []string
+	for surfaceID, output := range b.surfaceOutput {
+		if output == name {
+			surfaceIDs = append(surfaceIDs, surfaceID)
+		}
+	}
+	b.mu.RUnlock()
+	for _, surfaceID := range surfaceIDs {
+		b.mu.RLock()
+		_, exists := b.surfaces[surfaceID]
+		b.mu.RUnlock()
+		if !exists {
+			b.mu.Lock()
+			delete(b.surfaceOutput, surfaceID)
+			b.mu.Unlock()
+			continue
+		}
+		if _, err := b.MoveSurfaceToOutput(surfaceID, name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (b *Bridge) applyAllOutputAssignments() error {
+	b.mu.RLock()
+	names := make(map[string]struct{}, len(b.surfaceOutput))
+	for _, output := range b.surfaceOutput {
+		if output != "" {
+			names[output] = struct{}{}
+		}
+	}
+	b.mu.RUnlock()
+	for name := range names {
+		if err := b.applyOutputAssignments(name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (b *Bridge) layoutOutputsLocked() {
+	names := make([]string, 0, len(b.outputs))
+	for name := range b.outputs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	if len(names) == 0 {
+		return
+	}
+	cols := 1
+	for cols*cols < len(names) {
+		cols++
+	}
+	rows := (len(names) + cols - 1) / cols
+	physicalW, physicalH := b.physicalBoundsLocked()
+	slotW, slotH := physicalW/cols, physicalH/rows
+	if slotW <= 0 {
+		slotW = 640
+	}
+	if slotH <= 0 {
+		slotH = 480
+	}
+	for i, name := range names {
+		out := b.outputs[name]
+		out.PhysicalX = (i % cols) * slotW
+		out.PhysicalY = (i / cols) * slotH
+		out.PhysicalWidth = slotW
+		out.PhysicalHeight = slotH
+		out.UpdatedAt = time.Now()
+		b.outputs[name] = out
+	}
+}
+
+func (b *Bridge) physicalBoundsLocked() (int, int) {
+	maxX, maxY := 1920, 1080
+	for _, surface := range b.surfaces {
+		if surface.Geometry != nil {
+			if surface.Geometry.X+surface.Geometry.Width > maxX {
+				maxX = surface.Geometry.X + surface.Geometry.Width
+			}
+			if surface.Geometry.Y+surface.Geometry.Height > maxY {
+				maxY = surface.Geometry.Y + surface.Geometry.Height
+			}
+		}
+	}
+	return maxX, maxY
+}
+
+func (b *Bridge) decorateOutputLocked(out schema.LogicalOutput) schema.LogicalOutput {
+	out.Surfaces = nil
+	for surfaceID, output := range b.surfaceOutput {
+		if output == out.Name {
+			out.Surfaces = append(out.Surfaces, surfaceID)
+		}
+	}
+	sort.Strings(out.Surfaces)
+	return out
+}
+
+func (b *Bridge) outputForSurfaceLocked(surface schema.CompositorTrackedSurface) string {
+	if out := b.surfaceOutput[surface.Surface.ID]; out != "" {
+		return out
+	}
+	if surface.OutputID != "" {
+		return surface.OutputID
+	}
+	if surface.Geometry == nil {
+		return ""
+	}
+	best, area := "", 0
+	for name, out := range b.outputs {
+		overlap := rectOverlap(*surface.Geometry, schema.SurfaceGeometry{X: out.PhysicalX, Y: out.PhysicalY, Width: out.PhysicalWidth, Height: out.PhysicalHeight})
+		if overlap > area {
+			best, area = name, overlap
+		}
+	}
+	return best
+}
+
+func rectOverlap(a, b schema.SurfaceGeometry) int {
+	x1, y1 := maxInt(a.X, b.X), maxInt(a.Y, b.Y)
+	x2, y2 := minInt(a.X+a.Width, b.X+b.Width), minInt(a.Y+a.Height, b.Y+b.Height)
+	if x2 <= x1 || y2 <= y1 {
+		return 0
+	}
+	return (x2 - x1) * (y2 - y1)
+}
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func (b *Bridge) GetSurface(surfaceID string) (schema.CompositorTrackedSurface, error) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	surface, ok := b.surfaces[surfaceID]
+	if !ok {
+		return schema.CompositorTrackedSurface{}, compositorError(schema.ErrorSurfaceNotFound, "surface %s not found", surfaceID)
+	}
+	return b.decorateSurfaceLocked(surface), nil
+}
+
+func (b *Bridge) WaitForSurface(req schema.WaitForSurfaceRequest) (schema.WaitForSurfaceResponse, error) {
+	deadline := timeoutDeadline(req.TimeoutMs, 5*time.Second)
+	for time.Now().Before(deadline) {
+		b.mu.RLock()
+		for _, surface := range b.surfaces {
+			surface = b.decorateSurfaceLocked(surface)
+			if req.SessionID != "" && surface.SessionID != req.SessionID {
+				continue
+			}
+			if req.AppID != "" && !strings.Contains(surface.Surface.AppID, req.AppID) {
+				continue
+			}
+			if req.Title != "" && !strings.Contains(surface.Surface.Title, req.Title) {
+				continue
+			}
+			b.mu.RUnlock()
+			return schema.WaitForSurfaceResponse{Surface: surface}, nil
+		}
+		b.mu.RUnlock()
+		time.Sleep(50 * time.Millisecond)
+	}
+	return schema.WaitForSurfaceResponse{}, compositorError(schema.ErrorAppNotReady, "surface wait timed out")
+}
+
+func classifyCapturePluginError(message string) error {
+	if message == "" {
+		message = "capture failed"
+	}
+	switch {
+	case strings.Contains(message, "not found"):
+		return compositorError(schema.ErrorSurfaceNotFound, "capture failed: %s", message)
+	case strings.Contains(message, "denied") || strings.Contains(message, "access"):
+		return compositorError(schema.ErrorCaptureDenied, "capture failed: %s", message)
+	case strings.Contains(message, "empty dimensions") || strings.Contains(message, "black"):
+		return compositorError(schema.ErrorCaptureBlackFrame, "capture failed: %s", message)
+	default:
+		return compositorError(schema.ErrorProtocolError, "capture failed: %s", message)
+	}
+}
+
+func (b *Bridge) recordFramePresented(surfaceID string) {
+	now := time.Now()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if surface, ok := b.surfaces[surfaceID]; ok {
+		surface.FrameCount++
+		surface.LastPresentTimestamp = &now
+		surface.UpdatedAt = now
+		b.surfaces[surfaceID] = surface
+	}
+}
+
+func (b *Bridge) captureFrameForReadiness(surfaceID string) error {
+	_, err := b.CaptureSurface(schema.CaptureSurfaceRequest{SurfaceID: surfaceID})
+	return err
+}
+
+func (b *Bridge) WaitForFrame(req schema.WaitForFrameRequest) (schema.WaitForFrameResponse, error) {
+	deadline := timeoutDeadline(req.TimeoutMs, 5*time.Second)
+	for time.Now().Before(deadline) {
+		b.mu.RLock()
+		surface, ok := b.surfaces[req.SurfaceID]
+		if ok && surface.FrameCount > req.AfterFrame {
+			timestamp := surface.UpdatedAt
+			if surface.LastPresentTimestamp != nil {
+				timestamp = *surface.LastPresentTimestamp
+			}
+			b.mu.RUnlock()
+			return schema.WaitForFrameResponse{SurfaceID: req.SurfaceID, FrameCount: surface.FrameCount, Timestamp: timestamp}, nil
+		}
+		b.mu.RUnlock()
+		if !ok {
+			return schema.WaitForFrameResponse{}, compositorError(schema.ErrorSurfaceNotFound, "surface %s not found", req.SurfaceID)
+		}
+		_ = b.captureFrameForReadiness(req.SurfaceID)
+		time.Sleep(50 * time.Millisecond)
+	}
+	return schema.WaitForFrameResponse{}, compositorError(schema.ErrorFrameTimeout, "frame wait timed out")
+}
+
+func (b *Bridge) WaitForAppReady(req schema.WaitForAppReadyRequest) (schema.WaitForSurfaceResponse, error) {
+	deadline := timeoutDeadline(req.TimeoutMs, 5*time.Second)
+	for time.Now().Before(deadline) {
+		b.mu.RLock()
+		launch := b.launches[req.LaunchID]
+		if launch == nil {
+			b.mu.RUnlock()
+			return schema.WaitForSurfaceResponse{}, compositorError(schema.ErrorAppNotReady, "launch %s not found", req.LaunchID)
+		}
+		surfaceIDs := b.surfacesForLaunchLocked(launch)
+		b.mu.RUnlock()
+		for _, surfaceID := range surfaceIDs {
+			if err := b.captureFrameForReadiness(surfaceID); err != nil {
+				continue
+			}
+			b.mu.RLock()
+			if surface, ok := b.surfaces[surfaceID]; ok && surface.FrameCount > 0 {
+				surface = b.decorateSurfaceLocked(surface)
+				b.mu.RUnlock()
+				return schema.WaitForSurfaceResponse{Surface: surface}, nil
+			}
+			b.mu.RUnlock()
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return schema.WaitForSurfaceResponse{}, compositorError(schema.ErrorAppNotReady, "app readiness timed out")
+}
+
+func (b *Bridge) WaitForRenderIdle(req schema.WaitForRenderIdleRequest) (schema.WaitGenericResponse, error) {
+	idle := time.Duration(req.IdleMs) * time.Millisecond
+	if idle <= 0 {
+		idle = 250 * time.Millisecond
+	}
+	deadline := timeoutDeadline(req.TimeoutMs, 5*time.Second)
+	for time.Now().Before(deadline) {
+		b.mu.RLock()
+		surface, ok := b.surfaces[req.SurfaceID]
+		updated := surface.UpdatedAt
+		b.mu.RUnlock()
+		if !ok {
+			return schema.WaitGenericResponse{}, compositorError(schema.ErrorSurfaceNotFound, "surface %s not found", req.SurfaceID)
+		}
+		if time.Since(updated) >= idle {
+			return schema.WaitGenericResponse{OK: true, SurfaceID: req.SurfaceID, Timestamp: time.Now()}, nil
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return schema.WaitGenericResponse{}, compositorError(schema.ErrorFrameTimeout, "render idle wait timed out")
+}
+
+func (b *Bridge) WaitForNoPending(req schema.WaitForNoPendingRequest) (schema.WaitGenericResponse, error) {
+	idleReq := schema.WaitForRenderIdleRequest{SurfaceID: req.SurfaceID, IdleMs: 100, TimeoutMs: req.TimeoutMs}
+	return b.WaitForRenderIdle(idleReq)
+}
+
+func timeoutDeadline(ms int, def time.Duration) time.Time {
+	if ms <= 0 {
+		return time.Now().Add(def)
+	}
+	return time.Now().Add(time.Duration(ms) * time.Millisecond)
+}
+
+func (b *Bridge) ListArtifacts(sessionID string) []schema.ArtifactRecord {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.loadArtifactsFromDiskLocked(sessionID)
+	out := make([]schema.ArtifactRecord, 0)
+	for _, a := range b.artifacts {
+		if sessionID == "" || a.SessionID == sessionID {
+			out = append(out, a)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ArtifactID < out[j].ArtifactID })
+	return out
+}
+
+func (b *Bridge) GetArtifact(artifactID string) (schema.ArtifactRecord, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.loadArtifactsFromDiskLocked("")
+	a, ok := b.artifacts[artifactID]
+	if !ok {
+		return schema.ArtifactRecord{}, fmt.Errorf("artifact %s not found", artifactID)
+	}
+	return a, nil
+}
+
+func (b *Bridge) loadArtifactsFromDiskLocked(sessionID string) {
+	roots := []string{"/run/agent-os/artifacts/*/*/index.json"}
+	if sessionID != "" {
+		roots = []string{filepath.Join("/run/agent-os/artifacts", sessionID, "*", "index.json")}
+	}
+	for _, pattern := range roots {
+		matches, _ := filepath.Glob(pattern)
+		for _, path := range matches {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				continue
+			}
+			var artifact schema.ArtifactRecord
+			if err := json.Unmarshal(data, &artifact); err != nil || artifact.ArtifactID == "" {
+				continue
+			}
+			b.artifacts[artifact.ArtifactID] = artifact
+		}
+	}
+}
+
+func (b *Bridge) ExportArtifacts(req schema.ExportArtifactsRequest) (schema.ExportArtifactsResponse, error) {
+	if req.SessionID == "" || req.To == "" {
+		return schema.ExportArtifactsResponse{}, fmt.Errorf("session_id and to are required")
+	}
+	arts := b.ListArtifacts(req.SessionID)
+	if err := os.MkdirAll(req.To, 0755); err != nil {
+		return schema.ExportArtifactsResponse{}, err
+	}
+	copied := make([]string, 0)
+	for _, a := range arts {
+		for _, src := range []string{a.ImagePath, a.IndexPath} {
+			data, err := os.ReadFile(src)
+			if err != nil {
+				return schema.ExportArtifactsResponse{}, err
+			}
+			dst := filepath.Join(req.To, a.ArtifactID+"-"+filepath.Base(src))
+			if err := os.WriteFile(dst, data, 0644); err != nil {
+				return schema.ExportArtifactsResponse{}, err
+			}
+			copied = append(copied, dst)
+		}
+	}
+	index, _ := json.MarshalIndent(arts, "", "  ")
+	idxPath := filepath.Join(req.To, "artifacts-index.json")
+	if err := os.WriteFile(idxPath, index, 0644); err != nil {
+		return schema.ExportArtifactsResponse{}, err
+	}
+	copied = append(copied, idxPath)
+	return schema.ExportArtifactsResponse{SessionID: req.SessionID, To: req.To, Copied: copied}, nil
+}
+
+func (b *Bridge) decorateSurfaceLocked(surface schema.CompositorTrackedSurface) schema.CompositorTrackedSurface {
+	if launchID := b.surfaceLaunch[surface.Surface.ID]; launchID != "" {
+		if launch := b.launches[launchID]; launch != nil {
+			surface.SessionID = launch.process.SessionID
+		}
+	}
+	if surface.Geometry == nil {
+		surface.Geometry = surface.Surface.Geometry
+	}
+	if surface.PixelSize == nil {
+		surface.PixelSize = surface.Surface.PixelSize
+	}
+	if surface.ScaleFactor == 0 {
+		surface.ScaleFactor = surface.Surface.ScaleFactor
+	}
+	if surface.ScaleFactor == 0 {
+		surface.ScaleFactor = 1
+	}
+	if surface.OutputID == "" {
+		surface.OutputID = surface.Surface.OutputID
+	}
+	if surface.OutputID == "" {
+		surface.OutputID = b.outputForSurfaceLocked(surface)
+	}
+	if surface.Surface.Visible != nil {
+		surface.Visible = *surface.Surface.Visible
+	}
+	if surface.LastEvent == schema.SurfaceEventFocused {
+		surface.Focused = true
+	}
+	surface.Capturable = surface.Visible
+	surface.InputInjectable = surface.Visible
+	policy := b.policies[surface.Surface.ID]
+	grantState := &schema.SurfaceGrantState{OwnerUID: policy.OwnerUID}
+	seen := map[uint32]struct{}{}
+	for _, uid := range policy.AllowPointerUIDs {
+		seen[uid] = struct{}{}
+		grantState.GrantActions = append(grantState.GrantActions, "pointer")
+	}
+	for _, uid := range policy.AllowKeyboardUIDs {
+		seen[uid] = struct{}{}
+		grantState.GrantActions = append(grantState.GrantActions, "keyboard")
+	}
+	for uid := range seen {
+		grantState.GrantedUIDs = append(grantState.GrantedUIDs, uid)
+	}
+	sort.Slice(grantState.GrantedUIDs, func(i, j int) bool { return grantState.GrantedUIDs[i] < grantState.GrantedUIDs[j] })
+	surface.GrantState = grantState
+	return surface
+}
+
 func (b *Bridge) dispatch(peerUID uint32, req schema.Request) (schema.Response, error) {
 	_ = peerUID // peer identity is reserved for future governance; local agents may use this API in Phase D.
 	switch req.Method {
 	case schema.MethodListSurfaces:
 		return okResponse(schema.ListSurfacesResponse{Surfaces: b.ListSurfaces()}), nil
+	case schema.MethodGetSurface:
+		var body schema.GetSurfaceRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			return schema.Response{}, fmt.Errorf("bad body: %w", err)
+		}
+		surface, err := b.GetSurface(body.SurfaceID)
+		if err != nil {
+			return schema.Response{}, err
+		}
+		return okResponse(surface), nil
 	case schema.MethodCaptureSurface:
 		var body schema.CaptureSurfaceRequest
 		if err := json.Unmarshal(req.Body, &body); err != nil {
@@ -953,6 +1740,84 @@ func (b *Bridge) dispatch(peerUID uint32, req schema.Request) (schema.Response, 
 			}
 		}
 		return okResponse(schema.ListProcessesResponse{Processes: b.ListProcesses(body.SessionID)}), nil
+	case schema.MethodWaitForSurface:
+		var body schema.WaitForSurfaceRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			return schema.Response{}, fmt.Errorf("bad body: %w", err)
+		}
+		resp, err := b.WaitForSurface(body)
+		if err != nil {
+			return schema.Response{}, err
+		}
+		return okResponse(resp), nil
+	case schema.MethodWaitForFrame:
+		var body schema.WaitForFrameRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			return schema.Response{}, fmt.Errorf("bad body: %w", err)
+		}
+		resp, err := b.WaitForFrame(body)
+		if err != nil {
+			return schema.Response{}, err
+		}
+		return okResponse(resp), nil
+	case schema.MethodWaitForAppReady:
+		var body schema.WaitForAppReadyRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			return schema.Response{}, fmt.Errorf("bad body: %w", err)
+		}
+		resp, err := b.WaitForAppReady(body)
+		if err != nil {
+			return schema.Response{}, err
+		}
+		return okResponse(resp), nil
+	case schema.MethodWaitForRenderIdle:
+		var body schema.WaitForRenderIdleRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			return schema.Response{}, fmt.Errorf("bad body: %w", err)
+		}
+		resp, err := b.WaitForRenderIdle(body)
+		if err != nil {
+			return schema.Response{}, err
+		}
+		return okResponse(resp), nil
+	case schema.MethodWaitForNoPending:
+		var body schema.WaitForNoPendingRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			return schema.Response{}, fmt.Errorf("bad body: %w", err)
+		}
+		resp, err := b.WaitForNoPending(body)
+		if err != nil {
+			return schema.Response{}, err
+		}
+		return okResponse(resp), nil
+	case schema.MethodListArtifacts:
+		var body schema.ListArtifactsRequest
+		if len(req.Body) > 0 {
+			if err := json.Unmarshal(req.Body, &body); err != nil {
+				return schema.Response{}, fmt.Errorf("bad body: %w", err)
+			}
+		}
+		return okResponse(schema.ListArtifactsResponse{Artifacts: b.ListArtifacts(body.SessionID)}), nil
+	case schema.MethodGetArtifact:
+		var body schema.GetArtifactRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			return schema.Response{}, fmt.Errorf("bad body: %w", err)
+		}
+		artifact, err := b.GetArtifact(body.ArtifactID)
+		if err != nil {
+			return schema.Response{}, err
+		}
+		return okResponse(artifact), nil
+	case schema.MethodExportArtifacts:
+		var body schema.ExportArtifactsRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			return schema.Response{}, fmt.Errorf("bad body: %w", err)
+		}
+		resp, err := b.ExportArtifacts(body)
+		if err != nil {
+			return schema.Response{}, err
+		}
+		return okResponse(resp), nil
 	case schema.MethodTerminateLaunch:
 		var body schema.TerminateLaunchRequest
 		if err := json.Unmarshal(req.Body, &body); err != nil {
@@ -962,6 +1827,77 @@ func (b *Bridge) dispatch(peerUID uint32, req schema.Request) (schema.Response, 
 			return schema.Response{}, fmt.Errorf("launch_id is required")
 		}
 		resp, err := b.TerminateLaunch(body.LaunchID)
+		if err != nil {
+			return schema.Response{}, err
+		}
+		return okResponse(resp), nil
+	case schema.MethodCreateOutput:
+		var body schema.CreateOutputRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			return schema.Response{}, fmt.Errorf("bad body: %w", err)
+		}
+		out, err := b.CreateOutput(body)
+		if err != nil {
+			return schema.Response{}, err
+		}
+		return okResponse(out), nil
+	case schema.MethodDestroyOutput:
+		var body schema.OutputRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			return schema.Response{}, fmt.Errorf("bad body: %w", err)
+		}
+		if err := b.DestroyOutput(body.Name); err != nil {
+			return schema.Response{}, err
+		}
+		return okResponse("destroyed"), nil
+	case schema.MethodResizeOutput:
+		var body schema.ResizeOutputRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			return schema.Response{}, fmt.Errorf("bad body: %w", err)
+		}
+		out, err := b.ResizeOutput(body)
+		if err != nil {
+			return schema.Response{}, err
+		}
+		return okResponse(out), nil
+	case schema.MethodSetOutputScale:
+		var body schema.SetOutputScaleRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			return schema.Response{}, fmt.Errorf("bad body: %w", err)
+		}
+		out, err := b.SetOutputScale(body)
+		if err != nil {
+			return schema.Response{}, err
+		}
+		return okResponse(out), nil
+	case schema.MethodListOutputs:
+		return okResponse(schema.ListOutputsResponse{Outputs: b.ListOutputs()}), nil
+	case schema.MethodMoveSurfaceToOutput:
+		var body schema.MoveSurfaceToOutputRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			return schema.Response{}, fmt.Errorf("bad body: %w", err)
+		}
+		resp, err := b.MoveSurfaceToOutput(body.SurfaceID, body.Output)
+		if err != nil {
+			return schema.Response{}, err
+		}
+		return okResponse(resp), nil
+	case schema.MethodListOutputSurfaces:
+		var body schema.OutputRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			return schema.Response{}, fmt.Errorf("bad body: %w", err)
+		}
+		resp, err := b.ListOutputSurfaces(body.Name)
+		if err != nil {
+			return schema.Response{}, err
+		}
+		return okResponse(resp), nil
+	case schema.MethodCaptureOutput:
+		var body schema.CaptureOutputRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			return schema.Response{}, fmt.Errorf("bad body: %w", err)
+		}
+		resp, err := b.CaptureOutput(body)
 		if err != nil {
 			return schema.Response{}, err
 		}
@@ -1089,13 +2025,48 @@ func (b *Bridge) handleInputResponse(resp schema.CompositorInputPluginResponse) 
 	}
 }
 
+func (b *Bridge) handlePlaceResponse(resp schema.CompositorPlacePluginResponse) {
+	b.mu.RLock()
+	waiter := b.placeWaiters[resp.RequestID]
+	b.mu.RUnlock()
+	if waiter == nil {
+		return
+	}
+	select {
+	case waiter <- resp:
+	default:
+	}
+}
+
 func (b *Bridge) handleSurfaceEvent(msg schema.CompositorPluginEvent) {
+	now := time.Now()
+	visible := true
+	if msg.Surface.Visible != nil {
+		visible = *msg.Surface.Visible
+	}
 	tracked := schema.CompositorTrackedSurface{
-		Surface:   msg.Surface,
-		Client:    msg.Client,
-		LastEvent: msg.Event,
-		Device:    msg.Device,
-		UpdatedAt: time.Now(),
+		Surface:         msg.Surface,
+		Client:          msg.Client,
+		LastEvent:       msg.Event,
+		Device:          msg.Device,
+		UpdatedAt:       now,
+		Geometry:        msg.Surface.Geometry,
+		PixelSize:       msg.Surface.PixelSize,
+		ScaleFactor:     msg.Surface.ScaleFactor,
+		Capturable:      true,
+		InputInjectable: true,
+		Visible:         visible,
+		OutputID:        msg.Surface.OutputID,
+	}
+	if tracked.ScaleFactor == 0 {
+		tracked.ScaleFactor = 1
+	}
+	if msg.Event == schema.SurfaceEventFocused {
+		tracked.Focused = true
+	}
+	if msg.Event == schema.SurfaceEventFrameDone {
+		tracked.FrameCount = 1
+		tracked.LastPresentTimestamp = &now
 	}
 
 	topic := topicForSurfaceEvent(msg.Event)
@@ -1109,12 +2080,36 @@ func (b *Bridge) handleSurfaceEvent(msg schema.CompositorPluginEvent) {
 	b.mu.Lock()
 	switch msg.Event {
 	case schema.SurfaceEventMapped:
+		if previous, ok := b.surfaces[msg.Surface.ID]; ok {
+			tracked.FrameCount = previous.FrameCount
+			tracked.LastPresentTimestamp = previous.LastPresentTimestamp
+		}
 		b.surfaces[msg.Surface.ID] = tracked
 		b.associateSurfaceLocked(tracked)
 		if err := b.syncDerivedPolicyLocked(msg.Surface.ID); err != nil {
 			log.Printf("sync compositor policy for %s: %v", msg.Surface.ID, err)
 		}
-	case schema.SurfaceEventFocused, schema.SurfaceEventInputDenied:
+	case schema.SurfaceEventFocused, schema.SurfaceEventInputDenied, schema.SurfaceEventFrameDone:
+		if previous, ok := b.surfaces[msg.Surface.ID]; ok {
+			if tracked.Geometry == nil {
+				tracked.Geometry = previous.Geometry
+			}
+			if tracked.PixelSize == nil {
+				tracked.PixelSize = previous.PixelSize
+			}
+			if tracked.OutputID == "" {
+				tracked.OutputID = previous.OutputID
+			}
+			tracked.FrameCount = previous.FrameCount
+			tracked.LastPresentTimestamp = previous.LastPresentTimestamp
+			if msg.Event == schema.SurfaceEventFrameDone {
+				tracked.FrameCount++
+				tracked.LastPresentTimestamp = &now
+			}
+			if msg.Event != schema.SurfaceEventFocused {
+				tracked.Focused = previous.Focused
+			}
+		}
 		b.surfaces[msg.Surface.ID] = tracked
 		b.associateSurfaceLocked(tracked)
 		if _, ok := b.policies[msg.Surface.ID]; !ok {
@@ -1125,6 +2120,7 @@ func (b *Bridge) handleSurfaceEvent(msg schema.CompositorPluginEvent) {
 	case schema.SurfaceEventUnmapped:
 		delete(b.surfaces, msg.Surface.ID)
 		delete(b.surfaceLaunch, msg.Surface.ID)
+		delete(b.surfaceOutput, msg.Surface.ID)
 		delete(b.policies, msg.Surface.ID)
 		delete(b.grants, msg.Surface.ID)
 		if b.plugin != nil {
@@ -1136,7 +2132,28 @@ func (b *Bridge) handleSurfaceEvent(msg schema.CompositorPluginEvent) {
 		b.mu.Unlock()
 		return
 	}
+	var desiredOutput string
+	if launchID := b.surfaceLaunch[msg.Surface.ID]; launchID != "" {
+		if launch := b.launches[launchID]; launch != nil {
+			desiredOutput = launch.expectedOutput
+		}
+	}
 	b.mu.Unlock()
+
+	if desiredOutput != "" {
+		surfaceID := msg.Surface.ID
+		go func() {
+			b.mu.RLock()
+			alreadyAssigned := b.surfaceOutput[surfaceID] != ""
+			b.mu.RUnlock()
+			if alreadyAssigned {
+				return
+			}
+			if _, err := b.MoveSurfaceToOutput(surfaceID, desiredOutput); err != nil {
+				log.Printf("place surface %s on output %s: %v", surfaceID, desiredOutput, err)
+			}
+		}()
+	}
 
 	if topic != "" {
 		if err := b.bus.Publish(topic, busBody); err != nil {
@@ -1352,9 +2369,10 @@ func okResponse(body any) schema.Response {
 	return schema.Response{OK: true, Body: b}
 }
 
-func writeError(conn net.Conn, msg string) {
-	b, _ := json.Marshal(msg)
-	resp := schema.Response{OK: false, Body: b}
+func writeError(conn net.Conn, err error) {
+	class, message := classifyError(err)
+	b, _ := json.Marshal(message)
+	resp := schema.Response{OK: false, Body: b, ErrorClass: class, ErrorMessage: message}
 	if err := json.NewEncoder(conn).Encode(resp); err != nil {
 		log.Printf("write compositor error response: %v", err)
 	}

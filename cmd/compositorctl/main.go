@@ -28,10 +28,16 @@ func main() {
 	switch args[0] {
 	case "capture":
 		err = cmdCapture(args[1:], *pretty)
+	case "wait":
+		err = cmdWait(args[1:], *pretty)
+	case "artifacts":
+		err = cmdArtifacts(args[1:], *pretty)
 	case "session":
 		err = cmdSession(args[1:], *pretty)
 	case "launch":
 		err = cmdLaunch(args[1:], *pretty)
+	case "output":
+		err = cmdOutput(args[1:], *pretty)
 	case "list-processes":
 		err = cmdListProcesses(args[1:], *pretty)
 	case "terminate":
@@ -73,8 +79,11 @@ func usage() {
 
 Commands:
   capture            Capture a tracked surface to a PNG artifact
+  wait               Wait for compositor readiness facts
+  artifacts          List, get, or export structured capture artifacts
   session            Create, list, get, reset, or destroy compositor sessions
   launch             Launch a Wayland client and track its process/surfaces
+  output             Manage logical output tiles for multi-agent desktops
   list-processes     List tracked compositor-launched processes
   terminate          Terminate a tracked launch and close its surfaces
   move               Move pointer over a tracked surface
@@ -117,6 +126,94 @@ func (e *envFlags) Set(value string) error {
 	return nil
 }
 
+func cmdWait(args []string, pretty bool) error {
+	if len(args) == 0 {
+		return fmt.Errorf("wait subcommand is required")
+	}
+	switch args[0] {
+	case "for-surface":
+		fs := flag.NewFlagSet("wait for-surface", flag.ExitOnError)
+		sessionID := fs.String("session", "", "session id")
+		appID := fs.String("app-id", "", "app id substring")
+		title := fs.String("title", "", "title substring")
+		timeout := fs.Int("timeout", 5000, "timeout milliseconds")
+		fs.Parse(args[1:])
+		return callAndPrint(schema.MethodWaitForSurface, schema.WaitForSurfaceRequest{SessionID: *sessionID, AppID: *appID, Title: *title, TimeoutMs: *timeout}, pretty)
+	case "for-frame":
+		fs := flag.NewFlagSet("wait for-frame", flag.ExitOnError)
+		surfaceID := fs.String("surface", "", "surface id")
+		after := fs.Uint64("after-frame", 0, "wait for frame count greater than this value")
+		timeout := fs.Int("timeout", 5000, "timeout milliseconds")
+		fs.Parse(args[1:])
+		if *surfaceID == "" {
+			return fmt.Errorf("--surface is required")
+		}
+		return callAndPrint(schema.MethodWaitForFrame, schema.WaitForFrameRequest{SurfaceID: *surfaceID, AfterFrame: *after, TimeoutMs: *timeout}, pretty)
+	case "for-app-ready":
+		fs := flag.NewFlagSet("wait for-app-ready", flag.ExitOnError)
+		launchID := fs.String("launch-id", "", "launch id")
+		timeout := fs.Int("timeout", 5000, "timeout milliseconds")
+		fs.Parse(args[1:])
+		if *launchID == "" {
+			return fmt.Errorf("--launch-id is required")
+		}
+		return callAndPrint(schema.MethodWaitForAppReady, schema.WaitForAppReadyRequest{LaunchID: *launchID, TimeoutMs: *timeout}, pretty)
+	case "for-render-idle":
+		fs := flag.NewFlagSet("wait for-render-idle", flag.ExitOnError)
+		surfaceID := fs.String("surface", "", "surface id")
+		idle := fs.Int("idle-ms", 250, "required idle milliseconds")
+		timeout := fs.Int("timeout", 5000, "timeout milliseconds")
+		fs.Parse(args[1:])
+		if *surfaceID == "" {
+			return fmt.Errorf("--surface is required")
+		}
+		return callAndPrint(schema.MethodWaitForRenderIdle, schema.WaitForRenderIdleRequest{SurfaceID: *surfaceID, IdleMs: *idle, TimeoutMs: *timeout}, pretty)
+	case "for-no-pending":
+		fs := flag.NewFlagSet("wait for-no-pending", flag.ExitOnError)
+		surfaceID := fs.String("surface", "", "surface id")
+		timeout := fs.Int("timeout", 5000, "timeout milliseconds")
+		fs.Parse(args[1:])
+		if *surfaceID == "" {
+			return fmt.Errorf("--surface is required")
+		}
+		return callAndPrint(schema.MethodWaitForNoPending, schema.WaitForNoPendingRequest{SurfaceID: *surfaceID, TimeoutMs: *timeout}, pretty)
+	default:
+		return fmt.Errorf("unknown wait subcommand: %s", args[0])
+	}
+}
+
+func cmdArtifacts(args []string, pretty bool) error {
+	if len(args) == 0 {
+		return fmt.Errorf("artifacts subcommand is required: list, get, export")
+	}
+	switch args[0] {
+	case "list":
+		fs := flag.NewFlagSet("artifacts list", flag.ExitOnError)
+		sessionID := fs.String("session", "", "session id")
+		fs.Parse(args[1:])
+		return callAndPrint(schema.MethodListArtifacts, schema.ListArtifactsRequest{SessionID: *sessionID}, pretty)
+	case "get":
+		fs := flag.NewFlagSet("artifacts get", flag.ExitOnError)
+		artifactID := fs.String("artifact", "", "artifact id")
+		fs.Parse(args[1:])
+		if *artifactID == "" {
+			return fmt.Errorf("--artifact is required")
+		}
+		return callAndPrint(schema.MethodGetArtifact, schema.GetArtifactRequest{ArtifactID: *artifactID}, pretty)
+	case "export":
+		fs := flag.NewFlagSet("artifacts export", flag.ExitOnError)
+		sessionID := fs.String("session", "", "session id")
+		to := fs.String("to", "", "destination directory")
+		fs.Parse(args[1:])
+		if *sessionID == "" || *to == "" {
+			return fmt.Errorf("--session and --to are required")
+		}
+		return callAndPrint(schema.MethodExportArtifacts, schema.ExportArtifactsRequest{SessionID: *sessionID, To: *to}, pretty)
+	default:
+		return fmt.Errorf("unknown artifacts subcommand: %s", args[0])
+	}
+}
+
 func cmdSession(args []string, pretty bool) error {
 	if len(args) == 0 {
 		return fmt.Errorf("session subcommand is required: create, list, get, reset, destroy")
@@ -155,6 +252,85 @@ func cmdSession(args []string, pretty bool) error {
 	}
 }
 
+func cmdOutput(args []string, pretty bool) error {
+	if len(args) == 0 {
+		return fmt.Errorf("output subcommand is required")
+	}
+	switch args[0] {
+	case "create":
+		fs := flag.NewFlagSet("output create", flag.ExitOnError)
+		name := fs.String("name", "", "logical output name")
+		width := fs.Int("width", 1280, "logical output width")
+		height := fs.Int("height", 720, "logical output height")
+		scale := fs.Float64("scale", 1, "logical output scale")
+		fs.Parse(args[1:])
+		if *name == "" {
+			return fmt.Errorf("--name is required")
+		}
+		return callAndPrint(schema.MethodCreateOutput, schema.CreateOutputRequest{Name: *name, Width: *width, Height: *height, Scale: *scale}, pretty)
+	case "destroy":
+		fs := flag.NewFlagSet("output destroy", flag.ExitOnError)
+		name := fs.String("name", "", "logical output name")
+		fs.Parse(args[1:])
+		if *name == "" {
+			return fmt.Errorf("--name is required")
+		}
+		return callAndPrint(schema.MethodDestroyOutput, schema.OutputRequest{Name: *name}, pretty)
+	case "resize":
+		fs := flag.NewFlagSet("output resize", flag.ExitOnError)
+		name := fs.String("name", "", "logical output name")
+		width := fs.Int("width", 0, "logical output width")
+		height := fs.Int("height", 0, "logical output height")
+		fs.Parse(args[1:])
+		if *name == "" || *width <= 0 || *height <= 0 {
+			return fmt.Errorf("--name, --width, and --height are required")
+		}
+		return callAndPrint(schema.MethodResizeOutput, schema.ResizeOutputRequest{Name: *name, Width: *width, Height: *height}, pretty)
+	case "set-scale":
+		fs := flag.NewFlagSet("output set-scale", flag.ExitOnError)
+		name := fs.String("name", "", "logical output name")
+		scale := fs.Float64("scale", 1, "logical output scale")
+		fs.Parse(args[1:])
+		if *name == "" || *scale <= 0 {
+			return fmt.Errorf("--name and positive --scale are required")
+		}
+		return callAndPrint(schema.MethodSetOutputScale, schema.SetOutputScaleRequest{Name: *name, Scale: *scale}, pretty)
+	case "list":
+		return callAndPrint(schema.MethodListOutputs, map[string]string{}, pretty)
+	case "move-surface":
+		fs := flag.NewFlagSet("output move-surface", flag.ExitOnError)
+		surfaceID := fs.String("surface", "", "surface id")
+		output := fs.String("output", "", "logical output name")
+		fs.Parse(args[1:])
+		if *surfaceID == "" || *output == "" {
+			return fmt.Errorf("--surface and --output are required")
+		}
+		return callAndPrint(schema.MethodMoveSurfaceToOutput, schema.MoveSurfaceToOutputRequest{SurfaceID: *surfaceID, Output: *output}, pretty)
+	case "surface-list":
+		fs := flag.NewFlagSet("output surface-list", flag.ExitOnError)
+		name := fs.String("name", "", "logical output name")
+		fs.Parse(args[1:])
+		if *name == "" {
+			return fmt.Errorf("--name is required")
+		}
+		return callAndPrint(schema.MethodListOutputSurfaces, schema.OutputRequest{Name: *name}, pretty)
+	case "capture":
+		fs := flag.NewFlagSet("output capture", flag.ExitOnError)
+		name := fs.String("name", "", "logical output name")
+		exportArtifact := fs.Bool("export", false, "write structured artifacts for captured surfaces")
+		sessionID := fs.String("session", "", "session id for artifact export")
+		evidenceClass := fs.String("evidence-class", "viewport_screenshot", "evidence class")
+		seqID := fs.String("asha-command-sequence-id", "", "ASHA command sequence id")
+		fs.Parse(args[1:])
+		if *name == "" {
+			return fmt.Errorf("--name is required")
+		}
+		return callAndPrint(schema.MethodCaptureOutput, schema.CaptureOutputRequest{Name: *name, Export: *exportArtifact, SessionID: *sessionID, EvidenceClass: *evidenceClass, ASHACommandSequenceID: *seqID}, pretty)
+	default:
+		return fmt.Errorf("unknown output subcommand: %s", args[0])
+	}
+}
+
 func cmdLaunch(args []string, pretty bool) error {
 	fs := flag.NewFlagSet("launch", flag.ExitOnError)
 	cmd := fs.String("cmd", "", "command to launch (required)")
@@ -164,6 +340,7 @@ func cmdLaunch(args []string, pretty bool) error {
 	runAsGID := fs.Uint("gid", 0, "run process as GID (bridge must have permission; default bridge policy may choose agent)")
 	expectedAppID := fs.String("expected-app-id", "", "expected compositor app id")
 	expectedTitle := fs.String("expected-title", "", "expected surface title substring")
+	output := fs.String("output", "", "logical output name to place the launched surface into")
 	waitSurface := fs.Bool("wait-surface", false, "wait for first matching surface")
 	waitTimeout := fs.Int("wait-timeout-ms", 5000, "surface wait timeout in milliseconds")
 	env := envFlags{}
@@ -174,7 +351,7 @@ func cmdLaunch(args []string, pretty bool) error {
 	}
 	req := schema.LaunchAppRequest{
 		SessionID: *sessionID, Command: *cmd, Cwd: *cwd, Env: env, ExpectedAppID: *expectedAppID,
-		ExpectedTitle: *expectedTitle, WaitSurface: *waitSurface, WaitTimeoutMs: *waitTimeout,
+		ExpectedTitle: *expectedTitle, Output: *output, WaitSurface: *waitSurface, WaitTimeoutMs: *waitTimeout,
 	}
 	if *runAsUID != 0 {
 		uid := uint32(*runAsUID)
@@ -216,6 +393,10 @@ func cmdCapture(args []string, pretty bool) error {
 	fs := flag.NewFlagSet("capture", flag.ExitOnError)
 	surfaceID := fs.String("surface", "", "surface ID (required)")
 	format := fs.String("format", "png", "capture format")
+	exportArtifact := fs.Bool("export", false, "write structured artifact index")
+	sessionID := fs.String("session", "", "session id for artifact export")
+	evidenceClass := fs.String("evidence-class", "", "evidence class: surface_screenshot, viewport_screenshot, or desktop_behavior")
+	seqID := fs.String("asha-command-sequence-id", "", "ASHA command sequence id")
 	fs.Parse(args)
 
 	if *surfaceID == "" {
@@ -226,8 +407,12 @@ func cmdCapture(args []string, pretty bool) error {
 	}
 
 	resp, err := call(compositorSock, schema.MethodCaptureSurface, schema.CaptureSurfaceRequest{
-		SurfaceID: *surfaceID,
-		Format:    *format,
+		SurfaceID:             *surfaceID,
+		Format:                *format,
+		Export:                *exportArtifact,
+		SessionID:             *sessionID,
+		EvidenceClass:         *evidenceClass,
+		ASHACommandSequenceID: *seqID,
 	})
 	if err != nil {
 		return err
@@ -491,6 +676,9 @@ func call(sock, method string, body any) (json.RawMessage, error) {
 		return nil, fmt.Errorf("recv: %w", err)
 	}
 	if !resp.OK {
+		if resp.ErrorClass != "" {
+			return nil, fmt.Errorf("server[%s]: %s", resp.ErrorClass, resp.ErrorMessage)
+		}
 		return nil, fmt.Errorf("server: %s", string(resp.Body))
 	}
 	return resp.Body, nil
