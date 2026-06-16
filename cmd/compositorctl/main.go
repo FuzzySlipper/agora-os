@@ -38,6 +38,8 @@ func main() {
 		err = cmdLaunch(args[1:], *pretty)
 	case "output":
 		err = cmdOutput(args[1:], *pretty)
+	case "a11y":
+		err = cmdA11y(args[1:], *pretty)
 	case "list-processes":
 		err = cmdListProcesses(args[1:], *pretty)
 	case "terminate":
@@ -84,6 +86,7 @@ Commands:
   session            Create, list, get, reset, or destroy compositor sessions
   launch             Launch a Wayland client and track its process/surfaces
   output             Manage logical output tiles for multi-agent desktops
+  a11y               Query or invoke surface accessibility/semantic nodes
   list-processes     List tracked compositor-launched processes
   terminate          Terminate a tracked launch and close its surfaces
   move               Move pointer over a tracked surface
@@ -249,6 +252,56 @@ func cmdSession(args []string, pretty bool) error {
 		return callAndPrint(method, schema.SessionRequest{SessionID: *sessionID}, pretty)
 	default:
 		return fmt.Errorf("unknown session subcommand: %s", args[0])
+	}
+}
+
+func cmdA11y(args []string, pretty bool) error {
+	if len(args) == 0 {
+		return fmt.Errorf("a11y subcommand is required")
+	}
+	switch args[0] {
+	case "tree":
+		fs := flag.NewFlagSet("a11y tree", flag.ExitOnError)
+		surfaceID := fs.String("surface", "", "surface id")
+		depth := fs.Int("depth", 8, "maximum tree depth")
+		fs.Parse(args[1:])
+		if *surfaceID == "" {
+			return fmt.Errorf("--surface is required")
+		}
+		return callAndPrint(schema.MethodA11yTree, schema.A11yTreeRequest{SurfaceID: *surfaceID, Depth: *depth}, pretty)
+	case "semantic":
+		fs := flag.NewFlagSet("a11y semantic", flag.ExitOnError)
+		surfaceID := fs.String("surface", "", "surface id")
+		depth := fs.Int("depth", 8, "maximum tree depth")
+		fs.Parse(args[1:])
+		if *surfaceID == "" {
+			return fmt.Errorf("--surface is required")
+		}
+		return callAndPrint(schema.MethodA11ySemantic, schema.A11yTreeRequest{SurfaceID: *surfaceID, Depth: *depth}, pretty)
+	case "find":
+		fs := flag.NewFlagSet("a11y find", flag.ExitOnError)
+		surfaceID := fs.String("surface", "", "surface id")
+		name := fs.String("name", "", "case-insensitive name/role/description pattern")
+		depth := fs.Int("depth", 10, "maximum tree depth")
+		fs.Parse(args[1:])
+		if *surfaceID == "" {
+			return fmt.Errorf("--surface is required")
+		}
+		if *name == "" {
+			return fmt.Errorf("--name is required")
+		}
+		return callAndPrint(schema.MethodA11yFind, schema.A11yFindRequest{SurfaceID: *surfaceID, Name: *name, Depth: *depth}, pretty)
+	case "click":
+		fs := flag.NewFlagSet("a11y click", flag.ExitOnError)
+		nodeID := fs.String("node", "", "a11y node id returned by tree/find")
+		actionIndex := fs.Int("action-index", 0, "accessible action index to invoke")
+		fs.Parse(args[1:])
+		if *nodeID == "" {
+			return fmt.Errorf("--node is required")
+		}
+		return callAndPrint(schema.MethodA11yClick, schema.A11yClickRequest{NodeID: *nodeID, ActionIndex: *actionIndex}, pretty)
+	default:
+		return fmt.Errorf("unknown a11y subcommand %q", args[0])
 	}
 }
 
