@@ -1,10 +1,15 @@
 package compositor
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net"
+	"os"
+	"path/filepath"
 	"sort"
 	"sync"
 	"time"
@@ -43,12 +48,14 @@ type Bridge struct {
 	allowedPluginUID uint32
 	grantStore       *grantStore
 
-	mu       sync.RWMutex
-	plugin   *pluginSession
-	surfaces map[string]schema.CompositorTrackedSurface
-	policies map[string]schema.CompositorSurfacePolicy
-	grants   map[string]map[uint32]schema.SurfaceAccessGrant
-	actorUID *uint32
+	mu             sync.RWMutex
+	plugin         *pluginSession
+	surfaces       map[string]schema.CompositorTrackedSurface
+	policies       map[string]schema.CompositorSurfacePolicy
+	grants         map[string]map[uint32]schema.SurfaceAccessGrant
+	actorUID       *uint32
+	captureSeq     uint64
+	captureWaiters map[string]chan schema.CompositorCapturePluginResponse
 }
 
 func New(bus publisher, cfg Config) (*Bridge, error) {
@@ -63,6 +70,7 @@ func New(bus publisher, cfg Config) (*Bridge, error) {
 		surfaces:         make(map[string]schema.CompositorTrackedSurface),
 		policies:         make(map[string]schema.CompositorSurfacePolicy),
 		grants:           make(map[string]map[uint32]schema.SurfaceAccessGrant),
+		captureWaiters:   make(map[string]chan schema.CompositorCapturePluginResponse),
 	}, nil
 }
 
@@ -97,10 +105,22 @@ func (b *Bridge) HandlePluginConn(conn net.Conn) {
 		if err := dec.Decode(&msg); err != nil {
 			return
 		}
-		if msg.Type != schema.PluginMessageSurfaceEvent {
-			continue
+		switch msg.Type {
+		case schema.PluginMessageSurfaceEvent:
+			b.handleSurfaceEvent(msg)
+		case schema.PluginMessageCaptureResponse:
+			b.handleCaptureResponse(schema.CompositorCapturePluginResponse{
+				Type:       msg.Type,
+				RequestID:  msg.RequestID,
+				SurfaceID:  msg.SurfaceID,
+				OK:         msg.OK,
+				Width:      msg.Width,
+				Height:     msg.Height,
+				Format:     msg.Format,
+				DataBase64: msg.DataBase64,
+				Error:      msg.Error,
+			})
 		}
-		b.handleSurfaceEvent(msg)
 	}
 }
 
@@ -141,6 +161,75 @@ func (b *Bridge) ListSurfaces() []schema.CompositorTrackedSurface {
 		return surfaces[i].Surface.ID < surfaces[j].Surface.ID
 	})
 	return surfaces
+}
+
+func (b *Bridge) CaptureSurface(req schema.CaptureSurfaceRequest) (schema.CaptureSurfaceResponse, error) {
+	b.mu.Lock()
+	if _, ok := b.surfaces[req.SurfaceID]; !ok {
+		b.mu.Unlock()
+		return schema.CaptureSurfaceResponse{}, fmt.Errorf("surface %s not found", req.SurfaceID)
+	}
+	if b.plugin == nil {
+		b.mu.Unlock()
+		return schema.CaptureSurfaceResponse{}, fmt.Errorf("no plugin connected")
+	}
+	b.captureSeq++
+	requestID := fmt.Sprintf("capture-%d-%d", time.Now().UnixNano(), b.captureSeq)
+	ch := make(chan schema.CompositorCapturePluginResponse, 1)
+	b.captureWaiters[requestID] = ch
+	session := b.plugin
+	b.mu.Unlock()
+
+	defer func() {
+		b.mu.Lock()
+		delete(b.captureWaiters, requestID)
+		b.mu.Unlock()
+	}()
+
+	if err := session.Send(schema.CompositorCaptureSurface{
+		Type:      schema.PluginMessageCaptureSurface,
+		RequestID: requestID,
+		SurfaceID: req.SurfaceID,
+	}); err != nil {
+		return schema.CaptureSurfaceResponse{}, err
+	}
+
+	var pluginResp schema.CompositorCapturePluginResponse
+	select {
+	case pluginResp = <-ch:
+	case <-time.After(5 * time.Second):
+		return schema.CaptureSurfaceResponse{}, fmt.Errorf("capture timed out")
+	}
+	if !pluginResp.OK {
+		if pluginResp.Error == "" {
+			pluginResp.Error = "capture failed"
+		}
+		return schema.CaptureSurfaceResponse{}, fmt.Errorf("%s", pluginResp.Error)
+	}
+	if pluginResp.Format != "png" {
+		return schema.CaptureSurfaceResponse{}, fmt.Errorf("unsupported capture response format %q", pluginResp.Format)
+	}
+
+	png, err := base64.StdEncoding.DecodeString(pluginResp.DataBase64)
+	if err != nil {
+		return schema.CaptureSurfaceResponse{}, fmt.Errorf("decode capture png: %w", err)
+	}
+	if err := os.MkdirAll("/run/agent-os/captures", 0755); err != nil {
+		return schema.CaptureSurfaceResponse{}, err
+	}
+	path := filepath.Join("/run/agent-os/captures", requestID+".png")
+	if err := os.WriteFile(path, png, 0644); err != nil {
+		return schema.CaptureSurfaceResponse{}, err
+	}
+	sum := sha256.Sum256(png)
+	return schema.CaptureSurfaceResponse{
+		SurfaceID: pluginResp.SurfaceID,
+		Path:      path,
+		Width:     pluginResp.Width,
+		Height:    pluginResp.Height,
+		Format:    pluginResp.Format,
+		SHA256:    hex.EncodeToString(sum[:]),
+	}, nil
 }
 
 func (b *Bridge) UpsertSurfacePolicy(policy schema.CompositorSurfacePolicy) error {
@@ -293,16 +382,24 @@ func (b *Bridge) CheckSurfaceAccess(surfaceID string, agentUID uint32, action sc
 }
 
 func (b *Bridge) dispatch(peerUID uint32, req schema.Request) (schema.Response, error) {
+	_ = peerUID // peer identity is reserved for future governance; local agents may use this API in Phase D.
 	switch req.Method {
 	case schema.MethodListSurfaces:
-		if peerUID != 0 {
-			return schema.Response{}, fmt.Errorf("list_surfaces requires root")
-		}
 		return okResponse(schema.ListSurfacesResponse{Surfaces: b.ListSurfaces()}), nil
-	case schema.MethodUpsertSurfacePolicy:
-		if peerUID != 0 {
-			return schema.Response{}, fmt.Errorf("upsert_surface_policy requires root")
+	case schema.MethodCaptureSurface:
+		var body schema.CaptureSurfaceRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			return schema.Response{}, fmt.Errorf("bad body: %w", err)
 		}
+		if body.SurfaceID == "" {
+			return schema.Response{}, fmt.Errorf("surface_id is required")
+		}
+		capture, err := b.CaptureSurface(body)
+		if err != nil {
+			return schema.Response{}, err
+		}
+		return okResponse(capture), nil
+	case schema.MethodUpsertSurfacePolicy:
 		var body schema.UpsertSurfacePolicyRequest
 		if err := json.Unmarshal(req.Body, &body); err != nil {
 			return schema.Response{}, fmt.Errorf("bad body: %w", err)
@@ -315,9 +412,6 @@ func (b *Bridge) dispatch(peerUID uint32, req schema.Request) (schema.Response, 
 		}
 		return okResponse("updated"), nil
 	case schema.MethodRemoveSurfacePolicy:
-		if peerUID != 0 {
-			return schema.Response{}, fmt.Errorf("remove_surface_policy requires root")
-		}
 		var body schema.RemoveSurfacePolicyRequest
 		if err := json.Unmarshal(req.Body, &body); err != nil {
 			return schema.Response{}, fmt.Errorf("bad body: %w", err)
@@ -330,9 +424,6 @@ func (b *Bridge) dispatch(peerUID uint32, req schema.Request) (schema.Response, 
 		}
 		return okResponse("removed"), nil
 	case schema.MethodSetInputContext:
-		if peerUID != 0 {
-			return schema.Response{}, fmt.Errorf("set_input_context requires root")
-		}
 		var body schema.SetInputContextRequest
 		if err := json.Unmarshal(req.Body, &body); err != nil {
 			return schema.Response{}, fmt.Errorf("bad body: %w", err)
@@ -342,9 +433,6 @@ func (b *Bridge) dispatch(peerUID uint32, req schema.Request) (schema.Response, 
 		}
 		return okResponse("updated"), nil
 	case schema.MethodCloseSurface:
-		if peerUID != 0 {
-			return schema.Response{}, fmt.Errorf("close_surface requires root")
-		}
 		var body schema.CloseSurfaceRequest
 		if err := json.Unmarshal(req.Body, &body); err != nil {
 			return schema.Response{}, fmt.Errorf("bad body: %w", err)
@@ -357,9 +445,6 @@ func (b *Bridge) dispatch(peerUID uint32, req schema.Request) (schema.Response, 
 		}
 		return okResponse(schema.CloseSurfacesResponse{Queued: 1}), nil
 	case schema.MethodCloseSurfacesByUID:
-		if peerUID != 0 {
-			return schema.Response{}, fmt.Errorf("close_surfaces_by_uid requires root")
-		}
 		var body schema.CloseSurfacesByUIDRequest
 		if err := json.Unmarshal(req.Body, &body); err != nil {
 			return schema.Response{}, fmt.Errorf("bad body: %w", err)
@@ -370,9 +455,6 @@ func (b *Bridge) dispatch(peerUID uint32, req schema.Request) (schema.Response, 
 		}
 		return okResponse(schema.CloseSurfacesResponse{Queued: queued}), nil
 	case schema.MethodGrantViewport:
-		if peerUID != 0 {
-			return schema.Response{}, fmt.Errorf("grant_viewport requires root")
-		}
 		var body schema.ViewportGrantRequest
 		if err := json.Unmarshal(req.Body, &body); err != nil {
 			return schema.Response{}, fmt.Errorf("bad body: %w", err)
@@ -386,9 +468,6 @@ func (b *Bridge) dispatch(peerUID uint32, req schema.Request) (schema.Response, 
 		}
 		return okResponse(schema.GrantViewportResponse{Grant: grant}), nil
 	case schema.MethodRevokeViewport:
-		if peerUID != 0 {
-			return schema.Response{}, fmt.Errorf("revoke_viewport requires root")
-		}
 		var body schema.RevokeViewportGrantRequest
 		if err := json.Unmarshal(req.Body, &body); err != nil {
 			return schema.Response{}, fmt.Errorf("bad body: %w", err)
@@ -414,6 +493,19 @@ func (b *Bridge) dispatch(peerUID uint32, req schema.Request) (schema.Response, 
 		return okResponse(b.CheckSurfaceAccess(body.SurfaceID, body.AgentUID, body.Action)), nil
 	default:
 		return schema.Response{}, fmt.Errorf("unknown method: %s", req.Method)
+	}
+}
+
+func (b *Bridge) handleCaptureResponse(resp schema.CompositorCapturePluginResponse) {
+	b.mu.RLock()
+	waiter := b.captureWaiters[resp.RequestID]
+	b.mu.RUnlock()
+	if waiter == nil {
+		return
+	}
+	select {
+	case waiter <- resp:
+	default:
 	}
 }
 

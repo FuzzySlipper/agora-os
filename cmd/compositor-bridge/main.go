@@ -53,10 +53,10 @@ func main() {
 	defer controlLn.Close()
 
 	mustConfigureSocket(schema.CompositorPluginSocket, 0660, 0, int(compositorGID))
-	mustConfigureSocket(schema.CompositorControlSocket, 0660, 0, 0)
+	mustConfigureSocket(schema.CompositorControlSocket, 0660, 0, int(compositorGID))
 
 	log.Printf("compositor bridge plugin socket: %s (peer uid %d or root)", schema.CompositorPluginSocket, compositorUID)
-	log.Printf("compositor bridge control socket: %s (root only)", schema.CompositorControlSocket)
+	log.Printf("compositor bridge control socket: %s (group agents)", schema.CompositorControlSocket)
 	log.Printf("compositor grant log: %s", grantLogPath)
 
 	go func() {

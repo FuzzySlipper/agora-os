@@ -353,14 +353,17 @@ func TestHandlePluginConnRejectsUnauthorizedPeer(t *testing.T) {
 	<-done
 }
 
-func TestDispatchRejectsNonRootListSurfaces(t *testing.T) {
+func TestDispatchAllowsNonRootListSurfaces(t *testing.T) {
 	bridge, err := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	_, err = bridge.dispatch(1234, schema.Request{Method: schema.MethodListSurfaces})
-	if err == nil {
-		t.Fatal("expected non-root list_surfaces to be rejected")
+	resp, err := bridge.dispatch(1234, schema.Request{Method: schema.MethodListSurfaces})
+	if err != nil {
+		t.Fatalf("expected non-root list_surfaces to be allowed: %v", err)
+	}
+	if !resp.OK {
+		t.Fatalf("expected OK response, got %+v", resp)
 	}
 }
 

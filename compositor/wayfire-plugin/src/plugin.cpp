@@ -233,6 +233,48 @@ std::string base64_encode(const std::vector<uint8_t>& data)
     return out;
 }
 
+struct capture_surface_pick_t
+{
+    wlr_surface *surface = nullptr;
+};
+
+void pick_capture_surface(wlr_surface *surface, int, int, void *data)
+{
+    auto *pick = static_cast<capture_surface_pick_t*>(data);
+    if (pick->surface || !surface || !surface->current.buffer ||
+        (surface->current.buffer_width <= 0) || (surface->current.buffer_height <= 0))
+    {
+        return;
+    }
+
+    pick->surface = surface;
+}
+
+wlr_surface *find_capture_surface(wayfire_view view)
+{
+    if (!view)
+    {
+        return nullptr;
+    }
+
+    wlr_surface *root = view->get_wlr_surface();
+    if (!root)
+    {
+        return nullptr;
+    }
+
+    capture_surface_pick_t pick;
+    if (root->current.buffer && (root->current.buffer_width > 0) && (root->current.buffer_height > 0))
+    {
+        pick.surface = root;
+    } else
+    {
+        wlr_surface_for_each_surface(root, pick_capture_surface, &pick);
+    }
+
+    return pick.surface;
+}
+
 class bridge_client_t
 {
   public:
@@ -681,8 +723,8 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         }
 
         auto view = view_it->second;
-        wlr_surface *surface = view->get_wlr_surface();
-        if (!surface || !surface->current.buffer)
+        wlr_surface *surface = find_capture_surface(view);
+        if (!surface)
         {
             send_capture_error(request, "surface buffer not available");
             return;
