@@ -43,6 +43,32 @@ enum class bridge_message_kind
     close_surface,
     close_surfaces_by_uid,
     capture_surface,
+    inject_input,
+};
+
+enum class input_event_kind
+{
+    invalid,
+    pointer_move,
+    pointer_button,
+    key,
+    scroll,
+    touch,
+};
+
+struct input_event_t
+{
+    input_event_kind kind = input_event_kind::invalid;
+    double x = 0;
+    double y = 0;
+    uint32_t button = 0;
+    uint32_t keycode = 0;
+    int32_t state = 0;
+    int32_t discrete = 0;
+    double value = 0;
+    uint32_t axis = 0;
+    int32_t touch_id = 0;
+    std::string phase;
 };
 
 struct bridge_message_t
@@ -51,6 +77,8 @@ struct bridge_message_t
     std::vector<surface_policy_t> policies;
     std::string surface_id;
     std::string request_id;
+    std::string coordinate_space;
+    std::vector<input_event_t> input_events;
     std::optional<uint32_t> actor_uid;
     std::optional<uint32_t> owner_uid;
 };
@@ -187,6 +215,25 @@ inline std::string encode_capture_response(std::string_view request_id, std::str
     return out.str();
 }
 
+inline std::string encode_input_response(std::string_view request_id, std::string_view surface_id,
+    bool ok, uint32_t accepted, uint32_t rejected, std::string_view error = "")
+{
+    std::ostringstream out;
+    out << "{\"type\":\"input_response\","
+        << "\"request_id\":\"" << json_escape(request_id) << "\","
+        << "\"surface_id\":\"" << json_escape(surface_id) << "\","
+        << "\"ok\":" << (ok ? "true" : "false")
+        << ",\"accepted\":" << accepted
+        << ",\"rejected\":" << rejected;
+    if (!ok || !error.empty())
+    {
+        out << ",\"error\":\"" << json_escape(error) << "\"";
+    }
+
+    out << "}";
+    return out.str();
+}
+
 inline std::optional<std::string> find_string_field(const std::string& text, const char *key)
 {
     std::regex re(std::string{"\""} + key + "\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"");
@@ -206,6 +253,30 @@ inline std::optional<uint32_t> find_uint_field(const std::string& text, const ch
     if (std::regex_search(text, match, re) && (match.size() > 1))
     {
         return static_cast<uint32_t>(std::stoul(match[1].str()));
+    }
+
+    return std::nullopt;
+}
+
+inline std::optional<int32_t> find_int_field(const std::string& text, const char *key)
+{
+    std::regex re(std::string{"\""} + key + "\"\\s*:\\s*(-?[0-9]+)");
+    std::smatch match;
+    if (std::regex_search(text, match, re) && (match.size() > 1))
+    {
+        return static_cast<int32_t>(std::stol(match[1].str()));
+    }
+
+    return std::nullopt;
+}
+
+inline std::optional<double> find_number_field(const std::string& text, const char *key)
+{
+    std::regex re(std::string{"\""} + key + "\"\\s*:\\s*(-?[0-9]+(?:\\.[0-9]+)?)");
+    std::smatch match;
+    if (std::regex_search(text, match, re) && (match.size() > 1))
+    {
+        return std::stod(match[1].str());
     }
 
     return std::nullopt;
@@ -379,6 +450,55 @@ inline surface_policy_t parse_surface_policy(const std::string& text)
     return policy;
 }
 
+inline int32_t parse_input_state(const std::string& text)
+{
+    auto state = find_string_field(text, "state").value_or("");
+    if ((state == "pressed") || (state == "down"))
+    {
+        return 1;
+    }
+    if ((state == "released") || (state == "up"))
+    {
+        return 0;
+    }
+
+    return find_int_field(text, "state").value_or(0);
+}
+
+inline input_event_t parse_input_event(const std::string& text)
+{
+    input_event_t event;
+    auto type = find_string_field(text, "type").value_or("");
+    if (type == "pointer_move")
+    {
+        event.kind = input_event_kind::pointer_move;
+    } else if (type == "pointer_button")
+    {
+        event.kind = input_event_kind::pointer_button;
+    } else if (type == "key")
+    {
+        event.kind = input_event_kind::key;
+    } else if (type == "scroll")
+    {
+        event.kind = input_event_kind::scroll;
+    } else if (type == "touch")
+    {
+        event.kind = input_event_kind::touch;
+    }
+
+    event.x = find_number_field(text, "x").value_or(0);
+    event.y = find_number_field(text, "y").value_or(0);
+    event.button = find_uint_field(text, "button").value_or(0);
+    event.keycode = find_uint_field(text, "keycode").value_or(0);
+    event.state = parse_input_state(text);
+    event.value = find_number_field(text, "value").value_or(0);
+    event.discrete = find_int_field(text, "discrete").value_or(0);
+    event.axis = find_uint_field(text, "axis").value_or(0);
+    event.touch_id = find_int_field(text, "touch_id").value_or(0);
+    event.phase = find_string_field(text, "phase").value_or("");
+    return event;
+}
+
 inline bridge_message_t parse_bridge_message(const std::string& line)
 {
     bridge_message_t message;
@@ -448,6 +568,24 @@ inline bridge_message_t parse_bridge_message(const std::string& line)
         message.kind = bridge_message_kind::capture_surface;
         message.request_id = find_string_field(line, "request_id").value_or("");
         message.surface_id = find_string_field(line, "surface_id").value_or("");
+        return message;
+    }
+
+    if (*type == "inject_input")
+    {
+        message.kind = bridge_message_kind::inject_input;
+        message.request_id = find_string_field(line, "request_id").value_or("");
+        message.surface_id = find_string_field(line, "surface_id").value_or("");
+        message.coordinate_space = find_string_field(line, "coordinate_space").value_or("surface");
+        auto array = find_braced_region(line, "events", '[', ']');
+        if (array.has_value())
+        {
+            for (const auto& object : split_top_level_objects(*array))
+            {
+                message.input_events.push_back(parse_input_event(object));
+            }
+        }
+
         return message;
     }
 

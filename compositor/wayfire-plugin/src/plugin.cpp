@@ -9,6 +9,7 @@
 #include <wayland-server-core.h>
 #include <wayland-server-protocol.h>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -475,6 +476,14 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         std::string surface_id;
     };
 
+    struct pending_input_request_t
+    {
+        std::string request_id;
+        std::string surface_id;
+        std::string coordinate_space;
+        std::vector<agora::protocol::input_event_t> events;
+    };
+
     static int handle_close_wake(int fd, uint32_t mask, void *data)
     {
         return static_cast<agora_bridge_plugin_t*>(data)->process_close_wake(fd, mask);
@@ -525,6 +534,7 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         pending_close_surfaces_.clear();
         pending_close_owner_uids_.clear();
         pending_capture_requests_.clear();
+        pending_input_requests_.clear();
         pending_surface_resync_ = false;
     }
 
@@ -552,6 +562,7 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         std::vector<std::string> close_surfaces;
         std::vector<uint32_t> close_owner_uids;
         std::vector<pending_capture_request_t> capture_requests;
+        std::vector<pending_input_request_t> input_requests;
         bool should_resync = false;
         std::unordered_map<std::string, wayfire_view> views;
         {
@@ -559,6 +570,7 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
             close_surfaces.swap(pending_close_surfaces_);
             close_owner_uids.swap(pending_close_owner_uids_);
             capture_requests.swap(pending_capture_requests_);
+            input_requests.swap(pending_input_requests_);
             should_resync = pending_surface_resync_;
             pending_surface_resync_ = false;
             views = views_by_surface_;
@@ -567,6 +579,11 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         for (const auto& request : capture_requests)
         {
             process_capture_request(request, views);
+        }
+
+        for (const auto& request : input_requests)
+        {
+            process_input_request(request, views);
         }
 
         if (should_resync)
@@ -655,6 +672,23 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         notify_close_wake();
     }
 
+    void queue_input_request(std::string request_id, std::string surface_id, std::string coordinate_space,
+        std::vector<agora::protocol::input_event_t> events)
+    {
+        if (request_id.empty())
+        {
+            request_id = surface_id;
+        }
+
+        {
+            std::lock_guard lock(state_mutex_);
+            pending_input_requests_.push_back({std::move(request_id), std::move(surface_id),
+                std::move(coordinate_space), std::move(events)});
+        }
+
+        notify_close_wake();
+    }
+
     void send_capture_error(const pending_capture_request_t& request, std::string_view error)
     {
         if (!bridge_)
@@ -664,6 +698,172 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
 
         bridge_->send_line(agora::protocol::encode_capture_response(
             request.request_id, request.surface_id, false, 0, 0, "png", "", error));
+    }
+
+    uint32_t now_msec() const
+    {
+        auto now = std::chrono::steady_clock::now().time_since_epoch();
+        return static_cast<uint32_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(now).count() & 0xffffffffu);
+    }
+
+    double clamp_coordinate(double value, int32_t max_value) const
+    {
+        if (max_value <= 0)
+        {
+            return 0;
+        }
+
+        return std::clamp(value, 0.0, static_cast<double>(max_value - 1));
+    }
+
+    wlr_surface *input_surface_for_view(wayfire_view view) const
+    {
+        if (!view)
+        {
+            return nullptr;
+        }
+
+        if (auto *surface = view->get_keyboard_focus_surface())
+        {
+            return surface;
+        }
+
+        return view->get_wlr_surface();
+    }
+
+    void send_input_response(const pending_input_request_t& request, bool ok, uint32_t accepted,
+        uint32_t rejected, std::string_view error = "")
+    {
+        if (!bridge_)
+        {
+            return;
+        }
+
+        bridge_->send_line(agora::protocol::encode_input_response(
+            request.request_id, request.surface_id, ok, accepted, rejected, error));
+    }
+
+    bool apply_input_event(const agora::protocol::input_event_t& event, wayfire_view view,
+        wlr_surface *surface, wlr_seat *seat, const wf::geometry_t& bbox)
+    {
+        if (!seat)
+        {
+            return false;
+        }
+
+        auto time = now_msec();
+        auto x = clamp_coordinate(event.x, bbox.width);
+        auto y = clamp_coordinate(event.y, bbox.height);
+        switch (event.kind)
+        {
+          case agora::protocol::input_event_kind::pointer_move:
+            if (!surface)
+            {
+                return false;
+            }
+            wlr_seat_pointer_notify_enter(seat, surface, x, y);
+            wlr_seat_pointer_notify_motion(seat, time, x, y);
+            wlr_seat_pointer_notify_frame(seat);
+            return true;
+
+          case agora::protocol::input_event_kind::pointer_button:
+            if (!surface || (event.button == 0))
+            {
+                return false;
+            }
+            wlr_seat_pointer_notify_enter(seat, surface, x, y);
+            wlr_seat_pointer_notify_button(seat, time, event.button,
+                event.state ? WL_POINTER_BUTTON_STATE_PRESSED : WL_POINTER_BUTTON_STATE_RELEASED);
+            wlr_seat_pointer_notify_frame(seat);
+            return true;
+
+          case agora::protocol::input_event_kind::key:
+            if (event.keycode == 0)
+            {
+                return false;
+            }
+            wf::get_core().seat->focus_view(view);
+            wlr_seat_keyboard_notify_key(seat, time, event.keycode,
+                event.state ? WL_KEYBOARD_KEY_STATE_PRESSED : WL_KEYBOARD_KEY_STATE_RELEASED);
+            return true;
+
+          case agora::protocol::input_event_kind::scroll:
+            wlr_seat_pointer_notify_axis(seat, time,
+                event.axis == 1 ? WL_POINTER_AXIS_HORIZONTAL_SCROLL : WL_POINTER_AXIS_VERTICAL_SCROLL,
+                event.value, event.discrete, WL_POINTER_AXIS_SOURCE_WHEEL,
+                WL_POINTER_AXIS_RELATIVE_DIRECTION_IDENTICAL);
+            wlr_seat_pointer_notify_frame(seat);
+            return true;
+
+          case agora::protocol::input_event_kind::touch:
+            if (!surface)
+            {
+                return false;
+            }
+            if ((event.phase == "down") || (event.state == 1))
+            {
+                return wlr_seat_touch_notify_down(seat, surface, time, event.touch_id, x, y) != 0;
+            }
+            if (event.phase == "motion")
+            {
+                wlr_seat_touch_notify_motion(seat, time, event.touch_id, x, y);
+                return true;
+            }
+            if ((event.phase == "up") || (event.state == 0))
+            {
+                return wlr_seat_touch_notify_up(seat, time, event.touch_id) != 0;
+            }
+            return false;
+
+          default:
+            return false;
+        }
+    }
+
+    void process_input_request(const pending_input_request_t& request,
+        const std::unordered_map<std::string, wayfire_view>& views)
+    {
+        auto view_it = views.find(request.surface_id);
+        if ((view_it == views.end()) || !view_it->second)
+        {
+            send_input_response(request, false, 0, static_cast<uint32_t>(request.events.size()), "surface not found");
+            return;
+        }
+
+        auto view = view_it->second;
+        auto bbox = view->get_bounding_box();
+        if ((bbox.width <= 0) || (bbox.height <= 0))
+        {
+            send_input_response(request, false, 0, static_cast<uint32_t>(request.events.size()),
+                "surface has empty dimensions");
+            return;
+        }
+
+        auto *surface = input_surface_for_view(view);
+        auto *seat = wf::get_core().seat ? wf::get_core().seat->seat : nullptr;
+        if (!seat)
+        {
+            send_input_response(request, false, 0, static_cast<uint32_t>(request.events.size()), "seat not available");
+            return;
+        }
+
+        wf::get_core().seat->focus_view(view);
+        uint32_t accepted = 0;
+        uint32_t rejected = 0;
+        for (const auto& event : request.events)
+        {
+            if (apply_input_event(event, view, surface, seat, bbox))
+            {
+                ++accepted;
+            } else
+            {
+                ++rejected;
+            }
+        }
+
+        send_input_response(request, rejected == 0, accepted, rejected,
+            rejected == 0 ? "" : "one or more input events were rejected");
     }
 
     void process_capture_request(const pending_capture_request_t& request,
@@ -825,6 +1025,10 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
           case agora::protocol::bridge_message_kind::capture_surface:
             queue_capture_surface(message.request_id, message.surface_id);
             break;
+          case agora::protocol::bridge_message_kind::inject_input:
+            queue_input_request(message.request_id, message.surface_id, message.coordinate_space,
+                message.input_events);
+            break;
           case agora::protocol::bridge_message_kind::invalid:
             break;
         }
@@ -870,6 +1074,7 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
     std::vector<std::string> pending_close_surfaces_;
     std::vector<uint32_t> pending_close_owner_uids_;
     std::vector<pending_capture_request_t> pending_capture_requests_;
+    std::vector<pending_input_request_t> pending_input_requests_;
     bool pending_surface_resync_ = false;
     int close_wake_fd_ = -1;
     wl_event_source *close_wake_source_ = nullptr;
