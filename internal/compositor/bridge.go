@@ -103,26 +103,28 @@ type Bridge struct {
 	allowedPluginUID uint32
 	grantStore       *grantStore
 
-	mu             sync.RWMutex
-	plugin         *pluginSession
-	surfaces       map[string]schema.CompositorTrackedSurface
-	policies       map[string]schema.CompositorSurfacePolicy
-	grants         map[string]map[uint32]schema.SurfaceAccessGrant
-	actorUID       *uint32
-	captureSeq     uint64
-	captureWaiters map[string]chan schema.CompositorCapturePluginResponse
-	inputSeq       uint64
-	inputWaiters   map[string]chan schema.CompositorInputPluginResponse
-	placeSeq       uint64
-	placeWaiters   map[string]chan schema.CompositorPlacePluginResponse
-	sessionSeq     uint64
-	launchSeq      uint64
-	sessions       map[string]schema.CompositorSession
-	launches       map[string]*launchRecord
-	surfaceLaunch  map[string]string
-	artifacts      map[string]schema.ArtifactRecord
-	outputs        map[string]schema.LogicalOutput
-	surfaceOutput  map[string]string
+	mu                sync.RWMutex
+	plugin            *pluginSession
+	surfaces          map[string]schema.CompositorTrackedSurface
+	policies          map[string]schema.CompositorSurfacePolicy
+	grants            map[string]map[uint32]schema.SurfaceAccessGrant
+	actorUID          *uint32
+	captureSeq        uint64
+	captureWaiters    map[string]chan schema.CompositorCapturePluginResponse
+	inputSeq          uint64
+	inputWaiters      map[string]chan schema.CompositorInputPluginResponse
+	placeSeq          uint64
+	placeWaiters      map[string]chan schema.CompositorPlacePluginResponse
+	sessionSeq        uint64
+	launchSeq         uint64
+	sessions          map[string]schema.CompositorSession
+	launches          map[string]*launchRecord
+	surfaceLaunch     map[string]string
+	artifacts         map[string]schema.ArtifactRecord
+	outputs           map[string]schema.LogicalOutput
+	surfaceOutput     map[string]string
+	appCommandSeq     uint64
+	appCommandResults map[string]schema.AppCommandResponse
 }
 
 func New(bus publisher, cfg Config) (*Bridge, error) {
@@ -131,21 +133,22 @@ func New(bus publisher, cfg Config) (*Bridge, error) {
 		return nil, err
 	}
 	return &Bridge{
-		bus:              bus,
-		allowedPluginUID: cfg.AllowedPluginUID,
-		grantStore:       store,
-		surfaces:         make(map[string]schema.CompositorTrackedSurface),
-		policies:         make(map[string]schema.CompositorSurfacePolicy),
-		grants:           make(map[string]map[uint32]schema.SurfaceAccessGrant),
-		captureWaiters:   make(map[string]chan schema.CompositorCapturePluginResponse),
-		inputWaiters:     make(map[string]chan schema.CompositorInputPluginResponse),
-		placeWaiters:     make(map[string]chan schema.CompositorPlacePluginResponse),
-		sessions:         make(map[string]schema.CompositorSession),
-		launches:         make(map[string]*launchRecord),
-		surfaceLaunch:    make(map[string]string),
-		artifacts:        make(map[string]schema.ArtifactRecord),
-		outputs:          make(map[string]schema.LogicalOutput),
-		surfaceOutput:    make(map[string]string),
+		bus:               bus,
+		allowedPluginUID:  cfg.AllowedPluginUID,
+		grantStore:        store,
+		surfaces:          make(map[string]schema.CompositorTrackedSurface),
+		policies:          make(map[string]schema.CompositorSurfacePolicy),
+		grants:            make(map[string]map[uint32]schema.SurfaceAccessGrant),
+		captureWaiters:    make(map[string]chan schema.CompositorCapturePluginResponse),
+		inputWaiters:      make(map[string]chan schema.CompositorInputPluginResponse),
+		placeWaiters:      make(map[string]chan schema.CompositorPlacePluginResponse),
+		sessions:          make(map[string]schema.CompositorSession),
+		launches:          make(map[string]*launchRecord),
+		surfaceLaunch:     make(map[string]string),
+		artifacts:         make(map[string]schema.ArtifactRecord),
+		outputs:           make(map[string]schema.LogicalOutput),
+		surfaceOutput:     make(map[string]string),
+		appCommandResults: make(map[string]schema.AppCommandResponse),
 	}, nil
 }
 
@@ -260,6 +263,8 @@ func (b *Bridge) CreateSession(req schema.CreateSessionRequest) schema.Composito
 		Label:              req.Label,
 		ProjectID:          req.ProjectID,
 		TaskID:             req.TaskID,
+		AgentIdentity:      req.AgentIdentity,
+		SessionToken:       generateSessionToken(),
 		ASHAScenarioID:     req.ASHAScenarioID,
 		RepoCommit:         req.RepoCommit,
 		RepoBranch:         req.RepoBranch,
@@ -354,11 +359,8 @@ func (b *Bridge) launchAppAsPeer(peerUID uint32, req schema.LaunchAppRequest) (s
 		return schema.LaunchAppResponse{}, fmt.Errorf("command is required")
 	}
 	if req.SessionID != "" {
-		b.mu.RLock()
-		_, ok := b.sessions[req.SessionID]
-		b.mu.RUnlock()
-		if !ok {
-			return schema.LaunchAppResponse{}, compositorError(schema.ErrorSessionNotFound, "session %s not found", req.SessionID)
+		if err := b.requireSessionToken(req.SessionID, req.SessionToken); err != nil {
+			return schema.LaunchAppResponse{}, err
 		}
 	}
 	if req.Output != "" {
@@ -670,6 +672,14 @@ func (b *Bridge) surfaceMatchesLaunchHint(surface schema.CompositorTrackedSurfac
 }
 
 func (b *Bridge) CaptureSurface(req schema.CaptureSurfaceRequest) (schema.CaptureSurfaceResponse, error) {
+	authorizedSessionID, err := b.authorizeSurfaceSession(req.SurfaceID, req.SessionID, req.SessionToken)
+	if err != nil {
+		return schema.CaptureSurfaceResponse{}, err
+	}
+	if req.SessionID == "" {
+		req.SessionID = authorizedSessionID
+	}
+	req.AuditCorrelationID = b.sessionAuditCorrelation(req.SessionID, req.AuditCorrelationID)
 	b.mu.Lock()
 	if _, ok := b.surfaces[req.SurfaceID]; !ok {
 		b.mu.Unlock()
@@ -760,7 +770,7 @@ func (b *Bridge) CaptureSurface(req schema.CaptureSurfaceRequest) (schema.Captur
 		artifact := schema.ArtifactRecord{
 			ArtifactID: requestID, SessionID: sessionID, SurfaceID: pluginResp.SurfaceID, RequestID: requestID,
 			ImagePath: path, IndexPath: filepath.Join(dir, "index.json"), Width: pluginResp.Width, Height: pluginResp.Height,
-			Format: pluginResp.Format, SHA256: sha, CaptureBackend: "plugin_readback", EvidenceClass: evidenceClass,
+			Format: pluginResp.Format, SHA256: sha, CaptureBackend: "plugin_readback", AuditCorrelationID: req.AuditCorrelationID, EvidenceClass: evidenceClass,
 			Timestamp: now, ASHACommandSequenceID: req.ASHACommandSequenceID,
 		}
 		if sessionID == "unscoped" {
@@ -779,6 +789,9 @@ func (b *Bridge) CaptureSurface(req schema.CaptureSurfaceRequest) (schema.Captur
 }
 
 func (b *Bridge) InjectInput(req schema.InjectInputRequest) (schema.InjectInputResponse, error) {
+	if _, err := b.authorizeSurfaceSession(req.SurfaceID, req.SessionID, req.SessionToken); err != nil {
+		return schema.InjectInputResponse{}, err
+	}
 	b.mu.Lock()
 	if _, ok := b.surfaces[req.SurfaceID]; !ok {
 		b.mu.Unlock()
@@ -1217,7 +1230,7 @@ func (b *Bridge) CaptureOutput(req schema.CaptureOutputRequest) (schema.CaptureO
 		return resp, compositorError(schema.ErrorCaptureDenied, "output %s has no surfaces to capture", req.Name)
 	}
 	for _, surface := range listed.Surfaces {
-		cap, err := b.CaptureSurface(schema.CaptureSurfaceRequest{SurfaceID: surface.Surface.ID, Export: req.Export, SessionID: req.SessionID, EvidenceClass: req.EvidenceClass, ASHACommandSequenceID: req.ASHACommandSequenceID})
+		cap, err := b.CaptureSurface(schema.CaptureSurfaceRequest{SurfaceID: surface.Surface.ID, Export: req.Export, SessionID: req.SessionID, SessionToken: req.SessionToken, AuditCorrelationID: req.AuditCorrelationID, EvidenceClass: req.EvidenceClass, ASHACommandSequenceID: req.ASHACommandSequenceID})
 		if err != nil {
 			resp.Warnings = append(resp.Warnings, fmt.Sprintf("capture %s: %v", surface.Surface.ID, err))
 			continue
@@ -1857,6 +1870,9 @@ func (b *Bridge) dispatch(peerUID uint32, req schema.Request) (schema.Response, 
 		if body.LaunchID == "" {
 			return schema.Response{}, fmt.Errorf("launch_id is required")
 		}
+		if err := b.requireLaunchSessionToken(body.LaunchID, body.SessionToken); err != nil {
+			return schema.Response{}, err
+		}
 		resp, err := b.TerminateLaunch(body.LaunchID)
 		if err != nil {
 			return schema.Response{}, err
@@ -1969,6 +1985,26 @@ func (b *Bridge) dispatch(peerUID uint32, req schema.Request) (schema.Response, 
 			return schema.Response{}, fmt.Errorf("bad body: %w", err)
 		}
 		resp, err := b.A11yClick(body)
+		if err != nil {
+			return schema.Response{}, err
+		}
+		return okResponse(resp), nil
+	case schema.MethodAppCommand:
+		var body schema.AppCommandRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			return schema.Response{}, fmt.Errorf("bad body: %w", err)
+		}
+		resp, err := b.AppCommand(body)
+		if err != nil {
+			return schema.Response{}, err
+		}
+		return okResponse(resp), nil
+	case schema.MethodAppResult:
+		var body schema.AppResultRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			return schema.Response{}, fmt.Errorf("bad body: %w", err)
+		}
+		resp, err := b.AppResult(body)
 		if err != nil {
 			return schema.Response{}, err
 		}
