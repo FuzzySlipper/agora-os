@@ -11,6 +11,14 @@ const (
 	MethodListSurfaces        = "list_surfaces"
 	MethodCaptureSurface      = "capture_surface"
 	MethodInjectInput         = "inject_input"
+	MethodCreateSession       = "create_session"
+	MethodDestroySession      = "destroy_session"
+	MethodResetSession        = "reset_session"
+	MethodListSessions        = "list_sessions"
+	MethodGetSession          = "get_session"
+	MethodLaunchApp           = "launch_app"
+	MethodListProcesses       = "list_processes"
+	MethodTerminateLaunch     = "terminate_launch"
 	MethodUpsertSurfacePolicy = "upsert_surface_policy"
 	MethodRemoveSurfacePolicy = "remove_surface_policy"
 	MethodSetInputContext     = "set_input_context"
@@ -232,6 +240,94 @@ type InjectInputResponse struct {
 	SurfaceID string `json:"surface_id"`
 	Accepted  uint32 `json:"accepted"`
 	Rejected  uint32 `json:"rejected"`
+}
+
+type CompositorSession struct {
+	SessionID          string                     `json:"session_id"`
+	Label              string                     `json:"label,omitempty"`
+	ProjectID          string                     `json:"project_id,omitempty"`
+	TaskID             int                        `json:"task_id,omitempty"`
+	ASHAScenarioID     string                     `json:"asha_scenario_id,omitempty"`
+	RepoCommit         string                     `json:"repo_commit,omitempty"`
+	RepoBranch         string                     `json:"repo_branch,omitempty"`
+	ASHARuntimeMode    string                     `json:"asha_runtime_mode,omitempty"`
+	ArtifactRoot       string                     `json:"artifact_root,omitempty"`
+	AuditCorrelationID string                     `json:"audit_correlation_id,omitempty"`
+	CreatedAt          time.Time                  `json:"created_at"`
+	LastUsedAt         time.Time                  `json:"last_used_at"`
+	Surfaces           []CompositorTrackedSurface `json:"surfaces,omitempty"`
+	Processes          []CompositorLaunchProcess  `json:"processes,omitempty"`
+}
+
+type CreateSessionRequest struct {
+	Label              string `json:"label,omitempty"`
+	ProjectID          string `json:"project_id,omitempty"`
+	TaskID             int    `json:"task_id,omitempty"`
+	ASHAScenarioID     string `json:"asha_scenario_id,omitempty"`
+	RepoCommit         string `json:"repo_commit,omitempty"`
+	RepoBranch         string `json:"repo_branch,omitempty"`
+	ASHARuntimeMode    string `json:"asha_runtime_mode,omitempty"`
+	ArtifactRoot       string `json:"artifact_root,omitempty"`
+	AuditCorrelationID string `json:"audit_correlation_id,omitempty"`
+}
+
+type SessionRequest struct {
+	SessionID string `json:"session_id"`
+}
+
+type ListSessionsResponse struct {
+	Sessions []CompositorSession `json:"sessions,omitempty"`
+}
+
+type CompositorLaunchProcess struct {
+	LaunchID  string     `json:"launch_id"`
+	SessionID string     `json:"session_id,omitempty"`
+	PID       int        `json:"pid"`
+	Command   string     `json:"command"`
+	Cwd       string     `json:"cwd,omitempty"`
+	Status    string     `json:"status"`
+	ExitCode  *int       `json:"exit_code,omitempty"`
+	StartedAt time.Time  `json:"started_at"`
+	ExitedAt  *time.Time `json:"exited_at,omitempty"`
+	Surfaces  []string   `json:"surfaces,omitempty"`
+}
+
+type LaunchAppRequest struct {
+	SessionID     string            `json:"session_id,omitempty"`
+	Command       string            `json:"command"`
+	Cwd           string            `json:"cwd,omitempty"`
+	Env           map[string]string `json:"env,omitempty"`
+	RunAsUID      *uint32           `json:"run_as_uid,omitempty"`
+	RunAsGID      *uint32           `json:"run_as_gid,omitempty"`
+	ExpectedAppID string            `json:"expected_app_id,omitempty"`
+	ExpectedTitle string            `json:"expected_title,omitempty"`
+	WaitSurface   bool              `json:"wait_surface,omitempty"`
+	WaitTimeoutMs int               `json:"wait_timeout_ms,omitempty"`
+}
+
+type LaunchAppResponse struct {
+	LaunchID  string                    `json:"launch_id"`
+	SessionID string                    `json:"session_id,omitempty"`
+	PID       int                       `json:"pid"`
+	Surface   *CompositorTrackedSurface `json:"surface,omitempty"`
+}
+
+type ListProcessesRequest struct {
+	SessionID string `json:"session_id,omitempty"`
+}
+
+type ListProcessesResponse struct {
+	Processes []CompositorLaunchProcess `json:"processes,omitempty"`
+}
+
+type TerminateLaunchRequest struct {
+	LaunchID string `json:"launch_id"`
+}
+
+type TerminateLaunchResponse struct {
+	LaunchID       string   `json:"launch_id"`
+	SignalSent     bool     `json:"signal_sent"`
+	ClosedSurfaces []string `json:"closed_surfaces,omitempty"`
 }
 
 type UpsertSurfacePolicyRequest struct {

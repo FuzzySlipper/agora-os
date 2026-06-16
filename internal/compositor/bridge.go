@@ -9,9 +9,14 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/exec"
+	"os/user"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/patch/agora-os/internal/peercred"
@@ -43,6 +48,13 @@ func (s *pluginSession) Close() error {
 	return s.conn.Close()
 }
 
+type launchRecord struct {
+	process       schema.CompositorLaunchProcess
+	cmd           *exec.Cmd
+	expectedAppID string
+	expectedTitle string
+}
+
 type Bridge struct {
 	bus              publisher
 	allowedPluginUID uint32
@@ -58,6 +70,11 @@ type Bridge struct {
 	captureWaiters map[string]chan schema.CompositorCapturePluginResponse
 	inputSeq       uint64
 	inputWaiters   map[string]chan schema.CompositorInputPluginResponse
+	sessionSeq     uint64
+	launchSeq      uint64
+	sessions       map[string]schema.CompositorSession
+	launches       map[string]*launchRecord
+	surfaceLaunch  map[string]string
 }
 
 func New(bus publisher, cfg Config) (*Bridge, error) {
@@ -74,6 +91,9 @@ func New(bus publisher, cfg Config) (*Bridge, error) {
 		grants:           make(map[string]map[uint32]schema.SurfaceAccessGrant),
 		captureWaiters:   make(map[string]chan schema.CompositorCapturePluginResponse),
 		inputWaiters:     make(map[string]chan schema.CompositorInputPluginResponse),
+		sessions:         make(map[string]schema.CompositorSession),
+		launches:         make(map[string]*launchRecord),
+		surfaceLaunch:    make(map[string]string),
 	}, nil
 }
 
@@ -174,6 +194,339 @@ func (b *Bridge) ListSurfaces() []schema.CompositorTrackedSurface {
 		return surfaces[i].Surface.ID < surfaces[j].Surface.ID
 	})
 	return surfaces
+}
+
+func (b *Bridge) CreateSession(req schema.CreateSessionRequest) schema.CompositorSession {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.sessionSeq++
+	now := time.Now()
+	session := schema.CompositorSession{
+		SessionID:          fmt.Sprintf("session-%d-%d", now.UnixNano(), b.sessionSeq),
+		Label:              req.Label,
+		ProjectID:          req.ProjectID,
+		TaskID:             req.TaskID,
+		ASHAScenarioID:     req.ASHAScenarioID,
+		RepoCommit:         req.RepoCommit,
+		RepoBranch:         req.RepoBranch,
+		ASHARuntimeMode:    req.ASHARuntimeMode,
+		ArtifactRoot:       req.ArtifactRoot,
+		AuditCorrelationID: req.AuditCorrelationID,
+		CreatedAt:          now,
+		LastUsedAt:         now,
+	}
+	b.sessions[session.SessionID] = session
+	return b.hydrateSessionLocked(session)
+}
+
+func (b *Bridge) ListSessions() []schema.CompositorSession {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	sessions := make([]schema.CompositorSession, 0, len(b.sessions))
+	for _, session := range b.sessions {
+		sessions = append(sessions, b.hydrateSessionLocked(session))
+	}
+	sort.Slice(sessions, func(i, j int) bool { return sessions[i].SessionID < sessions[j].SessionID })
+	return sessions
+}
+
+func (b *Bridge) GetSession(sessionID string) (schema.CompositorSession, error) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	session, ok := b.sessions[sessionID]
+	if !ok {
+		return schema.CompositorSession{}, fmt.Errorf("session %s not found", sessionID)
+	}
+	return b.hydrateSessionLocked(session), nil
+}
+
+func (b *Bridge) DestroySession(sessionID string) error {
+	if err := b.ResetSession(sessionID); err != nil {
+		return err
+	}
+	b.mu.Lock()
+	delete(b.sessions, sessionID)
+	for id, launch := range b.launches {
+		if launch.process.SessionID == sessionID {
+			delete(b.launches, id)
+		}
+	}
+	for surfaceID, launchID := range b.surfaceLaunch {
+		if launch := b.launches[launchID]; launch == nil || launch.process.SessionID == sessionID {
+			delete(b.surfaceLaunch, surfaceID)
+		}
+	}
+	b.mu.Unlock()
+	return nil
+}
+
+func (b *Bridge) ResetSession(sessionID string) error {
+	b.mu.RLock()
+	if _, ok := b.sessions[sessionID]; !ok {
+		b.mu.RUnlock()
+		return fmt.Errorf("session %s not found", sessionID)
+	}
+	launchIDs := make([]string, 0)
+	for id, launch := range b.launches {
+		if launch.process.SessionID == sessionID &&
+			(launch.process.Status == "running" || len(b.surfacesForLaunchLocked(launch)) > 0) {
+			launchIDs = append(launchIDs, id)
+		}
+	}
+	b.mu.RUnlock()
+	for _, id := range launchIDs {
+		_, _ = b.TerminateLaunch(id)
+	}
+	b.mu.Lock()
+	session := b.sessions[sessionID]
+	session.LastUsedAt = time.Now()
+	b.sessions[sessionID] = session
+	b.mu.Unlock()
+	return nil
+}
+
+func (b *Bridge) LaunchApp(req schema.LaunchAppRequest) (schema.LaunchAppResponse, error) {
+	if strings.TrimSpace(req.Command) == "" {
+		return schema.LaunchAppResponse{}, fmt.Errorf("command is required")
+	}
+	if req.SessionID != "" {
+		b.mu.RLock()
+		_, ok := b.sessions[req.SessionID]
+		b.mu.RUnlock()
+		if !ok {
+			return schema.LaunchAppResponse{}, fmt.Errorf("session %s not found", req.SessionID)
+		}
+	}
+
+	cmd := exec.Command("sh", "-lc", req.Command)
+	sys := &syscall.SysProcAttr{Setpgid: true}
+	if cred := launchCredential(req); cred != nil {
+		sys.Credential = cred
+	}
+	cmd.SysProcAttr = sys
+	if req.Cwd != "" {
+		cmd.Dir = req.Cwd
+	}
+	env := os.Environ()
+	if _, ok := req.Env["XDG_RUNTIME_DIR"]; !ok {
+		env = append(env, "XDG_RUNTIME_DIR=/run/user/1001")
+	}
+	if _, ok := req.Env["WAYLAND_DISPLAY"]; !ok {
+		env = append(env, "WAYLAND_DISPLAY="+defaultWaylandDisplay())
+	}
+	if _, ok := req.Env["DISPLAY"]; !ok {
+		env = append(env, "DISPLAY=")
+	}
+	for key, value := range req.Env {
+		env = append(env, key+"="+value)
+	}
+	cmd.Env = env
+	if err := cmd.Start(); err != nil {
+		return schema.LaunchAppResponse{}, err
+	}
+
+	b.mu.Lock()
+	b.launchSeq++
+	now := time.Now()
+	launchID := fmt.Sprintf("launch-%d-%d", now.UnixNano(), b.launchSeq)
+	process := schema.CompositorLaunchProcess{
+		LaunchID:  launchID,
+		SessionID: req.SessionID,
+		PID:       cmd.Process.Pid,
+		Command:   req.Command,
+		Cwd:       req.Cwd,
+		Status:    "running",
+		StartedAt: now,
+	}
+	b.launches[launchID] = &launchRecord{process: process, cmd: cmd, expectedAppID: req.ExpectedAppID, expectedTitle: req.ExpectedTitle}
+	if req.SessionID != "" {
+		session := b.sessions[req.SessionID]
+		session.LastUsedAt = now
+		b.sessions[req.SessionID] = session
+	}
+	b.mu.Unlock()
+
+	go b.waitLaunch(launchID, cmd)
+	resp := schema.LaunchAppResponse{LaunchID: launchID, SessionID: req.SessionID, PID: cmd.Process.Pid}
+	if req.WaitSurface {
+		timeout := time.Duration(req.WaitTimeoutMs) * time.Millisecond
+		if timeout <= 0 {
+			timeout = 5 * time.Second
+		}
+		if surface, ok := b.waitForLaunchSurface(launchID, timeout); ok {
+			resp.Surface = &surface
+		}
+	}
+	return resp, nil
+}
+
+func (b *Bridge) ListProcesses(sessionID string) []schema.CompositorLaunchProcess {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	processes := make([]schema.CompositorLaunchProcess, 0, len(b.launches))
+	for _, launch := range b.launches {
+		if sessionID == "" || launch.process.SessionID == sessionID {
+			processes = append(processes, b.hydrateProcessLocked(launch.process))
+		}
+	}
+	sort.Slice(processes, func(i, j int) bool { return processes[i].LaunchID < processes[j].LaunchID })
+	return processes
+}
+
+func (b *Bridge) TerminateLaunch(launchID string) (schema.TerminateLaunchResponse, error) {
+	b.mu.RLock()
+	launch, ok := b.launches[launchID]
+	if !ok {
+		b.mu.RUnlock()
+		return schema.TerminateLaunchResponse{}, fmt.Errorf("launch %s not found", launchID)
+	}
+	pid := launch.process.PID
+	status := launch.process.Status
+	cmd := launch.cmd
+	surfaces := b.surfacesForLaunchLocked(launch)
+	b.mu.RUnlock()
+
+	signalSent := false
+	if cmd != nil && status == "running" {
+		if err := syscall.Kill(-pid, syscall.SIGTERM); err == nil {
+			signalSent = true
+		} else if cmd.Process != nil {
+			if err := cmd.Process.Kill(); err == nil {
+				signalSent = true
+			}
+		}
+	}
+	for _, surfaceID := range surfaces {
+		_ = b.CloseSurface(surfaceID)
+	}
+	return schema.TerminateLaunchResponse{LaunchID: launchID, SignalSent: signalSent, ClosedSurfaces: surfaces}, nil
+}
+
+func (b *Bridge) waitLaunch(launchID string, cmd *exec.Cmd) {
+	err := cmd.Wait()
+	exitCode := 0
+	if err != nil {
+		exitCode = 1
+		if cmd.ProcessState != nil {
+			exitCode = cmd.ProcessState.ExitCode()
+		}
+	} else if cmd.ProcessState != nil {
+		exitCode = cmd.ProcessState.ExitCode()
+	}
+	now := time.Now()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if launch, ok := b.launches[launchID]; ok {
+		launch.process.Status = "exited"
+		launch.process.ExitCode = &exitCode
+		launch.process.ExitedAt = &now
+	}
+}
+
+func (b *Bridge) waitForLaunchSurface(launchID string, timeout time.Duration) (schema.CompositorTrackedSurface, bool) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		b.mu.RLock()
+		launch := b.launches[launchID]
+		if launch != nil {
+			for surfaceID, boundLaunchID := range b.surfaceLaunch {
+				if boundLaunchID != launchID {
+					continue
+				}
+				if surface, ok := b.surfaces[surfaceID]; ok {
+					b.mu.RUnlock()
+					return surface, true
+				}
+			}
+		}
+		b.mu.RUnlock()
+		time.Sleep(50 * time.Millisecond)
+	}
+	return schema.CompositorTrackedSurface{}, false
+}
+
+func (b *Bridge) hydrateSessionLocked(session schema.CompositorSession) schema.CompositorSession {
+	session.Surfaces = nil
+	session.Processes = nil
+	for _, launch := range b.launches {
+		if launch.process.SessionID == session.SessionID {
+			proc := b.hydrateProcessLocked(launch.process)
+			session.Processes = append(session.Processes, proc)
+			for _, surfaceID := range proc.Surfaces {
+				if surface, ok := b.surfaces[surfaceID]; ok {
+					session.Surfaces = append(session.Surfaces, surface)
+				}
+			}
+		}
+	}
+	return session
+}
+
+func (b *Bridge) hydrateProcessLocked(process schema.CompositorLaunchProcess) schema.CompositorLaunchProcess {
+	process.Surfaces = nil
+	if launch := b.launches[process.LaunchID]; launch != nil {
+		process.Surfaces = b.surfacesForLaunchLocked(launch)
+	}
+	return process
+}
+
+func (b *Bridge) surfacesForLaunchLocked(launch *launchRecord) []string {
+	ids := make([]string, 0)
+	for id := range b.surfaces {
+		if b.surfaceLaunch[id] == launch.process.LaunchID {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+func (b *Bridge) associateSurfaceLocked(surface schema.CompositorTrackedSurface) {
+	if surface.Surface.ID == "" {
+		return
+	}
+	if _, bound := b.surfaceLaunch[surface.Surface.ID]; bound {
+		return
+	}
+	for id, launch := range b.launches {
+		if launch.process.Status == "running" &&
+			!surface.UpdatedAt.Before(launch.process.StartedAt) &&
+			int(surface.Client.PID) == launch.process.PID {
+			b.surfaceLaunch[surface.Surface.ID] = id
+			return
+		}
+	}
+
+	var hintMatch string
+	for id, launch := range b.launches {
+		if launch.process.Status != "running" || surface.UpdatedAt.Before(launch.process.StartedAt) {
+			continue
+		}
+		if b.surfaceMatchesLaunchHint(surface, launch) {
+			if hintMatch != "" {
+				// Ambiguous hints are useful for readiness polling, but not safe enough
+				// to establish durable launch/session ownership.
+				return
+			}
+			hintMatch = id
+		}
+	}
+	if hintMatch != "" {
+		b.surfaceLaunch[surface.Surface.ID] = hintMatch
+	}
+}
+
+func (b *Bridge) surfaceMatchesLaunchHint(surface schema.CompositorTrackedSurface, launch *launchRecord) bool {
+	if launch == nil {
+		return false
+	}
+	if launch.expectedAppID != "" && surface.Surface.AppID == launch.expectedAppID {
+		return true
+	}
+	if launch.expectedTitle != "" && strings.Contains(surface.Surface.Title, launch.expectedTitle) {
+		return true
+	}
+	return false
 }
 
 func (b *Bridge) CaptureSurface(req schema.CaptureSurfaceRequest) (schema.CaptureSurfaceResponse, error) {
@@ -485,6 +838,82 @@ func (b *Bridge) dispatch(peerUID uint32, req schema.Request) (schema.Response, 
 			return schema.Response{}, err
 		}
 		return okResponse(resp), nil
+	case schema.MethodCreateSession:
+		var body schema.CreateSessionRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			return schema.Response{}, fmt.Errorf("bad body: %w", err)
+		}
+		return okResponse(b.CreateSession(body)), nil
+	case schema.MethodListSessions:
+		return okResponse(schema.ListSessionsResponse{Sessions: b.ListSessions()}), nil
+	case schema.MethodGetSession:
+		var body schema.SessionRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			return schema.Response{}, fmt.Errorf("bad body: %w", err)
+		}
+		if body.SessionID == "" {
+			return schema.Response{}, fmt.Errorf("session_id is required")
+		}
+		session, err := b.GetSession(body.SessionID)
+		if err != nil {
+			return schema.Response{}, err
+		}
+		return okResponse(session), nil
+	case schema.MethodDestroySession:
+		var body schema.SessionRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			return schema.Response{}, fmt.Errorf("bad body: %w", err)
+		}
+		if body.SessionID == "" {
+			return schema.Response{}, fmt.Errorf("session_id is required")
+		}
+		if err := b.DestroySession(body.SessionID); err != nil {
+			return schema.Response{}, err
+		}
+		return okResponse("destroyed"), nil
+	case schema.MethodResetSession:
+		var body schema.SessionRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			return schema.Response{}, fmt.Errorf("bad body: %w", err)
+		}
+		if body.SessionID == "" {
+			return schema.Response{}, fmt.Errorf("session_id is required")
+		}
+		if err := b.ResetSession(body.SessionID); err != nil {
+			return schema.Response{}, err
+		}
+		return okResponse("reset"), nil
+	case schema.MethodLaunchApp:
+		var body schema.LaunchAppRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			return schema.Response{}, fmt.Errorf("bad body: %w", err)
+		}
+		resp, err := b.LaunchApp(body)
+		if err != nil {
+			return schema.Response{}, err
+		}
+		return okResponse(resp), nil
+	case schema.MethodListProcesses:
+		var body schema.ListProcessesRequest
+		if len(req.Body) > 0 {
+			if err := json.Unmarshal(req.Body, &body); err != nil {
+				return schema.Response{}, fmt.Errorf("bad body: %w", err)
+			}
+		}
+		return okResponse(schema.ListProcessesResponse{Processes: b.ListProcesses(body.SessionID)}), nil
+	case schema.MethodTerminateLaunch:
+		var body schema.TerminateLaunchRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			return schema.Response{}, fmt.Errorf("bad body: %w", err)
+		}
+		if body.LaunchID == "" {
+			return schema.Response{}, fmt.Errorf("launch_id is required")
+		}
+		resp, err := b.TerminateLaunch(body.LaunchID)
+		if err != nil {
+			return schema.Response{}, err
+		}
+		return okResponse(resp), nil
 	case schema.MethodUpsertSurfacePolicy:
 		var body schema.UpsertSurfacePolicyRequest
 		if err := json.Unmarshal(req.Body, &body); err != nil {
@@ -629,11 +1058,13 @@ func (b *Bridge) handleSurfaceEvent(msg schema.CompositorPluginEvent) {
 	switch msg.Event {
 	case schema.SurfaceEventMapped:
 		b.surfaces[msg.Surface.ID] = tracked
+		b.associateSurfaceLocked(tracked)
 		if err := b.syncDerivedPolicyLocked(msg.Surface.ID); err != nil {
 			log.Printf("sync compositor policy for %s: %v", msg.Surface.ID, err)
 		}
 	case schema.SurfaceEventFocused, schema.SurfaceEventInputDenied:
 		b.surfaces[msg.Surface.ID] = tracked
+		b.associateSurfaceLocked(tracked)
 		if _, ok := b.policies[msg.Surface.ID]; !ok {
 			if err := b.syncDerivedPolicyLocked(msg.Surface.ID); err != nil {
 				log.Printf("sync compositor policy for %s: %v", msg.Surface.ID, err)
@@ -641,6 +1072,7 @@ func (b *Bridge) handleSurfaceEvent(msg schema.CompositorPluginEvent) {
 		}
 	case schema.SurfaceEventUnmapped:
 		delete(b.surfaces, msg.Surface.ID)
+		delete(b.surfaceLaunch, msg.Surface.ID)
 		delete(b.policies, msg.Surface.ID)
 		delete(b.grants, msg.Surface.ID)
 		if b.plugin != nil {
@@ -805,6 +1237,62 @@ func sortedUIDs(values map[uint32]struct{}) []uint32 {
 		return uids[i] < uids[j]
 	})
 	return uids
+}
+
+func launchCredential(req schema.LaunchAppRequest) *syscall.Credential {
+	var uid, gid *uint32
+	uid = req.RunAsUID
+	gid = req.RunAsGID
+	if uid == nil && os.Getuid() == 0 {
+		if u, err := user.Lookup("agent"); err == nil {
+			if parsedUID, err := strconv.ParseUint(u.Uid, 10, 32); err == nil {
+				v := uint32(parsedUID)
+				uid = &v
+			}
+			if parsedGID, err := strconv.ParseUint(u.Gid, 10, 32); err == nil {
+				v := uint32(parsedGID)
+				gid = &v
+			}
+		}
+	}
+	if uid == nil && gid == nil {
+		return nil
+	}
+	cred := &syscall.Credential{}
+	if uid != nil {
+		cred.Uid = *uid
+	}
+	if gid != nil {
+		cred.Gid = *gid
+	}
+	return cred
+}
+
+func defaultWaylandDisplay() string {
+	matches, err := filepath.Glob("/run/user/1001/wayland-*")
+	if err != nil {
+		return "wayland-1"
+	}
+	type candidate struct {
+		name    string
+		modTime time.Time
+	}
+	candidates := make([]candidate, 0, len(matches))
+	for _, match := range matches {
+		if strings.HasSuffix(match, ".lock") {
+			continue
+		}
+		info, err := os.Stat(match)
+		if err != nil {
+			continue
+		}
+		candidates = append(candidates, candidate{name: filepath.Base(match), modTime: info.ModTime()})
+	}
+	if len(candidates) == 0 {
+		return "wayland-1"
+	}
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].modTime.After(candidates[j].modTime) })
+	return candidates[0].name
 }
 
 func okResponse(body any) schema.Response {
