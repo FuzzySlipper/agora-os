@@ -40,6 +40,8 @@ func main() {
 		err = cmdOutput(args[1:], *pretty)
 	case "a11y":
 		err = cmdA11y(args[1:], *pretty)
+	case "app":
+		err = cmdApp(args[1:], *pretty)
 	case "list-processes":
 		err = cmdListProcesses(args[1:], *pretty)
 	case "terminate":
@@ -87,6 +89,7 @@ Commands:
   launch             Launch a Wayland client and track its process/surfaces
   output             Manage logical output tiles for multi-agent desktops
   a11y               Query or invoke surface accessibility/semantic nodes
+  app                Forward typed app testbench commands and read results
   list-processes     List tracked compositor-launched processes
   terminate          Terminate a tracked launch and close its surfaces
   move               Move pointer over a tracked surface
@@ -227,6 +230,7 @@ func cmdSession(args []string, pretty bool) error {
 		label := fs.String("label", "", "session label")
 		projectID := fs.String("project-id", "", "Den project id")
 		taskID := fs.Int("task-id", 0, "Den task id")
+		agentIdentity := fs.String("agent-identity", "", "agent identity for session audit metadata")
 		ashaScenario := fs.String("asha-scenario", "", "ASHA scenario id")
 		repoCommit := fs.String("repo-commit", "", "repo commit")
 		repoBranch := fs.String("repo-branch", "", "repo branch")
@@ -235,7 +239,7 @@ func cmdSession(args []string, pretty bool) error {
 		auditID := fs.String("audit-correlation-id", "", "audit correlation id")
 		fs.Parse(args[1:])
 		return callAndPrint(schema.MethodCreateSession, schema.CreateSessionRequest{
-			Label: *label, ProjectID: *projectID, TaskID: *taskID, ASHAScenarioID: *ashaScenario,
+			Label: *label, ProjectID: *projectID, TaskID: *taskID, AgentIdentity: *agentIdentity, ASHAScenarioID: *ashaScenario,
 			RepoCommit: *repoCommit, RepoBranch: *repoBranch, ASHARuntimeMode: *runtimeMode,
 			ArtifactRoot: *artifactRoot, AuditCorrelationID: *auditID,
 		}, pretty)
@@ -252,6 +256,39 @@ func cmdSession(args []string, pretty bool) error {
 		return callAndPrint(method, schema.SessionRequest{SessionID: *sessionID}, pretty)
 	default:
 		return fmt.Errorf("unknown session subcommand: %s", args[0])
+	}
+}
+
+func cmdApp(args []string, pretty bool) error {
+	if len(args) == 0 {
+		return fmt.Errorf("app subcommand is required")
+	}
+	switch args[0] {
+	case "command":
+		fs := flag.NewFlagSet("app command", flag.ExitOnError)
+		surfaceID := fs.String("surface", "", "surface id")
+		command := fs.String("command", "", "typed command JSON to forward")
+		sessionID := fs.String("session", "", "session id")
+		sessionToken := fs.String("session-token", os.Getenv("AGORA_COMPOSITOR_SESSION_TOKEN"), "session token (defaults to AGORA_COMPOSITOR_SESSION_TOKEN)")
+		auditID := fs.String("audit-correlation-id", "", "audit correlation id")
+		timeout := fs.Int("timeout-ms", 3000, "app command timeout milliseconds")
+		fs.Parse(args[1:])
+		if *surfaceID == "" || *command == "" {
+			return fmt.Errorf("--surface and --command are required")
+		}
+		return callAndPrint(schema.MethodAppCommand, schema.AppCommandRequest{SurfaceID: *surfaceID, Command: json.RawMessage(*command), SessionID: *sessionID, SessionToken: *sessionToken, AuditCorrelationID: *auditID, TimeoutMs: *timeout}, pretty)
+	case "result":
+		fs := flag.NewFlagSet("app result", flag.ExitOnError)
+		requestID := fs.String("request-id", "", "app command request id")
+		sessionID := fs.String("session", "", "session id")
+		sessionToken := fs.String("session-token", os.Getenv("AGORA_COMPOSITOR_SESSION_TOKEN"), "session token (defaults to AGORA_COMPOSITOR_SESSION_TOKEN)")
+		fs.Parse(args[1:])
+		if *requestID == "" {
+			return fmt.Errorf("--request-id is required")
+		}
+		return callAndPrint(schema.MethodAppResult, schema.AppResultRequest{RequestID: *requestID, SessionID: *sessionID, SessionToken: *sessionToken}, pretty)
+	default:
+		return fmt.Errorf("unknown app subcommand %q", args[0])
 	}
 }
 
@@ -372,13 +409,15 @@ func cmdOutput(args []string, pretty bool) error {
 		name := fs.String("name", "", "logical output name")
 		exportArtifact := fs.Bool("export", false, "write structured artifacts for captured surfaces")
 		sessionID := fs.String("session", "", "session id for artifact export")
+		sessionToken := fs.String("session-token", os.Getenv("AGORA_COMPOSITOR_SESSION_TOKEN"), "session token (defaults to AGORA_COMPOSITOR_SESSION_TOKEN)")
+		auditID := fs.String("audit-correlation-id", "", "audit correlation id")
 		evidenceClass := fs.String("evidence-class", "viewport_screenshot", "evidence class")
 		seqID := fs.String("asha-command-sequence-id", "", "ASHA command sequence id")
 		fs.Parse(args[1:])
 		if *name == "" {
 			return fmt.Errorf("--name is required")
 		}
-		return callAndPrint(schema.MethodCaptureOutput, schema.CaptureOutputRequest{Name: *name, Export: *exportArtifact, SessionID: *sessionID, EvidenceClass: *evidenceClass, ASHACommandSequenceID: *seqID}, pretty)
+		return callAndPrint(schema.MethodCaptureOutput, schema.CaptureOutputRequest{Name: *name, Export: *exportArtifact, SessionID: *sessionID, SessionToken: *sessionToken, AuditCorrelationID: *auditID, EvidenceClass: *evidenceClass, ASHACommandSequenceID: *seqID}, pretty)
 	default:
 		return fmt.Errorf("unknown output subcommand: %s", args[0])
 	}
@@ -388,6 +427,8 @@ func cmdLaunch(args []string, pretty bool) error {
 	fs := flag.NewFlagSet("launch", flag.ExitOnError)
 	cmd := fs.String("cmd", "", "command to launch (required)")
 	sessionID := fs.String("session", "", "session id")
+	sessionToken := fs.String("session-token", os.Getenv("AGORA_COMPOSITOR_SESSION_TOKEN"), "session token (defaults to AGORA_COMPOSITOR_SESSION_TOKEN)")
+	auditID := fs.String("audit-correlation-id", "", "audit correlation id")
 	cwd := fs.String("cwd", "", "working directory")
 	runAsUID := fs.Uint("uid", 0, "run process as UID (bridge must have permission; default bridge policy may choose agent)")
 	runAsGID := fs.Uint("gid", 0, "run process as GID (bridge must have permission; default bridge policy may choose agent)")
@@ -403,7 +444,7 @@ func cmdLaunch(args []string, pretty bool) error {
 		return fmt.Errorf("--cmd is required")
 	}
 	req := schema.LaunchAppRequest{
-		SessionID: *sessionID, Command: *cmd, Cwd: *cwd, Env: env, ExpectedAppID: *expectedAppID,
+		SessionID: *sessionID, SessionToken: *sessionToken, AuditCorrelationID: *auditID, Command: *cmd, Cwd: *cwd, Env: env, ExpectedAppID: *expectedAppID,
 		ExpectedTitle: *expectedTitle, Output: *output, WaitSurface: *waitSurface, WaitTimeoutMs: *waitTimeout,
 	}
 	if *runAsUID != 0 {
@@ -427,11 +468,12 @@ func cmdListProcesses(args []string, pretty bool) error {
 func cmdTerminate(args []string, pretty bool) error {
 	fs := flag.NewFlagSet("terminate", flag.ExitOnError)
 	launchID := fs.String("launch-id", "", "launch id (required)")
+	sessionToken := fs.String("session-token", os.Getenv("AGORA_COMPOSITOR_SESSION_TOKEN"), "session token (defaults to AGORA_COMPOSITOR_SESSION_TOKEN)")
 	fs.Parse(args)
 	if *launchID == "" {
 		return fmt.Errorf("--launch-id is required")
 	}
-	return callAndPrint(schema.MethodTerminateLaunch, schema.TerminateLaunchRequest{LaunchID: *launchID}, pretty)
+	return callAndPrint(schema.MethodTerminateLaunch, schema.TerminateLaunchRequest{LaunchID: *launchID, SessionToken: *sessionToken}, pretty)
 }
 
 func callAndPrint(method string, body any, pretty bool) error {
@@ -448,6 +490,8 @@ func cmdCapture(args []string, pretty bool) error {
 	format := fs.String("format", "png", "capture format")
 	exportArtifact := fs.Bool("export", false, "write structured artifact index")
 	sessionID := fs.String("session", "", "session id for artifact export")
+	sessionToken := fs.String("session-token", os.Getenv("AGORA_COMPOSITOR_SESSION_TOKEN"), "session token (defaults to AGORA_COMPOSITOR_SESSION_TOKEN)")
+	auditID := fs.String("audit-correlation-id", "", "audit correlation id")
 	evidenceClass := fs.String("evidence-class", "", "evidence class: surface_screenshot, viewport_screenshot, or desktop_behavior")
 	seqID := fs.String("asha-command-sequence-id", "", "ASHA command sequence id")
 	fs.Parse(args)
@@ -464,6 +508,8 @@ func cmdCapture(args []string, pretty bool) error {
 		Format:                *format,
 		Export:                *exportArtifact,
 		SessionID:             *sessionID,
+		SessionToken:          *sessionToken,
+		AuditCorrelationID:    *auditID,
 		EvidenceClass:         *evidenceClass,
 		ASHACommandSequenceID: *seqID,
 	})
@@ -478,11 +524,13 @@ func cmdMove(args []string, pretty bool) error {
 	surfaceID := fs.String("surface", "", "surface ID (required)")
 	x := fs.Float64("x", 0, "surface-local x coordinate")
 	y := fs.Float64("y", 0, "surface-local y coordinate")
+	sessionID := fs.String("session", "", "session id")
+	sessionToken := fs.String("session-token", os.Getenv("AGORA_COMPOSITOR_SESSION_TOKEN"), "session token (defaults to AGORA_COMPOSITOR_SESSION_TOKEN)")
 	fs.Parse(args)
 	if *surfaceID == "" {
 		return fmt.Errorf("--surface is required")
 	}
-	return sendInput(*surfaceID, []schema.CompositorInputEvent{{Type: "pointer_move", X: *x, Y: *y}}, pretty)
+	return sendInput(*surfaceID, *sessionID, *sessionToken, []schema.CompositorInputEvent{{Type: "pointer_move", X: *x, Y: *y}}, pretty)
 }
 
 func cmdClick(args []string, pretty bool) error {
@@ -491,6 +539,8 @@ func cmdClick(args []string, pretty bool) error {
 	x := fs.Float64("x", 0, "surface-local x coordinate")
 	y := fs.Float64("y", 0, "surface-local y coordinate")
 	button := fs.Uint("button", 0x110, "linux input button code (default BTN_LEFT)")
+	sessionID := fs.String("session", "", "session id")
+	sessionToken := fs.String("session-token", os.Getenv("AGORA_COMPOSITOR_SESSION_TOKEN"), "session token (defaults to AGORA_COMPOSITOR_SESSION_TOKEN)")
 	fs.Parse(args)
 	if *surfaceID == "" {
 		return fmt.Errorf("--surface is required")
@@ -500,13 +550,15 @@ func cmdClick(args []string, pretty bool) error {
 		{Type: "pointer_button", X: *x, Y: *y, Button: uint32(*button), State: "pressed"},
 		{Type: "pointer_button", X: *x, Y: *y, Button: uint32(*button), State: "released"},
 	}
-	return sendInput(*surfaceID, events, pretty)
+	return sendInput(*surfaceID, *sessionID, *sessionToken, events, pretty)
 }
 
 func cmdKey(args []string, pretty bool) error {
 	fs := flag.NewFlagSet("key", flag.ExitOnError)
 	surfaceID := fs.String("surface", "", "surface ID (required)")
 	key := fs.String("key", "", "key name or linux input keycode")
+	sessionID := fs.String("session", "", "session id")
+	sessionToken := fs.String("session-token", os.Getenv("AGORA_COMPOSITOR_SESSION_TOKEN"), "session token (defaults to AGORA_COMPOSITOR_SESSION_TOKEN)")
 	fs.Parse(args)
 	if *surfaceID == "" || *key == "" {
 		return fmt.Errorf("--surface and --key are required")
@@ -519,13 +571,15 @@ func cmdKey(args []string, pretty bool) error {
 		{Type: "key", Keycode: keycode, State: "pressed"},
 		{Type: "key", Keycode: keycode, State: "released"},
 	}
-	return sendInput(*surfaceID, events, pretty)
+	return sendInput(*surfaceID, *sessionID, *sessionToken, events, pretty)
 }
 
 func cmdType(args []string, pretty bool) error {
 	fs := flag.NewFlagSet("type", flag.ExitOnError)
 	surfaceID := fs.String("surface", "", "surface ID (required)")
 	text := fs.String("text", "", "ASCII text to type")
+	sessionID := fs.String("session", "", "session id")
+	sessionToken := fs.String("session-token", os.Getenv("AGORA_COMPOSITOR_SESSION_TOKEN"), "session token (defaults to AGORA_COMPOSITOR_SESSION_TOKEN)")
 	fs.Parse(args)
 	if *surfaceID == "" {
 		return fmt.Errorf("--surface is required")
@@ -541,12 +595,14 @@ func cmdType(args []string, pretty bool) error {
 			schema.CompositorInputEvent{Type: "key", Keycode: keycode, State: "released"},
 		)
 	}
-	return sendInput(*surfaceID, events, pretty)
+	return sendInput(*surfaceID, *sessionID, *sessionToken, events, pretty)
 }
 
-func sendInput(surfaceID string, events []schema.CompositorInputEvent, pretty bool) error {
+func sendInput(surfaceID, sessionID, sessionToken string, events []schema.CompositorInputEvent, pretty bool) error {
 	resp, err := call(compositorSock, schema.MethodInjectInput, schema.InjectInputRequest{
 		SurfaceID:       surfaceID,
+		SessionID:       sessionID,
+		SessionToken:    sessionToken,
 		CoordinateSpace: "surface",
 		Events:          events,
 	})
