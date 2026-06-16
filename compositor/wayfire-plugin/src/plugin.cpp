@@ -27,6 +27,7 @@
 #include <wayfire/core.hpp>
 #include <wayfire/nonstd/wlroots-full.hpp>
 #include <wayfire/option-wrapper.hpp>
+#include <wayfire/opengl.hpp>
 #include <wayfire/plugin.hpp>
 #include <wayfire/seat.hpp>
 #include <wayfire/signal-definitions.hpp>
@@ -788,39 +789,16 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
             return;
         }
 
-        void *data = nullptr;
-        uint32_t format = 0;
-        size_t stride = 0;
-        if (!wlr_buffer_begin_data_ptr_access(capture_buffer,
-            WLR_BUFFER_DATA_PTR_ACCESS_READ, &data, &format, &stride))
-        {
-            send_capture_error(request, "surface buffer does not support CPU readback");
-            return;
-        }
-
         std::vector<uint8_t> rgba(static_cast<size_t>(width) * height * 4);
-        bool supported_format = (format == WL_SHM_FORMAT_ARGB8888) || (format == WL_SHM_FORMAT_XRGB8888);
-        if (supported_format)
+        bool readback_ok = wf::gles::run_in_context_if_gles([&] ()
         {
-            const auto *bytes = static_cast<const uint8_t*>(data);
-            for (uint32_t y = 0; y < height; ++y)
-            {
-                const uint8_t *src = bytes + (static_cast<size_t>(y) * stride);
-                uint8_t *dst = rgba.data() + (static_cast<size_t>(y) * width * 4);
-                for (uint32_t x = 0; x < width; ++x)
-                {
-                    dst[x * 4 + 0] = src[x * 4 + 2];
-                    dst[x * 4 + 1] = src[x * 4 + 1];
-                    dst[x * 4 + 2] = src[x * 4 + 0];
-                    dst[x * 4 + 3] = (format == WL_SHM_FORMAT_ARGB8888) ? src[x * 4 + 3] : 0xff;
-                }
-            }
-        }
-        wlr_buffer_end_data_ptr_access(capture_buffer);
-
-        if (!supported_format)
+            wf::gles::bind_render_buffer(snapshot_buffer.get_renderbuffer());
+            GL_CALL(glReadPixels(0, 0, static_cast<GLsizei>(width), static_cast<GLsizei>(height),
+                GL_RGBA, GL_UNSIGNED_BYTE, rgba.data()));
+        });
+        if (!readback_ok)
         {
-            send_capture_error(request, "unsupported shm buffer format");
+            send_capture_error(request, "snapshot buffer does not support GL readback");
             return;
         }
 
