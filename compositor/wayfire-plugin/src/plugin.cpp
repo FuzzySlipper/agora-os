@@ -30,6 +30,7 @@
 #include <wayfire/plugin.hpp>
 #include <wayfire/seat.hpp>
 #include <wayfire/signal-definitions.hpp>
+#include <wayfire/unstable/wlr-surface-node.hpp>
 #include <wayfire/util/log.hpp>
 #include <wayfire/view-helpers.hpp>
 #include <wayfire/view.hpp>
@@ -250,11 +251,44 @@ void pick_capture_surface(wlr_surface *surface, int, int, void *data)
     pick->surface = surface;
 }
 
+wlr_surface *find_capture_surface_in_node(const wf::scene::node_ptr& node)
+{
+    if (!node)
+    {
+        return nullptr;
+    }
+
+    if (auto *surface_node = dynamic_cast<wf::scene::wlr_surface_node_t*>(node.get()))
+    {
+        auto *surface = surface_node->get_surface();
+        if (surface && surface->current.buffer &&
+            (surface->current.buffer_width > 0) && (surface->current.buffer_height > 0))
+        {
+            return surface;
+        }
+    }
+
+    for (const auto& child : node->get_children())
+    {
+        if (auto *surface = find_capture_surface_in_node(child))
+        {
+            return surface;
+        }
+    }
+
+    return nullptr;
+}
+
 wlr_surface *find_capture_surface(wayfire_view view)
 {
     if (!view)
     {
         return nullptr;
+    }
+
+    if (auto *surface = find_capture_surface_in_node(view->get_surface_root_node()))
+    {
+        return surface;
     }
 
     wlr_surface *root = view->get_wlr_surface();
