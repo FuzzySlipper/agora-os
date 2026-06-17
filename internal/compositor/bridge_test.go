@@ -607,6 +607,34 @@ func TestAmbiguousHintsDoNotBindOrStealSurfaces(t *testing.T) {
 	}
 }
 
+func TestWaitReconcilesUniqueHintSurface(t *testing.T) {
+	bridge, err := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	now := time.Now().Add(-time.Second)
+	bridge.mu.Lock()
+	bridge.sessions["session-webview"] = schema.CompositorSession{SessionID: "session-webview", CreatedAt: now, LastUsedAt: now}
+	bridge.launches["launch-webview"] = &launchRecord{expectedTitle: "ASHA Agora Conformance Evidence", process: schema.CompositorLaunchProcess{LaunchID: "launch-webview", SessionID: "session-webview", PID: 111, Status: "running", StartedAt: now}}
+	bridge.surfaces["view-webview"] = schema.CompositorTrackedSurface{
+		Surface:   schema.CompositorSurface{ID: "view-webview", AppID: "agora-webview-helper-123.py", Title: "ASHA Agora Conformance Evidence"},
+		Client:    schema.CompositorClientIdentity{PID: 222, UID: 1001},
+		UpdatedAt: now.Add(100 * time.Millisecond),
+	}
+	bridge.mu.Unlock()
+
+	surface, ok := bridge.waitForLaunchSurface("launch-webview", 50*time.Millisecond)
+	if !ok {
+		t.Fatal("waitForLaunchSurface did not reconcile unique hint-matched child surface")
+	}
+	if surface.Surface.ID != "view-webview" {
+		t.Fatalf("got surface %s, want view-webview", surface.Surface.ID)
+	}
+	if procs := bridge.ListProcesses("session-webview"); len(procs) != 1 || len(procs[0].Surfaces) != 1 || procs[0].Surfaces[0] != "view-webview" {
+		t.Fatalf("surface was not durably bound to launch: %+v", procs)
+	}
+}
+
 func TestStaleExitedPIDDoesNotBindReusedPIDSurface(t *testing.T) {
 	bridge, err := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
 	if err != nil {
