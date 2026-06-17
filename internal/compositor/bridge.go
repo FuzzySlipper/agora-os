@@ -62,6 +62,10 @@ func classifyError(err error) (string, string) {
 		return schema.ErrorCompositorUnavailable, msg
 	case strings.Contains(msg, "capture timed out") || strings.Contains(msg, "frame") && strings.Contains(msg, "timed out"):
 		return schema.ErrorFrameTimeout, msg
+	case strings.Contains(msg, "invalid coordinate") || strings.Contains(msg, "outside surface") || strings.Contains(msg, "outside bounds"):
+		return schema.ErrorInvalidCoordinates, msg
+	case strings.Contains(msg, "input") && (strings.Contains(msg, "denied") || strings.Contains(msg, "rejected") || strings.Contains(msg, "failed")):
+		return schema.ErrorInputDenied, msg
 	case strings.Contains(msg, "unsupported"):
 		return schema.ErrorBackendUnsupported, msg
 	default:
@@ -824,7 +828,7 @@ func (b *Bridge) InjectInput(req schema.InjectInputRequest) (schema.InjectInputR
 		if pluginResp.Error == "" {
 			pluginResp.Error = "input injection failed"
 		}
-		return schema.InjectInputResponse{}, fmt.Errorf("%s", pluginResp.Error)
+		return schema.InjectInputResponse{}, classifyInputPluginError(pluginResp.Error)
 	}
 	return schema.InjectInputResponse{
 		SurfaceID: pluginResp.SurfaceID,
@@ -1209,6 +1213,7 @@ func (b *Bridge) CaptureOutput(req schema.CaptureOutputRequest) (schema.CaptureO
 	resp := schema.CaptureOutputResponse{Output: req.Name}
 	if len(listed.Surfaces) == 0 {
 		resp.Warnings = append(resp.Warnings, "output has no surfaces to capture")
+		return resp, compositorError(schema.ErrorCaptureDenied, "output %s has no surfaces to capture", req.Name)
 	}
 	for _, surface := range listed.Surfaces {
 		cap, err := b.CaptureSurface(schema.CaptureSurfaceRequest{SurfaceID: surface.Surface.ID, Export: req.Export, SessionID: req.SessionID, EvidenceClass: req.EvidenceClass, ASHACommandSequenceID: req.ASHACommandSequenceID})
@@ -1217,6 +1222,9 @@ func (b *Bridge) CaptureOutput(req schema.CaptureOutputRequest) (schema.CaptureO
 			continue
 		}
 		resp.Captures = append(resp.Captures, cap)
+	}
+	if len(resp.Captures) == 0 {
+		return resp, compositorError(schema.ErrorCaptureDenied, "output %s capture failed for all %d surface(s): %s", req.Name, len(listed.Surfaces), strings.Join(resp.Warnings, "; "))
 	}
 	return resp, nil
 }
@@ -1402,15 +1410,38 @@ func classifyCapturePluginError(message string) error {
 	if message == "" {
 		message = "capture failed"
 	}
+	lower := strings.ToLower(message)
 	switch {
-	case strings.Contains(message, "not found"):
+	case strings.Contains(lower, "surface") && strings.Contains(lower, "not found"):
 		return compositorError(schema.ErrorSurfaceNotFound, "capture failed: %s", message)
-	case strings.Contains(message, "denied") || strings.Contains(message, "access"):
+	case strings.Contains(lower, "timed out"):
+		return compositorError(schema.ErrorFrameTimeout, "capture failed: %s", message)
+	case strings.Contains(lower, "denied") || strings.Contains(lower, "access"):
 		return compositorError(schema.ErrorCaptureDenied, "capture failed: %s", message)
-	case strings.Contains(message, "empty dimensions") || strings.Contains(message, "black"):
+	case strings.Contains(lower, "empty dimensions") || strings.Contains(lower, "black"):
 		return compositorError(schema.ErrorCaptureBlackFrame, "capture failed: %s", message)
 	default:
 		return compositorError(schema.ErrorProtocolError, "capture failed: %s", message)
+	}
+}
+
+func classifyInputPluginError(message string) error {
+	lower := strings.ToLower(message)
+	switch {
+	case strings.Contains(lower, "surface") && strings.Contains(lower, "not found"):
+		return compositorError(schema.ErrorSurfaceNotFound, "%s", message)
+	case strings.Contains(lower, "coordinate") && strings.Contains(lower, "unsupported"):
+		return compositorError(schema.ErrorInvalidCoordinates, "%s", message)
+	case strings.Contains(lower, "outside") || strings.Contains(lower, "invalid coordinate"):
+		return compositorError(schema.ErrorInvalidCoordinates, "%s", message)
+	case strings.Contains(lower, "denied") || strings.Contains(lower, "rejected") || strings.Contains(lower, "input injection failed"):
+		return compositorError(schema.ErrorInputDenied, "%s", message)
+	case strings.Contains(lower, "seat not available"):
+		return compositorError(schema.ErrorInputDenied, "%s", message)
+	case strings.Contains(lower, "empty dimensions"):
+		return compositorError(schema.ErrorInputDenied, "%s", message)
+	default:
+		return compositorError(schema.ErrorProtocolError, "%s", message)
 	}
 }
 
@@ -1424,11 +1455,6 @@ func (b *Bridge) recordFramePresented(surfaceID string) {
 		surface.UpdatedAt = now
 		b.surfaces[surfaceID] = surface
 	}
-}
-
-func (b *Bridge) captureFrameForReadiness(surfaceID string) error {
-	_, err := b.CaptureSurface(schema.CaptureSurfaceRequest{SurfaceID: surfaceID})
-	return err
 }
 
 func (b *Bridge) WaitForFrame(req schema.WaitForFrameRequest) (schema.WaitForFrameResponse, error) {
@@ -1448,7 +1474,6 @@ func (b *Bridge) WaitForFrame(req schema.WaitForFrameRequest) (schema.WaitForFra
 		if !ok {
 			return schema.WaitForFrameResponse{}, compositorError(schema.ErrorSurfaceNotFound, "surface %s not found", req.SurfaceID)
 		}
-		_ = b.captureFrameForReadiness(req.SurfaceID)
 		time.Sleep(50 * time.Millisecond)
 	}
 	return schema.WaitForFrameResponse{}, compositorError(schema.ErrorFrameTimeout, "frame wait timed out")
@@ -1466,9 +1491,6 @@ func (b *Bridge) WaitForAppReady(req schema.WaitForAppReadyRequest) (schema.Wait
 		surfaceIDs := b.surfacesForLaunchLocked(launch)
 		b.mu.RUnlock()
 		for _, surfaceID := range surfaceIDs {
-			if err := b.captureFrameForReadiness(surfaceID); err != nil {
-				continue
-			}
 			b.mu.RLock()
 			if surface, ok := b.surfaces[surfaceID]; ok && surface.FrameCount > 0 {
 				surface = b.decorateSurfaceLocked(surface)
@@ -1491,12 +1513,13 @@ func (b *Bridge) WaitForRenderIdle(req schema.WaitForRenderIdleRequest) (schema.
 	for time.Now().Before(deadline) {
 		b.mu.RLock()
 		surface, ok := b.surfaces[req.SurfaceID]
-		updated := surface.UpdatedAt
+		frameCount := surface.FrameCount
+		presentedAt := surface.LastPresentTimestamp
 		b.mu.RUnlock()
 		if !ok {
 			return schema.WaitGenericResponse{}, compositorError(schema.ErrorSurfaceNotFound, "surface %s not found", req.SurfaceID)
 		}
-		if time.Since(updated) >= idle {
+		if frameCount > 0 && presentedAt != nil && time.Since(*presentedAt) >= idle {
 			return schema.WaitGenericResponse{OK: true, SurfaceID: req.SurfaceID, Timestamp: time.Now()}, nil
 		}
 		time.Sleep(50 * time.Millisecond)
