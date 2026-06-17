@@ -465,6 +465,86 @@ func TestTerminateLaunchReportsSurfaceCloseFailures(t *testing.T) {
 	}
 }
 
+func TestWaitHooksRequirePresentedFrameEvidence(t *testing.T) {
+	bridge, err := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	now := time.Now().Add(-time.Second)
+	bridge.mu.Lock()
+	bridge.surfaces["view-wait"] = schema.CompositorTrackedSurface{
+		Surface:   schema.CompositorSurface{ID: "view-wait"},
+		UpdatedAt: now,
+	}
+	bridge.launches["launch-wait"] = &launchRecord{process: schema.CompositorLaunchProcess{LaunchID: "launch-wait", PID: 42, Status: "running", StartedAt: now}}
+	bridge.surfaceLaunch["view-wait"] = "launch-wait"
+	bridge.mu.Unlock()
+
+	if _, err := bridge.WaitForFrame(schema.WaitForFrameRequest{SurfaceID: "view-wait", TimeoutMs: 20}); err == nil {
+		t.Fatal("expected WaitForFrame to time out without frame evidence")
+	} else if class, _ := classifyError(err); class != schema.ErrorFrameTimeout {
+		t.Fatalf("WaitForFrame class = %q, want %q (%v)", class, schema.ErrorFrameTimeout, err)
+	}
+	if _, err := bridge.WaitForRenderIdle(schema.WaitForRenderIdleRequest{SurfaceID: "view-wait", IdleMs: 1, TimeoutMs: 20}); err == nil {
+		t.Fatal("expected WaitForRenderIdle to time out without frame evidence")
+	} else if class, _ := classifyError(err); class != schema.ErrorFrameTimeout {
+		t.Fatalf("WaitForRenderIdle class = %q, want %q (%v)", class, schema.ErrorFrameTimeout, err)
+	}
+	if _, err := bridge.WaitForAppReady(schema.WaitForAppReadyRequest{LaunchID: "launch-wait", TimeoutMs: 20}); err == nil {
+		t.Fatal("expected WaitForAppReady to time out without frame evidence")
+	} else if class, _ := classifyError(err); class != schema.ErrorAppNotReady {
+		t.Fatalf("WaitForAppReady class = %q, want %q (%v)", class, schema.ErrorAppNotReady, err)
+	}
+
+	bridge.recordFramePresented("view-wait")
+	if _, err := bridge.WaitForFrame(schema.WaitForFrameRequest{SurfaceID: "view-wait", TimeoutMs: 20}); err != nil {
+		t.Fatalf("WaitForFrame after presented frame: %v", err)
+	}
+	if _, err := bridge.WaitForAppReady(schema.WaitForAppReadyRequest{LaunchID: "launch-wait", TimeoutMs: 20}); err != nil {
+		t.Fatalf("WaitForAppReady after presented frame: %v", err)
+	}
+	time.Sleep(2 * time.Millisecond)
+	if _, err := bridge.WaitForRenderIdle(schema.WaitForRenderIdleRequest{SurfaceID: "view-wait", IdleMs: 1, TimeoutMs: 50}); err != nil {
+		t.Fatalf("WaitForRenderIdle after presented frame: %v", err)
+	}
+}
+
+func TestCaptureOutputFailsClosedWhenNoArtifactsProduced(t *testing.T) {
+	bridge, err := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := bridge.CreateOutput(schema.CreateOutputRequest{Name: "agent-empty", Width: 640, Height: 480}); err != nil {
+		t.Fatalf("CreateOutput: %v", err)
+	}
+	resp, err := bridge.CaptureOutput(schema.CaptureOutputRequest{Name: "agent-empty"})
+	if err == nil {
+		t.Fatalf("expected empty output capture to fail, got %+v", resp)
+	}
+	class, _ := classifyError(err)
+	if class != schema.ErrorCaptureDenied {
+		t.Fatalf("error class = %q, want %q (%v)", class, schema.ErrorCaptureDenied, err)
+	}
+	if len(resp.Captures) != 0 || len(resp.Warnings) == 0 {
+		t.Fatalf("expected warning-only response, got %+v", resp)
+	}
+}
+
+func TestInputPluginErrorsAreClassified(t *testing.T) {
+	cases := map[string]string{
+		"unsupported coordinate_space":         schema.ErrorInvalidCoordinates,
+		"pointer event outside surface bounds": schema.ErrorInvalidCoordinates,
+		"input injection failed":               schema.ErrorInputDenied,
+		"seat not available":                   schema.ErrorInputDenied,
+		"surface not found":                    schema.ErrorSurfaceNotFound,
+	}
+	for msg, want := range cases {
+		if got, _ := classifyError(classifyInputPluginError(msg)); got != want {
+			t.Fatalf("classifyInputPluginError(%q) = %q, want %q", msg, got, want)
+		}
+	}
+}
+
 func TestSurfaceAssociationPrefersPIDAndDoesNotStealAcrossLaunches(t *testing.T) {
 	bridge, err := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
 	if err != nil {
