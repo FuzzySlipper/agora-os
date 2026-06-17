@@ -293,6 +293,10 @@ func (b *Bridge) ResetSession(sessionID string) error {
 }
 
 func (b *Bridge) LaunchApp(req schema.LaunchAppRequest) (schema.LaunchAppResponse, error) {
+	return b.launchAppAsPeer(0, req)
+}
+
+func (b *Bridge) launchAppAsPeer(peerUID uint32, req schema.LaunchAppRequest) (schema.LaunchAppResponse, error) {
 	if strings.TrimSpace(req.Command) == "" {
 		return schema.LaunchAppResponse{}, fmt.Errorf("command is required")
 	}
@@ -307,7 +311,11 @@ func (b *Bridge) LaunchApp(req schema.LaunchAppRequest) (schema.LaunchAppRespons
 
 	cmd := exec.Command("sh", "-lc", req.Command)
 	sys := &syscall.SysProcAttr{Setpgid: true}
-	if cred := launchCredential(req); cred != nil {
+	cred, err := launchCredential(peerUID, req)
+	if err != nil {
+		return schema.LaunchAppResponse{}, err
+	}
+	if cred != nil {
 		sys.Credential = cred
 	}
 	cmd.SysProcAttr = sys
@@ -860,7 +868,6 @@ func (b *Bridge) CheckSurfaceAccess(surfaceID string, agentUID uint32, action sc
 }
 
 func (b *Bridge) dispatch(peerUID uint32, req schema.Request) (schema.Response, error) {
-	_ = peerUID // peer identity is reserved for future governance; local agents may use this API in Phase D.
 	switch req.Method {
 	case schema.MethodListSurfaces:
 		return okResponse(schema.ListSurfacesResponse{Surfaces: b.ListSurfaces()}), nil
@@ -940,7 +947,7 @@ func (b *Bridge) dispatch(peerUID uint32, req schema.Request) (schema.Response, 
 		if err := json.Unmarshal(req.Body, &body); err != nil {
 			return schema.Response{}, fmt.Errorf("bad body: %w", err)
 		}
-		resp, err := b.LaunchApp(body)
+		resp, err := b.launchAppAsPeer(peerUID, body)
 		if err != nil {
 			return schema.Response{}, err
 		}
@@ -1291,10 +1298,13 @@ func sortedUIDs(values map[uint32]struct{}) []uint32 {
 	return uids
 }
 
-func launchCredential(req schema.LaunchAppRequest) *syscall.Credential {
+func launchCredential(peerUID uint32, req schema.LaunchAppRequest) (*syscall.Credential, error) {
 	var uid, gid *uint32
 	uid = req.RunAsUID
 	gid = req.RunAsGID
+	if peerUID != 0 && (uid != nil || gid != nil) {
+		return nil, fmt.Errorf("run_as_uid/run_as_gid overrides require root peer credentials")
+	}
 	if uid == nil && os.Getuid() == 0 {
 		if u, err := user.Lookup("agent"); err == nil {
 			if parsedUID, err := strconv.ParseUint(u.Uid, 10, 32); err == nil {
@@ -1308,7 +1318,7 @@ func launchCredential(req schema.LaunchAppRequest) *syscall.Credential {
 		}
 	}
 	if uid == nil && gid == nil {
-		return nil
+		return nil, nil
 	}
 	cred := &syscall.Credential{}
 	if uid != nil {
@@ -1317,7 +1327,7 @@ func launchCredential(req schema.LaunchAppRequest) *syscall.Credential {
 	if gid != nil {
 		cred.Gid = *gid
 	}
-	return cred
+	return cred, nil
 }
 
 func defaultWaylandDisplay() string {
