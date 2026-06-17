@@ -1961,7 +1961,7 @@ func (b *Bridge) dispatch(peerUID uint32, req schema.Request) (schema.Response, 
 		if err := json.Unmarshal(req.Body, &body); err != nil {
 			return schema.Response{}, fmt.Errorf("bad body: %w", err)
 		}
-		resp, err := b.A11yClick(body)
+		resp, err := b.A11yClick(peerUID, body)
 		if err != nil {
 			return schema.Response{}, err
 		}

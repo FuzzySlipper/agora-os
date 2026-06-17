@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -56,16 +57,79 @@ func (b *Bridge) A11ySemantic(req schema.A11yTreeRequest) (schema.A11yTreeRespon
 }
 
 func semanticProjection(node schema.A11yNode) schema.A11yNode {
-	// Keep the stable node id/action fields while projecting the transport tree
-	// into an ASHA-friendly semantic tree. The source remains AT-SPI2 for v1;
+	// Keep stable node id/action fields while projecting the transport tree into
+	// an ASHA-friendly semantic tree. The source remains AT-SPI2 for v1;
 	// WebKitGTK exposes its DOM accessibility semantics through this tree.
+	sourceRole := node.Role
+	semanticRole := semanticRoleForATSPI(sourceRole, node.Interfaces)
 	node.BusName = ""
 	node.Path = ""
 	node.Interfaces = nil
-	for i := range node.Children {
-		node.Children[i] = semanticProjection(node.Children[i])
+	node.ChildCount = 0
+	node.SourceRole = sourceRole
+	node.SemanticRole = semanticRole
+	node.Role = semanticRole
+	children := make([]schema.A11yNode, 0, len(node.Children))
+	for _, child := range node.Children {
+		projected := semanticProjection(child)
+		if isAnonymousSemanticContainer(projected) {
+			children = append(children, projected.Children...)
+			continue
+		}
+		children = append(children, projected)
 	}
+	node.Children = children
 	return node
+}
+
+func semanticRoleForATSPI(role string, interfaces []string) string {
+	lower := strings.ToLower(strings.TrimSpace(role))
+	switch {
+	case strings.Contains(lower, "push button") || lower == "button":
+		return "button"
+	case strings.Contains(lower, "text") || strings.Contains(lower, "entry"):
+		return "text"
+	case strings.Contains(lower, "check"):
+		return "checkbox"
+	case strings.Contains(lower, "radio"):
+		return "radio"
+	case strings.Contains(lower, "combo"):
+		return "combobox"
+	case strings.Contains(lower, "menu"):
+		return "menu"
+	case strings.Contains(lower, "table"):
+		return "table"
+	case strings.Contains(lower, "list"):
+		return "list"
+	case strings.Contains(lower, "link"):
+		return "link"
+	case strings.Contains(lower, "image") || strings.Contains(lower, "icon"):
+		return "image"
+	case strings.Contains(lower, "window") || strings.Contains(lower, "frame") || strings.Contains(lower, "dialog"):
+		return "window"
+	case strings.Contains(lower, "application"):
+		return "application"
+	case hasA11yInterface(interfaces, "org.a11y.atspi.Action"):
+		return "actionable"
+	case lower == "" || strings.Contains(lower, "panel") || strings.Contains(lower, "filler") || strings.Contains(lower, "viewport"):
+		return "container"
+	default:
+		return strings.ReplaceAll(lower, " ", "_")
+	}
+}
+
+func isAnonymousSemanticContainer(node schema.A11yNode) bool {
+	return node.SemanticRole == "container" && node.Name == "" && node.Description == "" && len(node.Actions) == 0
+}
+
+func hasA11yInterface(interfaces []string, want string) bool {
+	short := strings.TrimPrefix(want, "org.a11y.atspi.")
+	for _, iface := range interfaces {
+		if iface == want || strings.EqualFold(iface, want) || strings.EqualFold(iface, short) {
+			return true
+		}
+	}
+	return false
 }
 
 func (b *Bridge) A11yFind(req schema.A11yFindRequest) (schema.A11yFindResponse, error) {
@@ -97,12 +161,15 @@ func (b *Bridge) A11yFind(req schema.A11yFindRequest) (schema.A11yFindResponse, 
 	return schema.A11yFindResponse{SurfaceID: req.SurfaceID, Backend: tree.Backend, Matches: matches}, nil
 }
 
-func (b *Bridge) A11yClick(req schema.A11yClickRequest) (schema.A11yClickResponse, error) {
+func (b *Bridge) A11yClick(peerUID uint32, req schema.A11yClickRequest) (schema.A11yClickResponse, error) {
 	if req.NodeID == "" {
 		return schema.A11yClickResponse{}, fmt.Errorf("node_id is required")
 	}
 	if req.ActionIndex < 0 {
 		return schema.A11yClickResponse{}, fmt.Errorf("action_index must be non-negative")
+	}
+	if _, err := b.surfaceForA11yNode(peerUID, req.NodeID); err != nil {
+		return schema.A11yClickResponse{}, err
 	}
 	client := newATSPIClient()
 	action := req.ActionIndex
@@ -114,6 +181,32 @@ func (b *Bridge) A11yClick(req schema.A11yClickRequest) (schema.A11yClickRespons
 		return schema.A11yClickResponse{}, compositorError(schema.ErrorSemanticTreeUnavailable, "AT-SPI action %d on %s returned false", action, req.NodeID)
 	}
 	return schema.A11yClickResponse{NodeID: req.NodeID, ActionIndex: action, ActionName: actionName, OK: ok}, nil
+}
+
+func (b *Bridge) surfaceForA11yNode(peerUID uint32, nodeID string) (string, error) {
+	pid, _, _, err := decodeA11yNodeID(nodeID)
+	if err != nil {
+		return "", err
+	}
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	var matches []string
+	for surfaceID, surface := range b.surfaces {
+		if int(surface.Client.PID) == pid {
+			matches = append(matches, surfaceID)
+		}
+	}
+	if len(matches) == 0 {
+		return "", compositorError(schema.ErrorSurfaceNotFound, "node %s does not belong to a tracked surface", nodeID)
+	}
+	sort.Strings(matches)
+	for _, surfaceID := range matches {
+		allowed, _ := b.checkSurfaceAccessLocked(surfaceID, peerUID, schema.AccessPointer)
+		if allowed {
+			return surfaceID, nil
+		}
+	}
+	return "", compositorError(schema.ErrorInputDenied, "node %s belongs to tracked surface(s) %s but uid %d lacks pointer/action access", nodeID, strings.Join(matches, ","), peerUID)
 }
 
 type atspiClient struct {
@@ -170,8 +263,12 @@ func (c atspiClient) busNameForPID(pid int) (string, error) {
 func (c atspiClient) readNode(pid int, bus, path string, depth int) (schema.A11yNode, error) {
 	node := schema.A11yNode{ID: encodeA11yNodeID(pid, bus, path), BusName: bus, Path: path}
 	var err error
-	node.Name, _ = c.stringProperty(bus, path, "Name")
-	node.Description, _ = c.stringProperty(bus, path, "Description")
+	if node.Name, err = c.stringProperty(bus, path, "Name"); err != nil {
+		return schema.A11yNode{}, compositorError(schema.ErrorSemanticTreeUnavailable, "read AT-SPI name for %s: %v", node.ID, err)
+	}
+	if node.Description, err = c.stringProperty(bus, path, "Description"); err != nil {
+		return schema.A11yNode{}, compositorError(schema.ErrorSemanticTreeUnavailable, "read AT-SPI description for %s: %v", node.ID, err)
+	}
 	if node.Role, err = c.stringMethod(bus, path, "org.a11y.atspi.Accessible", "GetRoleName"); err != nil {
 		return schema.A11yNode{}, compositorError(schema.ErrorSemanticTreeUnavailable, "read AT-SPI role for %s: %v", node.ID, err)
 	}
@@ -181,7 +278,11 @@ func (c atspiClient) readNode(pid int, bus, path string, depth int) (schema.A11y
 	if node.Interfaces, err = c.stringSliceMethod(bus, path, "org.a11y.atspi.Accessible", "GetInterfaces"); err != nil {
 		return schema.A11yNode{}, compositorError(schema.ErrorSemanticTreeUnavailable, "read AT-SPI interfaces for %s: %v", node.ID, err)
 	}
-	node.Actions = c.actionNames(bus, path)
+	if hasA11yInterface(node.Interfaces, "org.a11y.atspi.Action") {
+		if node.Actions, err = c.actionNames(bus, path); err != nil {
+			return schema.A11yNode{}, compositorError(schema.ErrorSemanticTreeUnavailable, "read AT-SPI actions for %s: %v", node.ID, err)
+		}
+	}
 	if depth <= 0 {
 		return node, nil
 	}
@@ -213,16 +314,20 @@ func (c atspiClient) children(bus, path string) ([]objectRef, error) {
 		return nil, err
 	}
 	var data [][][]string
-	if err := json.Unmarshal(msg.Data, &data); err == nil && len(data) > 0 {
-		refs := make([]objectRef, 0, len(data[0]))
-		for _, item := range data[0] {
-			if len(item) == 2 {
-				refs = append(refs, objectRef{Bus: item[0], Path: item[1]})
-			}
-		}
-		return refs, nil
+	if err := json.Unmarshal(msg.Data, &data); err != nil {
+		return nil, fmt.Errorf("unexpected GetChildren payload: %w", err)
 	}
-	return nil, nil
+	if len(data) == 0 {
+		return nil, nil
+	}
+	refs := make([]objectRef, 0, len(data[0]))
+	for _, item := range data[0] {
+		if len(item) != 2 || item[0] == "" || item[1] == "" {
+			return nil, fmt.Errorf("unexpected GetChildren object ref %#v", item)
+		}
+		refs = append(refs, objectRef{Bus: item[0], Path: item[1]})
+	}
+	return refs, nil
 }
 
 func (c atspiClient) stringProperty(bus, path, prop string) (string, error) {
@@ -274,7 +379,7 @@ func (c atspiClient) stringMethod(bus, path, iface, method string, args ...strin
 	if err := json.Unmarshal(msg.Data, &value); err == nil {
 		return value, nil
 	}
-	return "", nil
+	return "", fmt.Errorf("unexpected string payload for %s.%s", iface, method)
 }
 
 func (c atspiClient) stringSliceMethod(bus, path, iface, method string) ([]string, error) {
@@ -296,28 +401,32 @@ func (c atspiClient) stringSliceMethod(bus, path, iface, method string) ([]strin
 	if err := json.Unmarshal(msg.Data, &flat); err == nil {
 		return flat, nil
 	}
-	return nil, nil
+	return nil, fmt.Errorf("unexpected string slice payload for %s.%s", iface, method)
 }
 
-func (c atspiClient) actionNames(bus, path string) []string {
+func (c atspiClient) actionNames(bus, path string) ([]string, error) {
 	out, err := c.busctl("get-property", bus, path, "org.a11y.atspi.Action", "NActions")
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	var msg struct {
 		Data int `json:"data"`
 	}
-	if err := json.Unmarshal(out, &msg); err != nil || msg.Data <= 0 {
-		return nil
+	if err := json.Unmarshal(out, &msg); err != nil {
+		return nil, err
+	}
+	if msg.Data <= 0 {
+		return nil, nil
 	}
 	actions := make([]string, 0, msg.Data)
 	for i := 0; i < msg.Data; i++ {
 		name, err := c.stringMethod(bus, path, "org.a11y.atspi.Action", "GetName", "i", strconv.Itoa(i))
-		if err == nil && name != "" {
-			actions = append(actions, name)
+		if err != nil {
+			return nil, err
 		}
+		actions = append(actions, name)
 	}
-	return actions
+	return actions, nil
 }
 
 func (c atspiClient) doAction(nodeID string, index int) (bool, string, error) {
@@ -332,7 +441,10 @@ func (c atspiClient) doAction(nodeID string, index int) (bool, string, error) {
 	if currentBus != bus {
 		return false, "", compositorError(schema.ErrorSemanticTreeUnavailable, "node %s no longer belongs to pid %d", nodeID, pid)
 	}
-	name, _ := c.stringMethod(bus, path, "org.a11y.atspi.Action", "GetName", "i", strconv.Itoa(index))
+	name, err := c.stringMethod(bus, path, "org.a11y.atspi.Action", "GetName", "i", strconv.Itoa(index))
+	if err != nil {
+		return false, "", compositorError(schema.ErrorSemanticTreeUnavailable, "read AT-SPI action name on %s: %v", nodeID, err)
+	}
 	out, err := c.busctl("call", bus, path, "org.a11y.atspi.Action", "DoAction", "i", strconv.Itoa(index))
 	if err != nil {
 		return false, name, compositorError(schema.ErrorSemanticTreeUnavailable, "invoke AT-SPI action on %s: %v", nodeID, err)

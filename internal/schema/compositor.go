@@ -604,16 +604,18 @@ type A11yClickRequest struct {
 }
 
 type A11yNode struct {
-	ID          string     `json:"id"`
-	Name        string     `json:"name,omitempty"`
-	Role        string     `json:"role,omitempty"`
-	Description string     `json:"description,omitempty"`
-	BusName     string     `json:"bus_name,omitempty"`
-	Path        string     `json:"path,omitempty"`
-	ChildCount  int        `json:"child_count,omitempty"`
-	Interfaces  []string   `json:"interfaces,omitempty"`
-	Actions     []string   `json:"actions,omitempty"`
-	Children    []A11yNode `json:"children,omitempty"`
+	ID           string     `json:"id"`
+	Name         string     `json:"name,omitempty"`
+	Role         string     `json:"role,omitempty"`
+	SourceRole   string     `json:"source_role,omitempty"`
+	SemanticRole string     `json:"semantic_role,omitempty"`
+	Description  string     `json:"description,omitempty"`
+	BusName      string     `json:"bus_name,omitempty"`
+	Path         string     `json:"path,omitempty"`
+	ChildCount   int        `json:"child_count,omitempty"`
+	Interfaces   []string   `json:"interfaces,omitempty"`
+	Actions      []string   `json:"actions,omitempty"`
+	Children     []A11yNode `json:"children,omitempty"`
 }
 
 type A11yTreeResponse struct {
