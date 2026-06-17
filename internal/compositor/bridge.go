@@ -51,6 +51,7 @@ func (s *pluginSession) Close() error {
 type launchRecord struct {
 	process       schema.CompositorLaunchProcess
 	cmd           *exec.Cmd
+	done          chan struct{}
 	expectedAppID string
 	expectedTitle string
 }
@@ -274,8 +275,14 @@ func (b *Bridge) ResetSession(sessionID string) error {
 		}
 	}
 	b.mu.RUnlock()
+	var errs []string
 	for _, id := range launchIDs {
-		_, _ = b.TerminateLaunch(id)
+		if _, err := b.TerminateLaunch(id); err != nil {
+			errs = append(errs, err.Error())
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("reset session %s cleanup failed: %s", sessionID, strings.Join(errs, "; "))
 	}
 	b.mu.Lock()
 	session := b.sessions[sessionID]
@@ -338,7 +345,7 @@ func (b *Bridge) LaunchApp(req schema.LaunchAppRequest) (schema.LaunchAppRespons
 		Status:    "running",
 		StartedAt: now,
 	}
-	b.launches[launchID] = &launchRecord{process: process, cmd: cmd, expectedAppID: req.ExpectedAppID, expectedTitle: req.ExpectedTitle}
+	b.launches[launchID] = &launchRecord{process: process, cmd: cmd, done: make(chan struct{}), expectedAppID: req.ExpectedAppID, expectedTitle: req.ExpectedTitle}
 	if req.SessionID != "" {
 		session := b.sessions[req.SessionID]
 		session.LastUsedAt = now
@@ -383,6 +390,7 @@ func (b *Bridge) TerminateLaunch(launchID string) (schema.TerminateLaunchRespons
 	pid := launch.process.PID
 	status := launch.process.Status
 	cmd := launch.cmd
+	done := launch.done
 	surfaces := b.surfacesForLaunchLocked(launch)
 	b.mu.RUnlock()
 
@@ -395,11 +403,28 @@ func (b *Bridge) TerminateLaunch(launchID string) (schema.TerminateLaunchRespons
 				signalSent = true
 			}
 		}
+		if signalSent && !b.waitForLaunchExit(launchID, done, 2*time.Second) {
+			_ = syscall.Kill(-pid, syscall.SIGKILL)
+			_ = cmd.Process.Kill()
+			if !b.waitForLaunchExit(launchID, done, 2*time.Second) {
+				return schema.TerminateLaunchResponse{}, fmt.Errorf("launch %s did not exit after terminate", launchID)
+			}
+		}
 	}
+	closedSurfaces := make([]string, 0, len(surfaces))
+	var closeErrs []string
 	for _, surfaceID := range surfaces {
-		_ = b.CloseSurface(surfaceID)
+		if err := b.CloseSurface(surfaceID); err != nil {
+			closeErrs = append(closeErrs, fmt.Sprintf("%s: %v", surfaceID, err))
+			continue
+		}
+		closedSurfaces = append(closedSurfaces, surfaceID)
 	}
-	return schema.TerminateLaunchResponse{LaunchID: launchID, SignalSent: signalSent, ClosedSurfaces: surfaces}, nil
+	resp := schema.TerminateLaunchResponse{LaunchID: launchID, SignalSent: signalSent, ClosedSurfaces: closedSurfaces}
+	if len(closeErrs) > 0 {
+		return resp, fmt.Errorf("close surfaces for launch %s failed: %s", launchID, strings.Join(closeErrs, "; "))
+	}
+	return resp, nil
 }
 
 func (b *Bridge) waitLaunch(launchID string, cmd *exec.Cmd) {
@@ -420,7 +445,34 @@ func (b *Bridge) waitLaunch(launchID string, cmd *exec.Cmd) {
 		launch.process.Status = "exited"
 		launch.process.ExitCode = &exitCode
 		launch.process.ExitedAt = &now
+		if launch.done != nil {
+			close(launch.done)
+			launch.done = nil
+		}
 	}
+}
+
+func (b *Bridge) waitForLaunchExit(launchID string, done <-chan struct{}, timeout time.Duration) bool {
+	if done != nil {
+		select {
+		case <-done:
+			return true
+		case <-time.After(timeout):
+			return false
+		}
+	}
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		b.mu.RLock()
+		launch := b.launches[launchID]
+		exited := launch == nil || launch.process.Status != "running"
+		b.mu.RUnlock()
+		if exited {
+			return true
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	return false
 }
 
 func (b *Bridge) waitForLaunchSurface(launchID string, timeout time.Duration) (schema.CompositorTrackedSurface, bool) {

@@ -413,6 +413,58 @@ func TestSessionLifecycleAndLaunchTracking(t *testing.T) {
 	}
 }
 
+func TestTerminateLaunchEscalatesIgnoredSIGTERM(t *testing.T) {
+	bridge, err := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	session := bridge.CreateSession(schema.CreateSessionRequest{Label: "term-ignore"})
+	launch, err := bridge.LaunchApp(schema.LaunchAppRequest{SessionID: session.SessionID, Command: "trap '' TERM; sleep 30"})
+	if err != nil {
+		t.Fatalf("LaunchApp: %v", err)
+	}
+	started := time.Now()
+	term, err := bridge.TerminateLaunch(launch.LaunchID)
+	if err != nil {
+		t.Fatalf("TerminateLaunch: %v", err)
+	}
+	if !term.SignalSent {
+		t.Fatalf("expected signal sent, got %+v", term)
+	}
+	if elapsed := time.Since(started); elapsed > 4*time.Second {
+		t.Fatalf("terminate did not escalate promptly; elapsed=%s", elapsed)
+	}
+	processes := bridge.ListProcesses(session.SessionID)
+	if len(processes) != 1 || processes[0].Status != "exited" || processes[0].ExitCode == nil {
+		t.Fatalf("process was not tracked as exited after escalation: %+v", processes)
+	}
+}
+
+func TestTerminateLaunchReportsSurfaceCloseFailures(t *testing.T) {
+	bridge, err := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	now := time.Now().Add(-time.Second)
+	bridge.mu.Lock()
+	bridge.launches["launch-close-fail"] = &launchRecord{process: schema.CompositorLaunchProcess{LaunchID: "launch-close-fail", PID: 12345, Status: "exited", StartedAt: now}}
+	bridge.surfaces["view-close-fail"] = schema.CompositorTrackedSurface{Surface: schema.CompositorSurface{ID: "view-close-fail"}, UpdatedAt: now}
+	bridge.surfaceLaunch["view-close-fail"] = "launch-close-fail"
+	bridge.mu.Unlock()
+
+	term, err := bridge.TerminateLaunch("launch-close-fail")
+	if err == nil {
+		t.Fatalf("expected close failure, got response %+v", term)
+	}
+	if strings.Contains(strings.Join(term.ClosedSurfaces, ","), "view-close-fail") {
+		t.Fatalf("surface reported closed despite plugin failure: %+v", term)
+	}
+	if !strings.Contains(err.Error(), "no plugin connected") {
+		t.Fatalf("got error %q, want plugin close failure", err.Error())
+	}
+}
+
 func TestSurfaceAssociationPrefersPIDAndDoesNotStealAcrossLaunches(t *testing.T) {
 	bridge, err := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
 	if err != nil {
