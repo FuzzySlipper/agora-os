@@ -1011,7 +1011,13 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         std::vector<uint8_t> rgba(static_cast<size_t>(width) * height * 4);
         bool readback_ok = wf::gles::run_in_context_if_gles([&] ()
         {
-            wf::gles::bind_render_buffer(snapshot_buffer.get_renderbuffer());
+            auto renderbuffer = snapshot_buffer.get_renderbuffer();
+            wf::gles::bind_render_buffer(renderbuffer);
+            // Wayfire's bind_render_buffer() binds GL_DRAW_FRAMEBUFFER for rendering.
+            // glReadPixels() reads from GL_READ_FRAMEBUFFER, so bind the snapshot
+            // buffer there explicitly before reading the rendered snapshot back.
+            GL_CALL(glBindFramebuffer(GL_READ_FRAMEBUFFER, wf::gles::ensure_render_buffer_fb_id(renderbuffer)));
+            GL_CALL(glPixelStorei(GL_PACK_ALIGNMENT, 1));
             GL_CALL(glReadPixels(0, 0, static_cast<GLsizei>(width), static_cast<GLsizei>(height),
                 GL_RGBA, GL_UNSIGNED_BYTE, rgba.data()));
         });
