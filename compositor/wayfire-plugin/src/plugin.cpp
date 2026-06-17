@@ -789,6 +789,11 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
             return true;
 
           case agora::protocol::input_event_kind::scroll:
+            if (!surface)
+            {
+                return false;
+            }
+            wlr_seat_pointer_notify_enter(seat, surface, x, y);
             wlr_seat_pointer_notify_axis(seat, time,
                 event.axis == 1 ? WL_POINTER_AXIS_HORIZONTAL_SCROLL : WL_POINTER_AXIS_VERTICAL_SCROLL,
                 event.value, event.discrete, WL_POINTER_AXIS_SOURCE_WHEEL,
@@ -821,9 +826,22 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         }
     }
 
+    bool supports_input_coordinate_space(std::string_view coordinate_space) const
+    {
+        return coordinate_space.empty() || (coordinate_space == "surface") ||
+            (coordinate_space == "surface-local");
+    }
+
     void process_input_request(const pending_input_request_t& request,
         const std::unordered_map<std::string, wayfire_view>& views)
     {
+        if (!supports_input_coordinate_space(request.coordinate_space))
+        {
+            send_input_response(request, false, 0, static_cast<uint32_t>(request.events.size()),
+                "unsupported coordinate_space");
+            return;
+        }
+
         auto view_it = views.find(request.surface_id);
         if ((view_it == views.end()) || !view_it->second)
         {

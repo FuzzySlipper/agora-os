@@ -50,6 +50,44 @@ int main()
     assert(close_uid_msg.kind == bridge_message_kind::close_surfaces_by_uid);
     assert(close_uid_msg.owner_uid.has_value() && (*close_uid_msg.owner_uid == 60003));
 
+    auto inject_msg = parse_bridge_message(
+        "{\"type\":\"inject_input\",\"request_id\":\"input-1\",\"surface_id\":\"view-11\","
+        "\"coordinate_space\":\"surface-local\",\"events\":["
+        "{\"type\":\"pointer_move\",\"x\":12.5,\"y\":34.25},"
+        "{\"type\":\"pointer_button\",\"button\":272,\"state\":\"pressed\"},"
+        "{\"type\":\"key\",\"keycode\":28,\"state\":\"released\"},"
+        "{\"type\":\"scroll\",\"axis\":1,\"value\":-15.0,\"discrete\":-1},"
+        "{\"type\":\"touch\",\"touch_id\":7,\"phase\":\"down\",\"x\":1,\"y\":2}"
+        "]}");
+    assert(inject_msg.kind == bridge_message_kind::inject_input);
+    assert(inject_msg.request_id == "input-1");
+    assert(inject_msg.surface_id == "view-11");
+    assert(inject_msg.coordinate_space == "surface-local");
+    assert(inject_msg.input_events.size() == 5);
+    assert(inject_msg.input_events[0].kind == input_event_kind::pointer_move);
+    assert(inject_msg.input_events[0].x == 12.5);
+    assert(inject_msg.input_events[0].y == 34.25);
+    assert(inject_msg.input_events[1].kind == input_event_kind::pointer_button);
+    assert(inject_msg.input_events[1].button == 272);
+    assert(inject_msg.input_events[1].state == 1);
+    assert(inject_msg.input_events[2].kind == input_event_kind::key);
+    assert(inject_msg.input_events[2].keycode == 28);
+    assert(inject_msg.input_events[2].state == 0);
+    assert(inject_msg.input_events[3].kind == input_event_kind::scroll);
+    assert(inject_msg.input_events[3].axis == 1);
+    assert(inject_msg.input_events[3].discrete == -1);
+    assert(inject_msg.input_events[4].kind == input_event_kind::touch);
+    assert(inject_msg.input_events[4].touch_id == 7);
+    assert(inject_msg.input_events[4].phase == "down");
+
+    auto input_response = encode_input_response("input-1", "view-11", true, 5, 0, "");
+    assert(input_response.find("\"type\":\"input_response\"") != std::string::npos);
+    assert(input_response.find("\"accepted\":5") != std::string::npos);
+    assert(input_response.find("\"rejected\":0") != std::string::npos);
+
+    auto input_error = encode_input_response("input-2", "view-12", false, 0, 1, "unsupported coordinate_space");
+    assert(input_error.find("unsupported coordinate_space") != std::string::npos);
+
     policy_cache_t cache;
     cache.set_actor_uid(std::nullopt);
     assert(cache.allows("view-1", input_device_t::keyboard));
