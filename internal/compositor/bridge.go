@@ -33,6 +33,8 @@ type Config struct {
 	GrantLogPath     string
 }
 
+const launchSurfaceSettleDelay = 2 * time.Second
+
 type classifiedError struct {
 	class   string
 	message string
@@ -571,7 +573,7 @@ func (b *Bridge) waitForLaunchSurface(launchID string, timeout time.Duration) (s
 		b.mu.RLock()
 		launch := b.launches[launchID]
 		if launch != nil {
-			if surface, ok := b.reconcileLaunchSurfaceLocked(launchID); ok {
+			if surface, ok := b.reconcileLaunchSurfaceLocked(launchID); ok && launchSurfaceSettled(surface) {
 				b.mu.RUnlock()
 				return surface, true
 			}
@@ -580,6 +582,14 @@ func (b *Bridge) waitForLaunchSurface(launchID string, timeout time.Duration) (s
 		time.Sleep(50 * time.Millisecond)
 	}
 	return schema.CompositorTrackedSurface{}, false
+}
+
+func launchSurfaceSettled(surface schema.CompositorTrackedSurface) bool {
+	settledSince := surface.UpdatedAt
+	if surface.LastPresentTimestamp != nil {
+		settledSince = *surface.LastPresentTimestamp
+	}
+	return time.Since(settledSince) >= launchSurfaceSettleDelay
 }
 
 func (b *Bridge) hydrateSessionLocked(session schema.CompositorSession) schema.CompositorSession {

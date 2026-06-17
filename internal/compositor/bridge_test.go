@@ -424,7 +424,7 @@ func TestTerminateLaunchEscalatesIgnoredSIGTERM(t *testing.T) {
 	}
 
 	session := bridge.CreateSession(schema.CreateSessionRequest{Label: "term-ignore"})
-	launch, err := bridge.LaunchApp(schema.LaunchAppRequest{SessionID: session.SessionID, Command: "trap '' TERM; sleep 30"})
+	launch, err := bridge.LaunchApp(schema.LaunchAppRequest{SessionID: session.SessionID, SessionToken: session.SessionToken, Command: "trap '' TERM; sleep 30"})
 	if err != nil {
 		t.Fatalf("LaunchApp: %v", err)
 	}
@@ -613,13 +613,15 @@ func TestWaitReconcilesUniqueHintSurface(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	now := time.Now().Add(-time.Second)
+	presentedAt := now.Add(-launchSurfaceSettleDelay)
 	bridge.mu.Lock()
 	bridge.sessions["session-webview"] = schema.CompositorSession{SessionID: "session-webview", CreatedAt: now, LastUsedAt: now}
 	bridge.launches["launch-webview"] = &launchRecord{expectedTitle: "ASHA Agora Conformance Evidence", process: schema.CompositorLaunchProcess{LaunchID: "launch-webview", SessionID: "session-webview", PID: 111, Status: "running", StartedAt: now}}
 	bridge.surfaces["view-webview"] = schema.CompositorTrackedSurface{
-		Surface:   schema.CompositorSurface{ID: "view-webview", AppID: "agora-webview-helper-123.py", Title: "ASHA Agora Conformance Evidence"},
-		Client:    schema.CompositorClientIdentity{PID: 222, UID: 1001},
-		UpdatedAt: now.Add(100 * time.Millisecond),
+		Surface:              schema.CompositorSurface{ID: "view-webview", AppID: "agora-webview-helper-123.py", Title: "ASHA Agora Conformance Evidence"},
+		Client:               schema.CompositorClientIdentity{PID: 222, UID: 1001},
+		UpdatedAt:            now.Add(100 * time.Millisecond),
+		LastPresentTimestamp: &presentedAt,
 	}
 	bridge.mu.Unlock()
 
