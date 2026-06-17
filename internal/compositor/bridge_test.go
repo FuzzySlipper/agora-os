@@ -804,3 +804,38 @@ func unixSocketPair(t *testing.T) (server net.Conn, client net.Conn, cleanup fun
 	}
 	return server, client, cleanup
 }
+
+func TestLaunchCredentialOverrideRequiresRootPeer(t *testing.T) {
+	uid := uint32(0)
+	gid := uint32(0)
+	if _, err := launchCredential(60001, schema.LaunchAppRequest{RunAsUID: &uid, RunAsGID: &gid}); err == nil {
+		t.Fatal("expected non-root peer credential override to be rejected")
+	} else if !strings.Contains(err.Error(), "require root peer") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	cred, err := launchCredential(0, schema.LaunchAppRequest{RunAsUID: &uid, RunAsGID: &gid})
+	if err != nil {
+		t.Fatalf("root peer override returned error: %v", err)
+	}
+	if cred == nil || cred.Uid != 0 || cred.Gid != 0 {
+		t.Fatalf("root peer credential = %+v, want uid/gid 0", cred)
+	}
+}
+
+func TestDispatchLaunchRejectsNonRootCredentialOverride(t *testing.T) {
+	bridge, err := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	uid := uint32(0)
+	body, err := json.Marshal(schema.LaunchAppRequest{Command: "true", RunAsUID: &uid})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	if _, err := bridge.dispatch(60001, schema.Request{Method: schema.MethodLaunchApp, Body: body}); err == nil {
+		t.Fatal("expected non-root dispatch launch override to be rejected")
+	} else if !strings.Contains(err.Error(), "require root peer") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
