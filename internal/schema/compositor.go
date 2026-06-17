@@ -310,33 +310,46 @@ type CaptureSurfaceRequest struct {
 }
 
 type CaptureSurfaceResponse struct {
-	SurfaceID string          `json:"surface_id"`
-	RequestID string          `json:"request_id,omitempty"`
-	Path      string          `json:"path"`
-	Width     uint32          `json:"width"`
-	Height    uint32          `json:"height"`
-	Format    string          `json:"format"`
-	SHA256    string          `json:"sha256"`
-	Artifact  *ArtifactRecord `json:"artifact,omitempty"`
+	SurfaceID        string                    `json:"surface_id"`
+	RequestID        string                    `json:"request_id,omitempty"`
+	Path             string                    `json:"path"`
+	ImagePath        string                    `json:"image_path,omitempty"`
+	Width            uint32                    `json:"width"`
+	Height           uint32                    `json:"height"`
+	Format           string                    `json:"format"`
+	SHA256           string                    `json:"sha256"`
+	VisualInspection *ArtifactVisualInspection `json:"visual_inspection,omitempty"`
+	Artifact         *ArtifactRecord           `json:"artifact,omitempty"`
 }
 
 type ArtifactRecord struct {
-	ArtifactID            string    `json:"artifact_id"`
-	SessionID             string    `json:"session_id"`
-	SurfaceID             string    `json:"surface_id"`
-	RequestID             string    `json:"request_id"`
-	ImagePath             string    `json:"image_path"`
-	IndexPath             string    `json:"index_path"`
-	Width                 uint32    `json:"width"`
-	Height                uint32    `json:"height"`
-	Format                string    `json:"format"`
-	SHA256                string    `json:"sha256"`
-	CaptureBackend        string    `json:"capture_backend"`
-	AuditCorrelationID    string    `json:"audit_correlation_id,omitempty"`
-	EvidenceClass         string    `json:"evidence_class"`
-	Timestamp             time.Time `json:"timestamp"`
-	ASHACommandSequenceID string    `json:"asha_command_sequence_id,omitempty"`
-	Warnings              []string  `json:"warnings,omitempty"`
+	ArtifactID            string                    `json:"artifact_id"`
+	SessionID             string                    `json:"session_id"`
+	SurfaceID             string                    `json:"surface_id"`
+	RequestID             string                    `json:"request_id"`
+	ImagePath             string                    `json:"image_path"`
+	IndexPath             string                    `json:"index_path"`
+	Width                 uint32                    `json:"width"`
+	Height                uint32                    `json:"height"`
+	Format                string                    `json:"format"`
+	SHA256                string                    `json:"sha256"`
+	CaptureBackend        string                    `json:"capture_backend"`
+	AuditCorrelationID    string                    `json:"audit_correlation_id,omitempty"`
+	EvidenceClass         string                    `json:"evidence_class"`
+	Timestamp             time.Time                 `json:"timestamp"`
+	ASHACommandSequenceID string                    `json:"asha_command_sequence_id,omitempty"`
+	VisualInspection      *ArtifactVisualInspection `json:"visual_inspection,omitempty"`
+	Warnings              []string                  `json:"warnings,omitempty"`
+}
+
+type ArtifactVisualInspection struct {
+	Status              string     `json:"status"`
+	Classification      string     `json:"classification,omitempty"`
+	Width               int        `json:"width"`
+	Height              int        `json:"height"`
+	Mode                string     `json:"mode"`
+	Extrema             [][2]uint8 `json:"extrema,omitempty"`
+	UniqueColorsSampled int        `json:"unique_colors_sampled,omitempty"`
 }
 
 type ListArtifactsRequest struct {

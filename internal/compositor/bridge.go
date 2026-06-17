@@ -507,14 +507,9 @@ func (b *Bridge) waitForLaunchSurface(launchID string, timeout time.Duration) (s
 		b.mu.RLock()
 		launch := b.launches[launchID]
 		if launch != nil {
-			for surfaceID, boundLaunchID := range b.surfaceLaunch {
-				if boundLaunchID != launchID {
-					continue
-				}
-				if surface, ok := b.surfaces[surfaceID]; ok {
-					b.mu.RUnlock()
-					return surface, true
-				}
+			if surface, ok := b.reconcileLaunchSurfaceLocked(launchID); ok {
+				b.mu.RUnlock()
+				return surface, true
 			}
 		}
 		b.mu.RUnlock()
@@ -557,6 +552,48 @@ func (b *Bridge) surfacesForLaunchLocked(launch *launchRecord) []string {
 	}
 	sort.Strings(ids)
 	return ids
+}
+
+func (b *Bridge) reconcileLaunchSurfaceLocked(launchID string) (schema.CompositorTrackedSurface, bool) {
+	launch := b.launches[launchID]
+	if launch == nil {
+		return schema.CompositorTrackedSurface{}, false
+	}
+	for surfaceID, boundLaunchID := range b.surfaceLaunch {
+		if boundLaunchID != launchID {
+			continue
+		}
+		if surface, ok := b.surfaces[surfaceID]; ok {
+			return surface, true
+		}
+	}
+
+	var hintID string
+	var hintSurface schema.CompositorTrackedSurface
+	for surfaceID, surface := range b.surfaces {
+		if boundLaunchID := b.surfaceLaunch[surfaceID]; boundLaunchID != "" && boundLaunchID != launchID {
+			continue
+		}
+		if surface.UpdatedAt.Before(launch.process.StartedAt) {
+			continue
+		}
+		if int(surface.Client.PID) == launch.process.PID {
+			b.surfaceLaunch[surfaceID] = launchID
+			return surface, true
+		}
+		if b.surfaceMatchesLaunchHint(surface, launch) {
+			if hintID != "" {
+				return schema.CompositorTrackedSurface{}, false
+			}
+			hintID = surfaceID
+			hintSurface = surface
+		}
+	}
+	if hintID != "" {
+		b.surfaceLaunch[hintID] = launchID
+		return hintSurface, true
+	}
+	return schema.CompositorTrackedSurface{}, false
 }
 
 func (b *Bridge) associateSurfaceLocked(surface schema.CompositorTrackedSurface) {
@@ -659,9 +696,13 @@ func (b *Bridge) CaptureSurface(req schema.CaptureSurfaceRequest) (schema.Captur
 		return schema.CaptureSurfaceResponse{}, fmt.Errorf("unsupported capture response format %q", pluginResp.Format)
 	}
 
-	png, err := base64.StdEncoding.DecodeString(pluginResp.DataBase64)
+	captureBytes, err := base64.StdEncoding.DecodeString(pluginResp.DataBase64)
 	if err != nil {
 		return schema.CaptureSurfaceResponse{}, fmt.Errorf("decode capture png: %w", err)
+	}
+	visualInspection, err := inspectCapturePNG(captureBytes)
+	if err != nil {
+		return schema.CaptureSurfaceResponse{}, fmt.Errorf("inspect capture png: %w", err)
 	}
 	sessionID := req.SessionID
 	if sessionID == "" {
@@ -682,20 +723,22 @@ func (b *Bridge) CaptureSurface(req schema.CaptureSurfaceRequest) (schema.Captur
 		return schema.CaptureSurfaceResponse{}, err
 	}
 	path := filepath.Join(dir, requestID+".png")
-	if err := os.WriteFile(path, png, 0644); err != nil {
+	if err := os.WriteFile(path, captureBytes, 0644); err != nil {
 		return schema.CaptureSurfaceResponse{}, err
 	}
-	sum := sha256.Sum256(png)
+	sum := sha256.Sum256(captureBytes)
 	sha := hex.EncodeToString(sum[:])
 	b.recordFramePresented(pluginResp.SurfaceID)
 	resp := schema.CaptureSurfaceResponse{
-		SurfaceID: pluginResp.SurfaceID,
-		RequestID: requestID,
-		Path:      path,
-		Width:     pluginResp.Width,
-		Height:    pluginResp.Height,
-		Format:    pluginResp.Format,
-		SHA256:    sha,
+		SurfaceID:        pluginResp.SurfaceID,
+		RequestID:        requestID,
+		Path:             path,
+		ImagePath:        path,
+		Width:            pluginResp.Width,
+		Height:           pluginResp.Height,
+		Format:           pluginResp.Format,
+		SHA256:           sha,
+		VisualInspection: visualInspection,
 	}
 	if req.Export {
 		evidenceClass := req.EvidenceClass
@@ -707,7 +750,10 @@ func (b *Bridge) CaptureSurface(req schema.CaptureSurfaceRequest) (schema.Captur
 			ArtifactID: requestID, SessionID: sessionID, SurfaceID: pluginResp.SurfaceID, RequestID: requestID,
 			ImagePath: path, IndexPath: filepath.Join(dir, "index.json"), Width: pluginResp.Width, Height: pluginResp.Height,
 			Format: pluginResp.Format, SHA256: sha, CaptureBackend: "plugin_readback", AuditCorrelationID: req.AuditCorrelationID, EvidenceClass: evidenceClass,
-			Timestamp: now, ASHACommandSequenceID: req.ASHACommandSequenceID,
+			Timestamp: now, ASHACommandSequenceID: req.ASHACommandSequenceID, VisualInspection: visualInspection,
+		}
+		if visualInspection.Status == "blank" {
+			artifact.Warnings = append(artifact.Warnings, "capture payload classified as "+visualInspection.Classification)
 		}
 		if sessionID == "unscoped" {
 			artifact.Warnings = append(artifact.Warnings, "capture was not associated with a compositor session")
