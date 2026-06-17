@@ -53,6 +53,10 @@ const (
 	MethodMoveSurfaceToOutput = "move_surface_to_output"
 	MethodListOutputSurfaces  = "list_output_surfaces"
 	MethodCaptureOutput       = "capture_output"
+	MethodA11yTree            = "a11y_tree"
+	MethodA11ySemantic        = "a11y_semantic"
+	MethodA11yFind            = "a11y_find"
+	MethodA11yClick           = "a11y_click"
 	MethodUpsertSurfacePolicy = "upsert_surface_policy"
 	MethodRemoveSurfacePolicy = "remove_surface_policy"
 	MethodSetInputContext     = "set_input_context"
@@ -581,6 +585,56 @@ type CompositorPlacePluginResponse struct {
 	SurfaceID string `json:"surface_id"`
 	OK        bool   `json:"ok"`
 	Error     string `json:"error,omitempty"`
+}
+
+type A11yTreeRequest struct {
+	SurfaceID string `json:"surface_id"`
+	Depth     int    `json:"depth,omitempty"`
+}
+
+type A11yFindRequest struct {
+	SurfaceID string `json:"surface_id"`
+	Name      string `json:"name"`
+	Depth     int    `json:"depth,omitempty"`
+}
+
+type A11yClickRequest struct {
+	NodeID      string `json:"node_id"`
+	ActionIndex int    `json:"action_index,omitempty"`
+}
+
+type A11yNode struct {
+	ID           string     `json:"id"`
+	Name         string     `json:"name,omitempty"`
+	Role         string     `json:"role,omitempty"`
+	SourceRole   string     `json:"source_role,omitempty"`
+	SemanticRole string     `json:"semantic_role,omitempty"`
+	Description  string     `json:"description,omitempty"`
+	BusName      string     `json:"bus_name,omitempty"`
+	Path         string     `json:"path,omitempty"`
+	ChildCount   int        `json:"child_count,omitempty"`
+	Interfaces   []string   `json:"interfaces,omitempty"`
+	Actions      []string   `json:"actions,omitempty"`
+	Children     []A11yNode `json:"children,omitempty"`
+}
+
+type A11yTreeResponse struct {
+	SurfaceID string   `json:"surface_id"`
+	Backend   string   `json:"backend"`
+	Root      A11yNode `json:"root"`
+}
+
+type A11yFindResponse struct {
+	SurfaceID string     `json:"surface_id"`
+	Backend   string     `json:"backend"`
+	Matches   []A11yNode `json:"matches,omitempty"`
+}
+
+type A11yClickResponse struct {
+	NodeID      string `json:"node_id"`
+	ActionIndex int    `json:"action_index"`
+	ActionName  string `json:"action_name,omitempty"`
+	OK          bool   `json:"ok"`
 }
 
 type UpsertSurfacePolicyRequest struct {
