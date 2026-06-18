@@ -95,6 +95,40 @@ int main()
     auto input_error = encode_input_response("input-2", "view-12", false, 0, 1, "unsupported coordinate_space");
     assert(input_error.find("unsupported coordinate_space") != std::string::npos);
 
+    surface_snapshot_t layer_surface;
+    layer_surface.id = "layer-shell-4242";
+    layer_surface.surface_kind = "layer_shell";
+    layer_surface.app_id = "io.agoraos.WebviewLauncher";
+    layer_surface.title = "Agora Desktop Shell";
+    layer_surface.role = "panel";
+    layer_surface.layer_namespace = "agora-webview";
+    layer_surface.layer_name = "top";
+    layer_surface.anchors = {"top"};
+    layer_surface.exclusive_zone = 48;
+    layer_surface.width = 1280;
+    layer_surface.height = 48;
+
+    client_identity_t layer_client;
+    layer_client.pid = 4242;
+    layer_client.uid = 60001;
+    layer_client.gid = 60001;
+
+    auto layer_mapped = encode_surface_event("mapped", layer_surface, layer_client);
+    assert(layer_mapped.find("\"event\":\"mapped\"") != std::string::npos);
+    assert(layer_mapped.find("\"id\":\"layer-shell-4242\"") != std::string::npos);
+    assert(layer_mapped.find("\"surface_kind\":\"layer_shell\"") != std::string::npos);
+    assert(layer_mapped.find("\"wayfire_view_id\":0") != std::string::npos);
+    assert(layer_mapped.find("\"role\":\"panel\"") != std::string::npos);
+    assert(layer_mapped.find("\"layer_shell\":{") != std::string::npos);
+    assert(layer_mapped.find("\"namespace\":\"agora-webview\"") != std::string::npos);
+    assert(layer_mapped.find("\"anchors\":[\"top\"]") != std::string::npos);
+    assert(layer_mapped.find("\"exclusive_zone\":true") != std::string::npos);
+    assert(layer_mapped.find("\"pid\":4242") != std::string::npos);
+
+    auto layer_unmapped = encode_surface_event("unmapped", layer_surface, layer_client);
+    assert(layer_unmapped.find("\"event\":\"unmapped\"") != std::string::npos);
+    assert(layer_unmapped.find("\"surface_kind\":\"layer_shell\"") != std::string::npos);
+
     policy_cache_t cache;
     cache.set_actor_uid(std::nullopt);
     assert(cache.allows("view-1", input_device_t::keyboard));

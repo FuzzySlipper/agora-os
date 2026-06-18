@@ -31,6 +31,11 @@ struct surface_snapshot_t
     std::string app_id;
     std::string title;
     std::string role;
+    std::string surface_kind = "xdg_view";
+    std::string layer_namespace;
+    std::string layer_name;
+    std::vector<std::string> anchors;
+    std::optional<int32_t> exclusive_zone;
     int32_t x = 0;
     int32_t y = 0;
     int32_t width = 0;
@@ -181,6 +186,54 @@ inline std::string json_unescape(std::string_view text)
     return out;
 }
 
+inline void append_layer_shell_metadata(std::ostringstream& out, const surface_snapshot_t& surface)
+{
+    if (surface.surface_kind != "layer_shell")
+    {
+        return;
+    }
+    out << ",\"layer_shell\":{";
+    bool first = true;
+    auto comma = [&first, &out]
+    {
+        if (!first)
+        {
+            out << ",";
+        }
+        first = false;
+    };
+    if (!surface.layer_namespace.empty())
+    {
+        comma();
+        out << "\"namespace\":\"" << json_escape(surface.layer_namespace) << "\"";
+    }
+    if (!surface.layer_name.empty())
+    {
+        comma();
+        out << "\"layer\":\"" << json_escape(surface.layer_name) << "\"";
+    }
+    if (!surface.anchors.empty())
+    {
+        comma();
+        out << "\"anchors\":[";
+        for (size_t i = 0; i < surface.anchors.size(); ++i)
+        {
+            if (i > 0)
+            {
+                out << ",";
+            }
+            out << "\"" << json_escape(surface.anchors[i]) << "\"";
+        }
+        out << "]";
+    }
+    if (surface.exclusive_zone.has_value())
+    {
+        comma();
+        out << "\"exclusive_zone\":" << ((*surface.exclusive_zone) != 0 ? "true" : "false");
+    }
+    out << "}";
+}
+
 inline std::string encode_surface_event(std::string_view event_name, const surface_snapshot_t& surface,
     const client_identity_t& client, std::string_view device = "")
 {
@@ -194,6 +247,7 @@ inline std::string encode_surface_event(std::string_view event_name, const surfa
     out << ",\"surface\":{"
         << "\"id\":\"" << json_escape(surface.id) << "\","
         << "\"wayfire_view_id\":" << surface.wayfire_view_id << ","
+        << "\"surface_kind\":\"" << json_escape(surface.surface_kind.empty() ? "xdg_view" : surface.surface_kind) << "\","
         << "\"app_id\":\"" << json_escape(surface.app_id) << "\","
         << "\"title\":\"" << json_escape(surface.title) << "\","
         << "\"role\":\"" << json_escape(surface.role) << "\","
@@ -204,9 +258,10 @@ inline std::string encode_surface_event(std::string_view event_name, const surfa
         << "\"height\":" << static_cast<int32_t>(surface.height * surface.scale_factor) << "},"
         << "\"scale_factor\":" << surface.scale_factor << ","
         << "\"visible\":true,"
-        << "\"output_id\":\"" << json_escape(surface.output_id) << "\"},"
-        << "\"client\":{"
-        << "\"pid\":" << client.pid << ","
+        << "\"output_id\":\"" << json_escape(surface.output_id) << "\"";
+    append_layer_shell_metadata(out, surface);
+    out << "},"
+        << "\"client\":{" << "\"pid\":" << client.pid << ","
         << "\"uid\":" << client.uid << ","
         << "\"gid\":" << client.gid << "}}";
     return out.str();

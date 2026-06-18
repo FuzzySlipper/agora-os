@@ -25,15 +25,19 @@ LAYER_ROLE_CONFIGS = {
     "background": ("BOTTOM", ("TOP", "BOTTOM", "LEFT", "RIGHT"), False),
     "overlay": ("OVERLAY", ("BOTTOM", "RIGHT"), False),
 }
+LAYER_NAMESPACE = "agora-webview"
 
 
-def emit(event, window, role):
+def emit(event, window, role, layer_shell_info=None):
     payload = {
         "event": event,
         "title": window.get_title() or "",
         "pid": os.getpid(),
         "role": role,
+        "surface_kind": "xdg_view" if role == "toplevel" else "layer_shell",
     }
+    if layer_shell_info:
+        payload.update(layer_shell_info)
     print(json.dumps(payload), flush=True)
 
 
@@ -49,6 +53,7 @@ class Launcher(Gtk.Application):
         self.window = None
         self.webview = None
         self.created_emitted = False
+        self.layer_shell_info = None
 
     def do_activate(self):
         if self.window is not None:
@@ -79,17 +84,23 @@ class Launcher(Gtk.Application):
             return
         layer_name, edge_names, exclusive = LAYER_ROLE_CONFIGS[self.role]
         GtkLayerShell.init_for_window(self.window)
-        GtkLayerShell.set_namespace(self.window, "agora-webview")
+        GtkLayerShell.set_namespace(self.window, LAYER_NAMESPACE)
         GtkLayerShell.set_layer(self.window, getattr(GtkLayerShell.Layer, layer_name))
         for edge_name in edge_names:
             GtkLayerShell.set_anchor(self.window, getattr(GtkLayerShell.Edge, edge_name), True)
         if exclusive:
             GtkLayerShell.auto_exclusive_zone_enable(self.window)
+        self.layer_shell_info = {
+            "namespace": LAYER_NAMESPACE,
+            "layer": layer_name.lower(),
+            "anchors": [edge_name.lower() for edge_name in edge_names],
+            "exclusive_zone": exclusive,
+        }
 
     def ensure_created(self):
         if self.window is None or self.created_emitted:
             return
-        emit("created", self.window, self.effective_role)
+        emit("created", self.window, self.effective_role, self.layer_shell_info)
         self.created_emitted = True
 
     def emit_created(self):
@@ -98,13 +109,13 @@ class Launcher(Gtk.Application):
 
     def on_destroy(self, *_args):
         self.ensure_created()
-        emit("closed", self.window, self.effective_role)
+        emit("closed", self.window, self.effective_role, self.layer_shell_info)
         self.quit()
 
     def on_is_active(self, *_args):
         if self.window is not None and self.window.is_active():
             self.ensure_created()
-            emit("focused", self.window, self.effective_role)
+            emit("focused", self.window, self.effective_role, self.layer_shell_info)
 
     def on_title_changed(self, webview, _param):
         title = webview.get_title()

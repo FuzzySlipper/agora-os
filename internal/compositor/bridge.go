@@ -1,12 +1,14 @@
 package compositor
 
 import (
+	"bufio"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -98,6 +100,24 @@ type launchRecord struct {
 	expectedAppID  string
 	expectedTitle  string
 	expectedOutput string
+}
+
+type launchLifecycleEvent struct {
+	Event         string   `json:"event"`
+	SurfaceID     string   `json:"surface_id"`
+	SurfaceKind   string   `json:"surface_kind"`
+	AppID         string   `json:"app_id"`
+	Title         string   `json:"title,omitempty"`
+	PID           int32    `json:"pid"`
+	UID           uint32   `json:"uid"`
+	GID           uint32   `json:"gid"`
+	Role          string   `json:"role"`
+	Width         int      `json:"width,omitempty"`
+	Height        int      `json:"height,omitempty"`
+	Namespace     string   `json:"namespace,omitempty"`
+	Layer         string   `json:"layer,omitempty"`
+	Anchors       []string `json:"anchors,omitempty"`
+	ExclusiveZone *bool    `json:"exclusive_zone,omitempty"`
 }
 
 type Bridge struct {
@@ -401,6 +421,10 @@ func (b *Bridge) launchAppAsPeer(peerUID uint32, req schema.LaunchAppRequest) (s
 	if req.Cwd != "" {
 		cmd.Dir = req.Cwd
 	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return schema.LaunchAppResponse{}, fmt.Errorf("capture launch stdout: %w", err)
+	}
 	env := os.Environ()
 	if _, ok := req.Env["XDG_RUNTIME_DIR"]; !ok {
 		env = append(env, "XDG_RUNTIME_DIR=/run/user/1001")
@@ -441,6 +465,7 @@ func (b *Bridge) launchAppAsPeer(peerUID uint32, req schema.LaunchAppRequest) (s
 	}
 	b.mu.Unlock()
 
+	go b.scanLaunchStdout(launchID, stdout)
 	go b.waitLaunch(launchID, cmd)
 	resp := schema.LaunchAppResponse{LaunchID: launchID, SessionID: req.SessionID, PID: cmd.Process.Pid}
 	if req.WaitSurface {
@@ -529,6 +554,70 @@ func (b *Bridge) TerminateLaunch(launchID string) (schema.TerminateLaunchRespons
 	return resp, nil
 }
 
+func (b *Bridge) scanLaunchStdout(launchID string, r io.Reader) {
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 4096), 1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || !strings.HasPrefix(line, "{") {
+			continue
+		}
+		var event launchLifecycleEvent
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			continue
+		}
+		if !isLaunchLifecycleEvent(event) {
+			continue
+		}
+		b.handleLaunchLifecycleEvent(launchID, event)
+	}
+	if err := scanner.Err(); err != nil {
+		log.Printf("scan launch stdout for %s: %v", launchID, err)
+	}
+}
+
+func isLaunchLifecycleEvent(event launchLifecycleEvent) bool {
+	if event.Event == "" || event.SurfaceID == "" || event.PID <= 0 {
+		return false
+	}
+	switch event.Event {
+	case string(schema.SurfaceEventMapped), string(schema.SurfaceEventFocused), string(schema.SurfaceEventUnmapped):
+		return true
+	default:
+		return false
+	}
+}
+
+func (b *Bridge) handleLaunchLifecycleEvent(launchID string, event launchLifecycleEvent) {
+	// Launcher stdout is intentionally ignored for readiness. Layer-shell launch
+	// waits are satisfied only by compositor/plugin-observed surface events.
+}
+
+func pluginEventToTracked(msg schema.CompositorPluginEvent) schema.CompositorTrackedSurface {
+	return schema.CompositorTrackedSurface{Surface: msg.Surface, Client: msg.Client, UpdatedAt: time.Now()}
+}
+
+func launchAllowsLayerLifecycle(launch *launchRecord) bool {
+	if launch == nil {
+		return false
+	}
+	command := strings.ToLower(launch.process.Command)
+	return strings.Contains(command, "webview-launcher")
+}
+
+func launchLifecycleEventName(event string) (schema.CompositorSurfaceEventName, bool) {
+	switch event {
+	case string(schema.SurfaceEventMapped):
+		return schema.SurfaceEventMapped, true
+	case string(schema.SurfaceEventFocused):
+		return schema.SurfaceEventFocused, true
+	case string(schema.SurfaceEventUnmapped):
+		return schema.SurfaceEventUnmapped, true
+	default:
+		return "", false
+	}
+}
+
 func (b *Bridge) waitLaunch(launchID string, cmd *exec.Cmd) {
 	err := cmd.Wait()
 	exitCode := 0
@@ -584,6 +673,7 @@ func (b *Bridge) waitForLaunchSurface(launchID string, timeout time.Duration) (s
 		launch := b.launches[launchID]
 		if launch != nil {
 			if surface, ok := b.reconcileLaunchSurfaceLocked(launchID); ok && launchSurfaceSettled(surface) {
+				surface = b.decorateSurfaceLocked(surface)
 				b.mu.RUnlock()
 				return surface, true
 			}
@@ -661,7 +751,7 @@ func (b *Bridge) reconcileLaunchSurfaceLocked(launchID string) (schema.Composito
 		if surface.UpdatedAt.Before(launch.process.StartedAt) {
 			continue
 		}
-		if int(surface.Client.PID) == launch.process.PID {
+		if b.surfaceBelongsToLaunchLocked(surface, launch) {
 			b.surfaceLaunch[surfaceID] = launchID
 			return surface, true
 		}
@@ -690,7 +780,7 @@ func (b *Bridge) associateSurfaceLocked(surface schema.CompositorTrackedSurface)
 	for id, launch := range b.launches {
 		if launch.process.Status == "running" &&
 			!surface.UpdatedAt.Before(launch.process.StartedAt) &&
-			int(surface.Client.PID) == launch.process.PID {
+			b.surfaceBelongsToLaunchLocked(surface, launch) {
 			b.surfaceLaunch[surface.Surface.ID] = id
 			return
 		}
@@ -713,6 +803,59 @@ func (b *Bridge) associateSurfaceLocked(surface schema.CompositorTrackedSurface)
 	if hintMatch != "" {
 		b.surfaceLaunch[surface.Surface.ID] = hintMatch
 	}
+}
+
+func (b *Bridge) surfaceBelongsToLaunchLocked(surface schema.CompositorTrackedSurface, launch *launchRecord) bool {
+	if launch == nil || surface.Client.PID <= 0 {
+		return false
+	}
+	if int(surface.Client.PID) == launch.process.PID {
+		return true
+	}
+	return processDescendsFrom(int(surface.Client.PID), launch.process.PID)
+}
+
+func processDescendsFrom(pid, ancestor int) bool {
+	if pid <= 0 || ancestor <= 0 {
+		return false
+	}
+	seen := map[int]struct{}{}
+	for current := pid; current > 1; {
+		if current == ancestor {
+			return true
+		}
+		if _, ok := seen[current]; ok {
+			return false
+		}
+		seen[current] = struct{}{}
+		ppid, ok := parentPID(current)
+		if !ok {
+			return false
+		}
+		current = ppid
+	}
+	return false
+}
+
+func parentPID(pid int) (int, bool) {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return 0, false
+	}
+	text := string(data)
+	end := strings.LastIndex(text, ")")
+	if end < 0 || end+2 >= len(text) {
+		return 0, false
+	}
+	fields := strings.Fields(text[end+2:])
+	if len(fields) < 2 {
+		return 0, false
+	}
+	ppid, err := strconv.Atoi(fields[1])
+	if err != nil {
+		return 0, false
+	}
+	return ppid, true
 }
 
 func (b *Bridge) surfaceMatchesLaunchHint(surface schema.CompositorTrackedSurface, launch *launchRecord) bool {
@@ -1759,6 +1902,10 @@ func (b *Bridge) decorateSurfaceLocked(surface schema.CompositorTrackedSurface) 
 	}
 	surface.Capturable = surface.Visible
 	surface.InputInjectable = surface.Visible
+	if surface.Surface.SurfaceKind == schema.SurfaceKindLayerShell {
+		surface.Capturable = false
+		surface.InputInjectable = false
+	}
 	policy := b.policies[surface.Surface.ID]
 	grantState := &schema.SurfaceGrantState{OwnerUID: policy.OwnerUID}
 	seen := map[uint32]struct{}{}
@@ -2257,6 +2404,9 @@ func (b *Bridge) handleSurfaceEvent(msg schema.CompositorPluginEvent) {
 	if msg.Surface.Visible != nil {
 		visible = *msg.Surface.Visible
 	}
+	if msg.Surface.SurfaceKind == "" {
+		msg.Surface.SurfaceKind = schema.SurfaceKindXDGView
+	}
 	tracked := schema.CompositorTrackedSurface{
 		Surface:         msg.Surface,
 		Client:          msg.Client,
@@ -2266,8 +2416,8 @@ func (b *Bridge) handleSurfaceEvent(msg schema.CompositorPluginEvent) {
 		Geometry:        msg.Surface.Geometry,
 		PixelSize:       msg.Surface.PixelSize,
 		ScaleFactor:     msg.Surface.ScaleFactor,
-		Capturable:      true,
-		InputInjectable: true,
+		Capturable:      msg.Surface.SurfaceKind != schema.SurfaceKindLayerShell,
+		InputInjectable: msg.Surface.SurfaceKind != schema.SurfaceKindLayerShell,
 		Visible:         visible,
 		OutputID:        msg.Surface.OutputID,
 	}
@@ -2299,8 +2449,10 @@ func (b *Bridge) handleSurfaceEvent(msg schema.CompositorPluginEvent) {
 		}
 		b.surfaces[msg.Surface.ID] = tracked
 		b.associateSurfaceLocked(tracked)
-		if err := b.syncDerivedPolicyLocked(msg.Surface.ID); err != nil {
-			log.Printf("sync compositor policy for %s: %v", msg.Surface.ID, err)
+		if msg.Surface.SurfaceKind != schema.SurfaceKindLayerShell {
+			if err := b.syncDerivedPolicyLocked(msg.Surface.ID); err != nil {
+				log.Printf("sync compositor policy for %s: %v", msg.Surface.ID, err)
+			}
 		}
 	case schema.SurfaceEventFocused, schema.SurfaceEventInputDenied, schema.SurfaceEventFrameDone:
 		if previous, ok := b.surfaces[msg.Surface.ID]; ok {
@@ -2325,9 +2477,11 @@ func (b *Bridge) handleSurfaceEvent(msg schema.CompositorPluginEvent) {
 		}
 		b.surfaces[msg.Surface.ID] = tracked
 		b.associateSurfaceLocked(tracked)
-		if _, ok := b.policies[msg.Surface.ID]; !ok {
-			if err := b.syncDerivedPolicyLocked(msg.Surface.ID); err != nil {
-				log.Printf("sync compositor policy for %s: %v", msg.Surface.ID, err)
+		if msg.Surface.SurfaceKind != schema.SurfaceKindLayerShell {
+			if _, ok := b.policies[msg.Surface.ID]; !ok {
+				if err := b.syncDerivedPolicyLocked(msg.Surface.ID); err != nil {
+					log.Printf("sync compositor policy for %s: %v", msg.Surface.ID, err)
+				}
 			}
 		}
 	case schema.SurfaceEventUnmapped:

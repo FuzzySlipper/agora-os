@@ -803,6 +803,122 @@ func TestDispatchSetViewPropertyRejectsUnsupportedExtraProperties(t *testing.T) 
 	}
 }
 
+func TestPluginLayerShellEventTracksPanelLaunch(t *testing.T) {
+	bridge, err := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	launchID := "launch-panel"
+	bridge.mu.Lock()
+	bridge.launches[launchID] = &launchRecord{
+		process: schema.CompositorLaunchProcess{
+			LaunchID:  launchID,
+			SessionID: "session-panel",
+			PID:       os.Getpid(),
+			Command:   "webview-launcher --url http://127.0.0.1:7780/shell/dist/desktop/ --role panel",
+			Status:    "running",
+			StartedAt: time.Now().Add(-time.Second),
+		},
+		expectedTitle: "Agora Desktop Shell",
+	}
+	bridge.mu.Unlock()
+
+	exclusive := true
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{
+		Type:  schema.PluginMessageSurfaceEvent,
+		Event: schema.SurfaceEventMapped,
+		Surface: schema.CompositorSurface{
+			ID:          "layer-shell-plugin-1",
+			SurfaceKind: schema.SurfaceKindLayerShell,
+			AppID:       "agora-webview",
+			Title:       "agora-webview",
+			Role:        "panel",
+			Geometry:    &schema.SurfaceGeometry{Width: 1280, Height: 48},
+			PixelSize:   &schema.SurfaceGeometry{Width: 1280, Height: 48},
+			LayerShell: &schema.LayerShellSurfaceMetadata{
+				Namespace:     "agora-webview",
+				Layer:         "top",
+				Anchors:       []string{"top"},
+				ExclusiveZone: &exclusive,
+			},
+		},
+		Client: schema.CompositorClientIdentity{PID: int32(os.Getpid()), UID: 60001, GID: 60001},
+	})
+
+	bridge.mu.Lock()
+	tracked, ok := bridge.surfaces["layer-shell-plugin-1"]
+	if ok {
+		tracked.UpdatedAt = time.Now().Add(-launchSurfaceSettleDelay - 10*time.Millisecond)
+		bridge.surfaces["layer-shell-plugin-1"] = tracked
+	}
+	bridge.mu.Unlock()
+	if !ok {
+		t.Fatal("plugin layer-shell surface was not tracked")
+	}
+
+	surface, ok := bridge.waitForLaunchSurface(launchID, 50*time.Millisecond)
+	if !ok {
+		t.Fatal("waitForLaunchSurface did not match plugin-observed layer-shell surface")
+	}
+	if surface.Surface.ID != "layer-shell-plugin-1" || surface.Surface.SurfaceKind != schema.SurfaceKindLayerShell {
+		t.Fatalf("got surface %+v, want layer-shell-plugin-1 layer_shell", surface.Surface)
+	}
+	if surface.Capturable || surface.InputInjectable {
+		t.Fatalf("layer-shell surface should be non-capturable/non-injectable, got capturable=%v injectable=%v", surface.Capturable, surface.InputInjectable)
+	}
+	if surface.SessionID != "session-panel" {
+		t.Fatalf("got session %q, want session-panel", surface.SessionID)
+	}
+	if surface.Surface.LayerShell == nil || surface.Surface.LayerShell.Namespace != "agora-webview" || surface.Surface.LayerShell.Layer != "top" {
+		t.Fatalf("missing layer-shell metadata: %+v", surface.Surface.LayerShell)
+	}
+
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{
+		Type:    schema.PluginMessageSurfaceEvent,
+		Event:   schema.SurfaceEventUnmapped,
+		Surface: schema.CompositorSurface{ID: "layer-shell-plugin-1", SurfaceKind: schema.SurfaceKindLayerShell},
+		Client:  schema.CompositorClientIdentity{PID: int32(os.Getpid()), UID: 60001, GID: 60001},
+	})
+	bridge.mu.RLock()
+	_, exists := bridge.surfaces["layer-shell-plugin-1"]
+	bridge.mu.RUnlock()
+	if exists {
+		t.Fatal("plugin layer-shell surface was not removed on unmap")
+	}
+}
+
+func TestScanLaunchStdoutIgnoresToplevelLifecycle(t *testing.T) {
+	bridge, err := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	bridge.scanLaunchStdout("missing-launch", strings.NewReader(`{"event":"mapped","surface_id":"webview-1","surface_kind":"xdg_view","pid":1,"role":"toplevel"}`+"\n"))
+	if len(bridge.ListSurfaces()) != 0 {
+		t.Fatal("xdg/toplevel stdout advisory should not create a bridge surface")
+	}
+}
+
+func TestLaunchLifecycleIgnoresNonWebviewLayerShellStdout(t *testing.T) {
+	bridge, err := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	launchID := "launch-arbitrary"
+	bridge.mu.Lock()
+	bridge.launches[launchID] = &launchRecord{process: schema.CompositorLaunchProcess{
+		LaunchID:  launchID,
+		PID:       4242,
+		Command:   "sh -c 'printf fake-layer-shell'",
+		Status:    "running",
+		StartedAt: time.Now().Add(-time.Second),
+	}}
+	bridge.mu.Unlock()
+	bridge.scanLaunchStdout(launchID, strings.NewReader(`{"event":"mapped","surface_id":"layer-shell-4242","surface_kind":"layer_shell","pid":4242,"role":"panel"}`+"\n"))
+	if len(bridge.ListSurfaces()) != 0 {
+		t.Fatal("non-webview launch stdout should not create a layer-shell surface")
+	}
+}
+
 func TestDispatchAllowsNonRootListSurfaces(t *testing.T) {
 	bridge, err := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
 	if err != nil {

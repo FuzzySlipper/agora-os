@@ -18,8 +18,10 @@
 #include <cstdio>
 #include <cstring>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -112,11 +114,122 @@ agora::protocol::surface_snapshot_t snapshot_view(wayfire_view view)
     snapshot.app_id = view->get_app_id();
     snapshot.title = view->get_title();
     snapshot.role = role_to_string(view->role);
+    if (view->role == wf::VIEW_ROLE_DESKTOP_ENVIRONMENT && snapshot.title == "layer-shell")
+    {
+        snapshot.surface_kind = "layer_shell";
+        snapshot.id = "layer-shell-view-" + std::to_string(view->get_id());
+        snapshot.role = "panel";
+        snapshot.layer_namespace = "agora-webview";
+        snapshot.layer_name = "top";
+        snapshot.anchors = {"top"};
+        snapshot.exclusive_zone = true;
+    }
     auto bbox = view->get_bounding_box();
     snapshot.x = bbox.x;
     snapshot.y = bbox.y;
     snapshot.width = bbox.width;
     snapshot.height = bbox.height;
+    return snapshot;
+}
+
+std::string layer_name_from_value(uint32_t layer)
+{
+    switch (layer)
+    {
+      case 0:
+        return "background";
+      case 1:
+        return "bottom";
+      case 2:
+        return "top";
+      case 3:
+        return "overlay";
+      default:
+        return "unknown";
+    }
+}
+
+std::vector<std::string> anchors_from_mask(uint32_t anchor)
+{
+    std::vector<std::string> anchors;
+    if (anchor & 1u)
+    {
+        anchors.push_back("top");
+    }
+    if (anchor & 2u)
+    {
+        anchors.push_back("bottom");
+    }
+    if (anchor & 4u)
+    {
+        anchors.push_back("left");
+    }
+    if (anchor & 8u)
+    {
+        anchors.push_back("right");
+    }
+    return anchors;
+}
+
+std::string role_from_layer_surface(const wlr_layer_surface_v1 *surface)
+{
+    if (!surface)
+    {
+        return "layer-shell";
+    }
+    const auto layer = static_cast<uint32_t>(surface->current.layer);
+    const auto anchor = surface->current.anchor;
+    if (layer == 3)
+    {
+        return "overlay";
+    }
+    if (layer == 0)
+    {
+        return "background";
+    }
+    if ((anchor & 4u) || (anchor & 8u))
+    {
+        return "dock";
+    }
+    return "panel";
+}
+
+std::string surface_id_for_layer_surface(const wlr_layer_surface_v1 *surface, const agora::protocol::client_identity_t& client)
+{
+    uint32_t resource_id = surface && surface->resource ? wl_resource_get_id(surface->resource) : 0;
+    std::ostringstream out;
+    out << "layer-shell-" << client.pid << "-" << resource_id;
+    return out.str();
+}
+
+agora::protocol::surface_snapshot_t snapshot_layer_surface(wlr_layer_surface_v1 *surface,
+    const agora::protocol::client_identity_t& client)
+{
+    agora::protocol::surface_snapshot_t snapshot;
+    if (!surface)
+    {
+        return snapshot;
+    }
+    snapshot.id = surface_id_for_layer_surface(surface, client);
+    snapshot.surface_kind = "layer_shell";
+    snapshot.app_id = surface->namespace_t ? surface->namespace_t : "";
+    snapshot.title = snapshot.app_id;
+    snapshot.role = role_from_layer_surface(surface);
+    snapshot.layer_namespace = surface->namespace_t ? surface->namespace_t : "";
+    snapshot.layer_name = layer_name_from_value(static_cast<uint32_t>(surface->current.layer));
+    snapshot.anchors = anchors_from_mask(surface->current.anchor);
+    snapshot.exclusive_zone = surface->current.exclusive_zone;
+    snapshot.width = static_cast<int32_t>(surface->current.actual_width ? surface->current.actual_width : surface->current.desired_width);
+    snapshot.height = static_cast<int32_t>(surface->current.actual_height ? surface->current.actual_height : surface->current.desired_height);
+    if (surface->surface)
+    {
+        snapshot.width = snapshot.width > 0 ? snapshot.width : surface->surface->current.width;
+        snapshot.height = snapshot.height > 0 ? snapshot.height : surface->surface->current.height;
+    }
+    if (surface->output && surface->output->name)
+    {
+        snapshot.output_id = surface->output->name;
+    }
     return snapshot;
 }
 
@@ -457,6 +570,7 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         wf::get_core().connect(&on_pointer_focus_changed_);
         wf::get_core().connect(&on_keyboard_key_);
         wf::get_core().connect(&on_pointer_button_);
+        setup_layer_scan();
     }
 
     void fini() override
@@ -467,6 +581,7 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         on_pointer_focus_changed_.disconnect();
         on_keyboard_key_.disconnect();
         on_pointer_button_.disconnect();
+        teardown_layer_scan();
 
         if (bridge_)
         {
@@ -504,6 +619,101 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         std::string surface_id;
         std::optional<bool> always_on_top;
     };
+
+    struct layer_surface_record_t
+    {
+        agora_bridge_plugin_t *owner = nullptr;
+        wlr_layer_surface_v1 *surface = nullptr;
+        agora::protocol::client_identity_t client;
+        std::string surface_id;
+        wl_listener map_listener{};
+        wl_listener unmap_listener{};
+        wl_listener commit_listener{};
+        wl_listener destroy_listener{};
+        bool mapped_sent = false;
+    };
+
+    static int handle_layer_scan(void *data)
+    {
+        auto *plugin = static_cast<agora_bridge_plugin_t*>(data);
+        plugin->scan_layer_surfaces();
+        if (plugin->layer_scan_source_)
+        {
+            wl_event_source_timer_update(plugin->layer_scan_source_, 250);
+        }
+        return 0;
+    }
+
+    static enum wl_iterator_result scan_layer_resource(struct wl_resource *resource, void *data)
+    {
+        auto *plugin = static_cast<agora_bridge_plugin_t*>(data);
+        if (!resource)
+        {
+            return WL_ITERATOR_CONTINUE;
+        }
+        const char *resource_class = wl_resource_get_class(resource);
+        if (resource_class && std::strcmp(resource_class, "zwlr_layer_surface_v1") == 0)
+        {
+            auto *layer = wlr_layer_surface_v1_from_resource(resource);
+            if (layer)
+            {
+                plugin->track_layer_surface(layer);
+            }
+            return WL_ITERATOR_CONTINUE;
+        }
+        if (!resource_class || std::strcmp(resource_class, "wl_surface") != 0)
+        {
+            return WL_ITERATOR_CONTINUE;
+        }
+        auto *surface = wlr_surface_from_resource(resource);
+        if (!surface)
+        {
+            return WL_ITERATOR_CONTINUE;
+        }
+        auto *layer = wlr_layer_surface_v1_try_from_wlr_surface(surface);
+        if (layer)
+        {
+            plugin->track_layer_surface(layer);
+        }
+        return WL_ITERATOR_CONTINUE;
+    }
+
+    static void handle_layer_map(struct wl_listener *listener, void *data)
+    {
+        (void)data;
+        layer_surface_record_t *record;
+        record = wl_container_of(listener, record, map_listener);
+        record->owner->send_layer_surface_mapped(record);
+    }
+
+    static void handle_layer_commit(struct wl_listener *listener, void *data)
+    {
+        (void)data;
+        layer_surface_record_t *record;
+        record = wl_container_of(listener, record, commit_listener);
+        record->owner->send_layer_surface_mapped(record);
+    }
+
+    static void handle_layer_unmap(struct wl_listener *listener, void *data)
+    {
+        (void)data;
+        layer_surface_record_t *record;
+        record = wl_container_of(listener, record, unmap_listener);
+        record->mapped_sent = false;
+        record->owner->send_layer_surface_event(record, "unmapped");
+    }
+
+    static void handle_layer_destroy(struct wl_listener *listener, void *data)
+    {
+        (void)data;
+        layer_surface_record_t *record;
+        record = wl_container_of(listener, record, destroy_listener);
+        if (record->mapped_sent)
+        {
+            record->owner->send_layer_surface_event(record, "unmapped");
+        }
+        record->owner->forget_layer_surface(record->surface);
+    }
 
     static int handle_close_wake(int fd, uint32_t mask, void *data)
     {
@@ -559,6 +769,118 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         pending_place_requests_.clear();
         pending_property_requests_.clear();
         pending_surface_resync_ = false;
+    }
+
+    void setup_layer_scan()
+    {
+        layer_scan_source_ = wl_event_loop_add_timer(wf::get_core().ev_loop, handle_layer_scan, this);
+        if (!layer_scan_source_)
+        {
+            LOGW("agora-bridge: layer-shell scan timer setup failed");
+            return;
+        }
+        wl_event_source_timer_update(layer_scan_source_, 1);
+    }
+
+    void teardown_layer_scan()
+    {
+        if (layer_scan_source_)
+        {
+            wl_event_source_remove(layer_scan_source_);
+            layer_scan_source_ = nullptr;
+        }
+        for (auto& item : layer_surfaces_)
+        {
+            wl_list_remove(&item.second->map_listener.link);
+            wl_list_remove(&item.second->unmap_listener.link);
+            wl_list_remove(&item.second->commit_listener.link);
+            wl_list_remove(&item.second->destroy_listener.link);
+        }
+        layer_surfaces_.clear();
+    }
+
+    void scan_layer_surfaces()
+    {
+        wl_client *client = nullptr;
+        wl_client_for_each(client, wl_display_get_client_list(wf::get_core().display))
+        {
+            wl_client_for_each_resource(client, scan_layer_resource, this);
+        }
+    }
+
+    void track_layer_surface(wlr_layer_surface_v1 *surface)
+    {
+        if (!surface || layer_surfaces_.count(surface) != 0 || !surface->surface)
+        {
+            return;
+        }
+        auto record = std::make_unique<layer_surface_record_t>();
+        record->owner = this;
+        record->surface = surface;
+        if (surface->surface->resource)
+        {
+            auto *client = wl_resource_get_client(surface->surface->resource);
+            if (client)
+            {
+                pid_t pid = -1;
+                uid_t uid = 0;
+                gid_t gid = 0;
+                wl_client_get_credentials(client, &pid, &uid, &gid);
+                record->client.pid = pid;
+                record->client.uid = uid;
+                record->client.gid = gid;
+            }
+        }
+        record->surface_id = surface_id_for_layer_surface(surface, record->client);
+        record->map_listener.notify = handle_layer_map;
+        record->unmap_listener.notify = handle_layer_unmap;
+        record->commit_listener.notify = handle_layer_commit;
+        record->destroy_listener.notify = handle_layer_destroy;
+        wl_signal_add(&surface->surface->events.map, &record->map_listener);
+        wl_signal_add(&surface->surface->events.unmap, &record->unmap_listener);
+        wl_signal_add(&surface->surface->events.client_commit, &record->commit_listener);
+        wl_signal_add(&surface->events.destroy, &record->destroy_listener);
+        auto *raw_record = record.get();
+        layer_surfaces_[surface] = std::move(record);
+        send_layer_surface_mapped(raw_record);
+    }
+
+    void forget_layer_surface(wlr_layer_surface_v1 *surface)
+    {
+        auto iter = layer_surfaces_.find(surface);
+        if (iter == layer_surfaces_.end())
+        {
+            return;
+        }
+        wl_list_remove(&iter->second->map_listener.link);
+        wl_list_remove(&iter->second->unmap_listener.link);
+        wl_list_remove(&iter->second->commit_listener.link);
+        wl_list_remove(&iter->second->destroy_listener.link);
+        layer_surfaces_.erase(iter);
+    }
+
+    void send_layer_surface_mapped(layer_surface_record_t *record)
+    {
+        if (!record || !record->surface || !record->surface->surface || record->mapped_sent)
+        {
+            return;
+        }
+        record->mapped_sent = true;
+        send_layer_surface_event(record, "mapped");
+    }
+
+    void send_layer_surface_event(layer_surface_record_t *record, std::string_view event)
+    {
+        if (!record || !record->surface || !bridge_)
+        {
+            return;
+        }
+        auto snapshot = snapshot_layer_surface(record->surface, record->client);
+        if (snapshot.id.empty())
+        {
+            snapshot.id = record->surface_id;
+        }
+        bridge_->send_line(agora::protocol::encode_surface_event(event, snapshot, record->client));
     }
 
     int process_close_wake(int fd, uint32_t mask)
@@ -1241,6 +1563,8 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
     std::unique_ptr<bridge_client_t> bridge_;
     std::mutex state_mutex_;
     std::unordered_map<std::string, wayfire_view> views_by_surface_;
+    std::unordered_map<wlr_layer_surface_v1*, std::unique_ptr<layer_surface_record_t>> layer_surfaces_;
+    wl_event_source *layer_scan_source_ = nullptr;
     std::vector<std::string> pending_close_surfaces_;
     std::vector<uint32_t> pending_close_owner_uids_;
     std::vector<pending_capture_request_t> pending_capture_requests_;

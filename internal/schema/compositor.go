@@ -126,17 +126,31 @@ const (
 	AccessReadPixels CompositorAccessAction = "read_pixels"
 )
 
+const (
+	SurfaceKindXDGView    = "xdg_view"
+	SurfaceKindLayerShell = "layer_shell"
+)
+
+type LayerShellSurfaceMetadata struct {
+	Namespace     string   `json:"namespace,omitempty"`
+	Layer         string   `json:"layer,omitempty"`
+	Anchors       []string `json:"anchors,omitempty"`
+	ExclusiveZone *bool    `json:"exclusive_zone,omitempty"`
+}
+
 type CompositorSurface struct {
-	ID            string           `json:"id"`
-	WayfireViewID uint32           `json:"wayfire_view_id"`
-	AppID         string           `json:"app_id,omitempty"`
-	Title         string           `json:"title,omitempty"`
-	Role          string           `json:"role,omitempty"`
-	Geometry      *SurfaceGeometry `json:"geometry,omitempty"`
-	PixelSize     *SurfaceGeometry `json:"pixel_size,omitempty"`
-	ScaleFactor   float64          `json:"scale_factor,omitempty"`
-	Visible       *bool            `json:"visible,omitempty"`
-	OutputID      string           `json:"output_id,omitempty"`
+	ID            string                     `json:"id"`
+	WayfireViewID uint32                     `json:"wayfire_view_id"`
+	SurfaceKind   string                     `json:"surface_kind,omitempty"`
+	AppID         string                     `json:"app_id,omitempty"`
+	Title         string                     `json:"title,omitempty"`
+	Role          string                     `json:"role,omitempty"`
+	LayerShell    *LayerShellSurfaceMetadata `json:"layer_shell,omitempty"`
+	Geometry      *SurfaceGeometry           `json:"geometry,omitempty"`
+	PixelSize     *SurfaceGeometry           `json:"pixel_size,omitempty"`
+	ScaleFactor   float64                    `json:"scale_factor,omitempty"`
+	Visible       *bool                      `json:"visible,omitempty"`
+	OutputID      string                     `json:"output_id,omitempty"`
 }
 
 type CompositorClientIdentity struct {

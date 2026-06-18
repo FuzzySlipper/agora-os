@@ -57,10 +57,33 @@ type resolvedConfig struct {
 }
 
 type helperEvent struct {
-	Event string `json:"event"`
-	Title string `json:"title,omitempty"`
-	PID   int    `json:"pid,omitempty"`
-	Role  string `json:"role,omitempty"`
+	Event         string   `json:"event"`
+	Title         string   `json:"title,omitempty"`
+	PID           int      `json:"pid,omitempty"`
+	Role          string   `json:"role,omitempty"`
+	SurfaceKind   string   `json:"surface_kind,omitempty"`
+	Namespace     string   `json:"namespace,omitempty"`
+	Layer         string   `json:"layer,omitempty"`
+	Anchors       []string `json:"anchors,omitempty"`
+	ExclusiveZone *bool    `json:"exclusive_zone,omitempty"`
+}
+
+type launcherLifecycleEvent struct {
+	Event         string   `json:"event"`
+	SurfaceID     string   `json:"surface_id"`
+	SurfaceKind   string   `json:"surface_kind"`
+	AppID         string   `json:"app_id"`
+	Title         string   `json:"title,omitempty"`
+	PID           int      `json:"pid"`
+	UID           uint32   `json:"uid"`
+	GID           uint32   `json:"gid"`
+	Role          string   `json:"role"`
+	Width         int      `json:"width,omitempty"`
+	Height        int      `json:"height,omitempty"`
+	Namespace     string   `json:"namespace,omitempty"`
+	Layer         string   `json:"layer,omitempty"`
+	Anchors       []string `json:"anchors,omitempty"`
+	ExclusiveZone *bool    `json:"exclusive_zone,omitempty"`
 }
 
 func Launch(ctx context.Context, cfg Config) error {
@@ -343,10 +366,14 @@ func publishLifecycle(client *bus.Client, cfg resolvedConfig, ev helperEvent, ui
 	}
 	body := schema.CompositorBusEvent{
 		Surface: schema.CompositorSurface{
-			ID:    surfaceIDForPID(pid),
-			AppID: cfg.AppID,
-			Title: title,
-			Role:  lifecycleRole(cfg, ev),
+			ID:          surfaceIDForEvent(pid, lifecycleRole(cfg, ev)),
+			SurfaceKind: lifecycleSurfaceKind(cfg, ev),
+			AppID:       cfg.AppID,
+			Title:       title,
+			Role:        lifecycleRole(cfg, ev),
+			Geometry:    &schema.SurfaceGeometry{Width: cfg.Width, Height: cfg.Height},
+			PixelSize:   &schema.SurfaceGeometry{Width: cfg.Width, Height: cfg.Height},
+			LayerShell:  layerShellMetadata(cfg, ev),
 		},
 		Client: schema.CompositorClientIdentity{
 			PID: int32(pid),
@@ -358,7 +385,48 @@ func publishLifecycle(client *bus.Client, cfg resolvedConfig, ev helperEvent, ui
 	if err := client.Publish(topic, body); err != nil {
 		return fmt.Errorf("publish %s: %w", topic, err)
 	}
+	if err := emitLauncherLifecycle(body, cfg.Width, cfg.Height); err != nil {
+		return err
+	}
 	return nil
+}
+
+func emitLauncherLifecycle(body schema.CompositorBusEvent, width, height int) error {
+	event := launcherLifecycleEvent{
+		Event:       string(body.Event),
+		SurfaceID:   body.Surface.ID,
+		SurfaceKind: body.Surface.SurfaceKind,
+		AppID:       body.Surface.AppID,
+		Title:       body.Surface.Title,
+		PID:         int(body.Client.PID),
+		UID:         body.Client.UID,
+		GID:         body.Client.GID,
+		Role:        body.Surface.Role,
+		Width:       width,
+		Height:      height,
+	}
+	if body.Surface.LayerShell != nil {
+		event.Namespace = body.Surface.LayerShell.Namespace
+		event.Layer = body.Surface.LayerShell.Layer
+		event.Anchors = append([]string(nil), body.Surface.LayerShell.Anchors...)
+		event.ExclusiveZone = body.Surface.LayerShell.ExclusiveZone
+	}
+	if err := json.NewEncoder(os.Stdout).Encode(event); err != nil {
+		return fmt.Errorf("emit lifecycle stdout: %w", err)
+	}
+	return nil
+}
+
+func layerShellMetadata(cfg resolvedConfig, ev helperEvent) *schema.LayerShellSurfaceMetadata {
+	if lifecycleSurfaceKind(cfg, ev) != schema.SurfaceKindLayerShell {
+		return nil
+	}
+	return &schema.LayerShellSurfaceMetadata{
+		Namespace:     ev.Namespace,
+		Layer:         ev.Layer,
+		Anchors:       append([]string(nil), ev.Anchors...),
+		ExclusiveZone: ev.ExclusiveZone,
+	}
 }
 
 func lifecycleRole(cfg resolvedConfig, ev helperEvent) string {
@@ -369,6 +437,23 @@ func lifecycleRole(cfg resolvedConfig, ev helperEvent) string {
 		return cfg.Role
 	}
 	return defaultRole
+}
+
+func lifecycleSurfaceKind(cfg resolvedConfig, ev helperEvent) string {
+	if ev.SurfaceKind != "" {
+		return ev.SurfaceKind
+	}
+	if lifecycleRole(cfg, ev) == "toplevel" {
+		return schema.SurfaceKindXDGView
+	}
+	return schema.SurfaceKindLayerShell
+}
+
+func surfaceIDForEvent(pid int, role string) string {
+	if role != "" && role != "toplevel" {
+		return fmt.Sprintf("layer-shell-%d", pid)
+	}
+	return surfaceIDForPID(pid)
 }
 
 func lifecycleMapping(event string) (topic string, eventName schema.CompositorSurfaceEventName, ok bool) {
