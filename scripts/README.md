@@ -1,5 +1,26 @@
 # scripts/
 
+## asha_agora_control_proof.py — ASHA camera-control compositor proof
+
+Drives the cross-project ASHA first-person camera scenario through the deployed
+Agora compositor stack. It runs `npm run camera:agora-control` in `asha-demo`,
+creates a named compositor session, launches the generated page with
+`webview-launcher`, injects the public keyboard controls, captures before/after
+surface PNGs, destroys the temporary compositor session by default, and writes
+`harness/out/camera-agora-control/latest/agora-control-proof.json`
+in the ASHA demo output directory.
+
+```sh
+python3 scripts/asha_agora_control_proof.py --self-test
+python3 scripts/asha_agora_control_proof.py
+```
+
+The live command expects `/usr/local/bin/compositorctl`, `/usr/local/bin/webview-launcher`,
+and `/home/dev/asha-demo` by default. It registers an exit cleanup handler after
+session creation, so ordinary failure paths also attempt to destroy the temporary
+session. It does not define ASHA camera semantics; it only launches, drives,
+captures, and classifies the public ASHA demo surface.
+
 ## vm.sh — dev VM wrapper
 
 Disposable Arch VM driven by raw `qemu-system-x86_64`. No libvirt, no
