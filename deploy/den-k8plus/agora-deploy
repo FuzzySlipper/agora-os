@@ -58,11 +58,11 @@ need() {
 }
 
 run_as_build_user() {
-  runuser -u "$BUILD_USER" -- "$@"
+  ( cd / && runuser -u "$BUILD_USER" -- "$@" )
 }
 
 run_as_build_user_shell() {
-  runuser -u "$BUILD_USER" -- bash -lc "$1"
+  ( cd / && runuser -u "$BUILD_USER" -- bash -lc "$1" )
 }
 
 validate_static_paths() {
