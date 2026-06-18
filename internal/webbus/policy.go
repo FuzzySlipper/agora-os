@@ -29,6 +29,9 @@ func CanSubscribe(identity Identity, pattern string) bool {
 	if strings.HasPrefix(pattern, "compositor.surface.") {
 		return true
 	}
+	if isShellTopic(pattern) || isWidgetTopicPattern(pattern) {
+		return true
+	}
 	return false
 }
 
@@ -45,7 +48,42 @@ func CanPublish(identity Identity, topic string) bool {
 	if isOwnAgentMessageTopic(identity.UID, topic) {
 		return true
 	}
+	if isShellTopic(topic) || isWidgetTopic(topic) {
+		return true
+	}
 	return false
+}
+
+func isShellTopic(topic string) bool {
+	switch topic {
+	case "shell.apply_theme", "shell.reset_theme", "shell.layout_updated", "shell.widget.inject", "shell.widget.remove", "shell.theme_applied":
+		return true
+	default:
+		return false
+	}
+}
+
+func isWidgetTopic(topic string) bool {
+	parts := strings.Split(topic, ".")
+	return len(parts) >= 3 && parts[0] == "widget" && validWidgetTopicName(parts[1])
+}
+
+func isWidgetTopicPattern(pattern string) bool {
+	parts := strings.Split(pattern, ".")
+	return len(parts) >= 3 && parts[0] == "widget" && validWidgetTopicName(parts[1])
+}
+
+func validWidgetTopicName(name string) bool {
+	if name == "" || name == "*" {
+		return false
+	}
+	for _, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func isOwnInboxTarget(uid uint32, subject string) bool {

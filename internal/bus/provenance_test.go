@@ -60,6 +60,13 @@ func TestValidateTopicPublish_OpenTopicsAllowed(t *testing.T) {
 		"agent.work.cancelled",
 		"agent.work.needs_3po",
 		"test.phase4.ebpf",
+		"shell.apply_theme",
+		"shell.reset_theme",
+		"shell.layout_updated",
+		"shell.widget.inject",
+		"shell.widget.remove",
+		"shell.theme_applied",
+		"widget.weather.current",
 	}
 
 	for _, topic := range openTopics {
@@ -100,9 +107,9 @@ func TestValidateTopicSubscribe_AgentDenied(t *testing.T) {
 		"admin.escalation.decided",
 		"admin.escalation.*",
 		"admin.escalation.requested",
-		"admin.*.*",       // wildcard bypass — matches decided
-		"*.*.*",            // global wildcard
-		"*.*.requested",    // suffix-targeted bypass
+		"admin.*.*",     // wildcard bypass — matches decided
+		"*.*.*",         // global wildcard
+		"*.*.requested", // suffix-targeted bypass
 	}
 
 	for _, pattern := range bypassPatterns {
@@ -121,6 +128,13 @@ func TestValidateTopicSubscribe_OpenTopicsAllowed(t *testing.T) {
 		"audit.*",
 		"agent.message.*",
 		"conversation.*",
+		"shell.apply_theme",
+		"shell.reset_theme",
+		"shell.layout_updated",
+		"shell.widget.inject",
+		"shell.widget.remove",
+		"shell.theme_applied",
+		"widget.weather.*",
 	}
 
 	for _, pattern := range openPatterns {

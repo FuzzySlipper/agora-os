@@ -209,6 +209,111 @@ func TestStaticHandlerServesShellDistAliasAndDesktop(t *testing.T) {
 	}
 }
 
+func TestThemeCSSFiltersUnsafeSelectorsAndProperties(t *testing.T) {
+	t.Parallel()
+
+	configDir := t.TempDir()
+	raw := []byte(`
+:root { color: #fff; display: none; --taskbar-height: 1px; }
+.shell-taskbar { background: #222; position: absolute; z-index: 999; border-color: #fff; }
+.shell-clock, .shell-background { opacity: 0.9; grid-template-areas: "x"; font-size: 12px; }
+body { color: red; }
+.shell-agent-health { filter: blur(1px); float: left; }
+`)
+	if err := os.WriteFile(filepath.Join(configDir, "theme.css"), raw, 0644); err != nil {
+		t.Fatal(err)
+	}
+	server := New(Config{ShellConfigDir: configDir})
+	req := httptest.NewRequest(http.MethodGet, "/api/shell/theme.css", nil)
+	resp := httptest.NewRecorder()
+
+	server.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("got status %d, want 200", resp.Code)
+	}
+	got := resp.Body.String()
+	for _, want := range []string{
+		":root {",
+		"color: #fff;",
+		".shell-taskbar {",
+		"background: #222;",
+		"border-color: #fff;",
+		".shell-clock, .shell-background {",
+		"opacity: 0.9;",
+		"font-size: 12px;",
+		".shell-agent-health {",
+		"filter: blur(1px);",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("filtered css missing %q in:\n%s", want, got)
+		}
+	}
+	for _, forbidden := range []string{"display", "--taskbar-height", "position", "z-index", "grid-template", "body", "float"} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("filtered css still contains %q in:\n%s", forbidden, got)
+		}
+	}
+	warnings := resp.Header().Get("X-Agora-CSS-Warnings")
+	for _, want := range []string{"stripped property display", "stripped property position", "stripped selector body", "stripped property grid-template-areas", "stripped property z-index"} {
+		if !strings.Contains(warnings, want) {
+			t.Fatalf("warnings missing %q in %q", want, warnings)
+		}
+	}
+}
+
+func TestThemeCSSStripsUnsafeAllowedPropertyValues(t *testing.T) {
+	t.Parallel()
+
+	configDir := t.TempDir()
+	raw := []byte(`
+.shell-background { background: url("https://example.invalid/pixel"); color: #fff; }
+.shell-agent-health { filter: url("https://example.invalid/filter.svg#x"); opacity: 0.8; }
+.shell-taskbar { border-image-source: url("https://example.invalid/border.svg"); border-color: #fff; }
+.shell-clock { background: javascript:alert(1); font-size: 12px; }
+.shell-notification-center { background: \\75\\72\\6c("https://example.invalid/escaped"); padding: 1rem; }
+`)
+	if err := os.WriteFile(filepath.Join(configDir, "theme.css"), raw, 0644); err != nil {
+		t.Fatal(err)
+	}
+	server := New(Config{ShellConfigDir: configDir})
+	req := httptest.NewRequest(http.MethodGet, "/api/shell/theme.css", nil)
+	resp := httptest.NewRecorder()
+
+	server.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("got status %d, want 200", resp.Code)
+	}
+	got := resp.Body.String()
+	for _, forbidden := range []string{"url(", "https://example.invalid", "javascript:", "\\75"} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("filtered css still contains unsafe value fragment %q in:\n%s", forbidden, got)
+		}
+	}
+	for _, want := range []string{"color: #fff;", "opacity: 0.8;", "border-color: #fff;", "font-size: 12px;", "padding: 1rem;"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("filtered css missing safe declaration %q in:\n%s", want, got)
+		}
+	}
+	warnings := resp.Header().Get("X-Agora-CSS-Warnings")
+	for _, want := range []string{"stripped unsafe value for background", "stripped unsafe value for filter", "stripped unsafe value for border-image-source"} {
+		if !strings.Contains(warnings, want) {
+			t.Fatalf("warnings missing %q in %q", want, warnings)
+		}
+	}
+}
+
+func TestThemeCSSMissingReturnsNotFound(t *testing.T) {
+	t.Parallel()
+
+	server := New(Config{ShellConfigDir: t.TempDir()})
+	req := httptest.NewRequest(http.MethodGet, "/api/shell/theme.css", nil)
+	resp := httptest.NewRecorder()
+	server.ServeHTTP(resp, req)
+	if resp.Code != http.StatusNotFound {
+		t.Fatalf("got status %d, want 404", resp.Code)
+	}
+}
+
 func TestLayoutJSONServesShellConfigFile(t *testing.T) {
 	t.Parallel()
 
@@ -277,6 +382,12 @@ func TestWidgetProxyServesWidgetFilesAndManifest(t *testing.T) {
 			server.ServeHTTP(resp, req)
 			if resp.Code != http.StatusOK {
 				t.Fatalf("got status %d, want 200", resp.Code)
+			}
+			if got := resp.Header().Get("X-Frame-Options"); got != "SAMEORIGIN" {
+				t.Fatalf("got X-Frame-Options %q, want SAMEORIGIN", got)
+			}
+			if got := resp.Header().Get("Content-Security-Policy"); got != "sandbox allow-scripts" {
+				t.Fatalf("got Content-Security-Policy %q, want sandbox allow-scripts", got)
 			}
 			if got := resp.Header().Get("Content-Type"); !strings.HasPrefix(got, tt.contentType) {
 				t.Fatalf("got content-type %q, want prefix %q", got, tt.contentType)

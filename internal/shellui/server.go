@@ -154,6 +154,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleAuditWS(w, r)
 	case "/layout.json":
 		s.handleLayoutJSON(w, r)
+	case "/theme.css":
+		s.handleThemeCSS(w, r)
 	default:
 		http.NotFound(w, r)
 	}
@@ -288,6 +290,33 @@ func (s *Server) handleEscalationDecision(w http.ResponseWriter, r *http.Request
 	writeJSON(w, decision)
 }
 
+func (s *Server) handleThemeCSS(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	themePath := filepath.Join(s.shellConfigDir, "theme.css")
+	if !strings.HasPrefix(filepath.Clean(themePath), filepath.Clean(s.shellConfigDir)+string(os.PathSeparator)) {
+		http.NotFound(w, r)
+		return
+	}
+	raw, err := os.ReadFile(themePath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	filtered, warnings := sanitizeThemeCSS(string(raw))
+	if len(warnings) > 0 {
+		w.Header().Set("X-Agora-CSS-Warnings", strings.Join(warnings, "; "))
+	}
+	w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	_, _ = w.Write([]byte(filtered))
+}
+
 func (s *Server) handleLayoutJSON(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -320,6 +349,8 @@ func (s *Server) handleWidgetProxy(w http.ResponseWriter, r *http.Request, proxy
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+	w.Header().Set("Content-Security-Policy", "sandbox allow-scripts")
 	parts := strings.SplitN(proxyPath, "/", 2)
 	if len(parts) != 2 || !validWidgetName(parts[0]) {
 		http.NotFound(w, r)
@@ -643,6 +674,135 @@ func lineHashID(line []byte) string {
 
 func bytesTrimSpace(line []byte) []byte {
 	return []byte(strings.TrimSpace(string(line)))
+}
+
+func sanitizeThemeCSS(css string) (string, []string) {
+	css = stripCSSComments(css)
+	var out strings.Builder
+	var warnings []string
+	for _, block := range strings.Split(css, "}") {
+		selectorPart, declarationPart, ok := strings.Cut(block, "{")
+		if !ok {
+			continue
+		}
+		selectors := normalizeSelectors(selectorPart)
+		if len(selectors) == 0 || !allowedSelectors(selectors) {
+			warnings = append(warnings, "stripped selector "+strings.TrimSpace(selectorPart))
+			continue
+		}
+		declarations, stripped := sanitizeDeclarations(declarationPart)
+		warnings = append(warnings, stripped...)
+		if len(declarations) == 0 {
+			continue
+		}
+		out.WriteString(strings.Join(selectors, ", "))
+		out.WriteString(" {\n")
+		for _, declaration := range declarations {
+			out.WriteString("  ")
+			out.WriteString(declaration)
+			out.WriteString(";\n")
+		}
+		out.WriteString("}\n")
+	}
+	return out.String(), warnings
+}
+
+func stripCSSComments(css string) string {
+	for {
+		start := strings.Index(css, "/*")
+		if start < 0 {
+			return css
+		}
+		end := strings.Index(css[start+2:], "*/")
+		if end < 0 {
+			return css[:start]
+		}
+		css = css[:start] + css[start+2+end+2:]
+	}
+}
+
+func normalizeSelectors(raw string) []string {
+	var selectors []string
+	for _, selector := range strings.Split(raw, ",") {
+		selector = strings.TrimSpace(selector)
+		if selector != "" {
+			selectors = append(selectors, selector)
+		}
+	}
+	return selectors
+}
+
+func allowedSelectors(selectors []string) bool {
+	allowed := map[string]struct{}{
+		":root":                      {},
+		".shell-taskbar":             {},
+		".shell-clock":               {},
+		".shell-notification-center": {},
+		".shell-agent-health":        {},
+		".shell-background":          {},
+	}
+	for _, selector := range selectors {
+		if _, ok := allowed[selector]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func sanitizeDeclarations(raw string) ([]string, []string) {
+	var declarations []string
+	var warnings []string
+	for _, declaration := range strings.Split(raw, ";") {
+		property, value, ok := strings.Cut(declaration, ":")
+		if !ok {
+			continue
+		}
+		property = strings.ToLower(strings.TrimSpace(property))
+		value = strings.TrimSpace(value)
+		if property == "" || value == "" {
+			continue
+		}
+		if !allowedCSSProperty(property) {
+			warnings = append(warnings, "stripped property "+property)
+			continue
+		}
+		if !safeCSSValue(value) {
+			warnings = append(warnings, "stripped unsafe value for "+property)
+			continue
+		}
+		declarations = append(declarations, property+": "+value)
+	}
+	return declarations, warnings
+}
+
+func safeCSSValue(value string) bool {
+	if strings.Contains(value, "\\") {
+		return false
+	}
+	lower := strings.ToLower(value)
+	unsafeFragments := []string{
+		"url(",
+		"@import",
+		"expression(",
+		"behavior:",
+		"javascript:",
+		"data:",
+		"-moz-binding",
+	}
+	for _, fragment := range unsafeFragments {
+		if strings.Contains(lower, fragment) {
+			return false
+		}
+	}
+	return true
+}
+
+func allowedCSSProperty(property string) bool {
+	switch property {
+	case "color", "background", "opacity", "margin", "padding", "box-shadow", "backdrop-filter", "filter":
+		return true
+	}
+	return strings.HasPrefix(property, "border-") || strings.HasPrefix(property, "font-")
 }
 
 func validWidgetName(name string) bool {

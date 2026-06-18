@@ -27,6 +27,14 @@ func TestCanSubscribe(t *testing.T) {
 	if !CanSubscribe(agent, "compositor.surface.*") {
 		t.Fatal("agent should be able to subscribe to compositor surface events")
 	}
+	for _, topic := range []string{"shell.apply_theme", "shell.reset_theme", "shell.layout_updated", "shell.widget.inject", "shell.widget.remove", "shell.theme_applied", "widget.weather.current", "widget.weather.*"} {
+		if !CanSubscribe(agent, topic) {
+			t.Fatalf("agent should be able to subscribe to open shell/widget topic %q", topic)
+		}
+	}
+	if CanSubscribe(agent, "widget.*.*") {
+		t.Fatal("agent should not be able to subscribe to wildcard widget name pattern")
+	}
 	if CanSubscribe(agent, "audit.file.*") {
 		t.Fatal("agent should not be able to subscribe to audit feed")
 	}
@@ -53,6 +61,17 @@ func TestCanPublish(t *testing.T) {
 	}
 	if !CanPublish(agent, "agent.message.60001.60002.chat") {
 		t.Fatal("agent should be able to publish messages from its own uid")
+	}
+	for _, topic := range []string{"shell.apply_theme", "shell.reset_theme", "shell.layout_updated", "shell.widget.inject", "shell.widget.remove", "shell.theme_applied", "widget.weather.current"} {
+		if !CanPublish(agent, topic) {
+			t.Fatalf("agent should be able to publish open shell/widget topic %q", topic)
+		}
+	}
+	if CanPublish(agent, "widget.*.current") {
+		t.Fatal("agent should not be able to publish wildcard widget-name topics")
+	}
+	if CanPublish(agent, "widget.bad$name.current") {
+		t.Fatal("agent should not be able to publish widget topics with invalid widget names")
 	}
 	if CanPublish(agent, "agent.message.60002.60001.chat") {
 		t.Fatal("agent should not be able to publish messages claiming another uid")
