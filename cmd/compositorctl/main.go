@@ -66,6 +66,8 @@ func main() {
 		err = cmdClearInputContext(*pretty)
 	case "set-view-property":
 		err = cmdSetViewProperty(args[1:], *pretty)
+	case "shell":
+		err = cmdShell(args[1:], *pretty)
 	case "list-surfaces":
 		err = cmdListSurfaces(*pretty)
 	default:
@@ -104,6 +106,7 @@ Commands:
   set-input-context  Mark the current compositor input stream as driven by an agent uid
   clear-input-context  Return the compositor input stream to human mode
   set-view-property  Set a tracked surface view property such as always_on_top
+  shell              Manage desktop shell themes, wallpaper, and widgets
   list-surfaces      List tracked compositor surfaces
 
 Run compositorctl <command> --help for command-specific flags.
