@@ -26,6 +26,8 @@ const (
 	defaultAppID  = "io.agoraos.WebviewLauncher"
 	defaultWidth  = 1280
 	defaultHeight = 800
+	defaultRole   = "toplevel"
+	defaultPython = "/usr/bin/python3"
 
 	helperEventCreated = "created"
 	helperEventFocused = "focused"
@@ -39,6 +41,7 @@ type Config struct {
 	AppID  string
 	Width  int
 	Height int
+	Role   string
 
 	BusSocket string
 }
@@ -49,6 +52,7 @@ type resolvedConfig struct {
 	AppID     string
 	Width     int
 	Height    int
+	Role      string
 	BusSocket string
 }
 
@@ -56,6 +60,7 @@ type helperEvent struct {
 	Event string `json:"event"`
 	Title string `json:"title,omitempty"`
 	PID   int    `json:"pid,omitempty"`
+	Role  string `json:"role,omitempty"`
 }
 
 func Launch(ctx context.Context, cfg Config) error {
@@ -86,6 +91,7 @@ func Launch(ctx context.Context, cfg Config) error {
 	uid := uint32(os.Getuid())
 	gid := uint32(os.Getgid())
 	lastTitle := resolved.Title
+	lastRole := resolved.Role
 	createdSeen := false
 	closedSeen := false
 	helperPID := 0
@@ -103,6 +109,9 @@ func Launch(ctx context.Context, cfg Config) error {
 		}
 		if ev.Title != "" {
 			lastTitle = ev.Title
+		}
+		if ev.Role != "" {
+			lastRole = ev.Role
 		}
 		if err := publishLifecycle(client, resolved, ev, uid, gid); err != nil {
 			return err
@@ -124,7 +133,7 @@ func Launch(ctx context.Context, cfg Config) error {
 		if fallbackPID == 0 && cmd.Process != nil {
 			fallbackPID = cmd.Process.Pid
 		}
-		_ = publishLifecycle(client, resolved, helperEvent{Event: helperEventClosed, PID: fallbackPID, Title: lastTitle}, uid, gid)
+		_ = publishLifecycle(client, resolved, helperEvent{Event: helperEventClosed, PID: fallbackPID, Title: lastTitle, Role: lastRole}, uid, gid)
 	}
 	if waitErr != nil {
 		msg := strings.TrimSpace(stderr.String())
@@ -162,6 +171,11 @@ func normalizeConfig(cfg Config) (resolvedConfig, error) {
 		busSocket = schema.BusSocket
 	}
 
+	role, err := normalizeRole(cfg.Role)
+	if err != nil {
+		return resolvedConfig{}, err
+	}
+
 	title := strings.TrimSpace(cfg.Title)
 	if title == "" {
 		title = defaultTitle(targetURI)
@@ -173,8 +187,22 @@ func normalizeConfig(cfg Config) (resolvedConfig, error) {
 		AppID:     appID,
 		Width:     width,
 		Height:    height,
+		Role:      role,
 		BusSocket: busSocket,
 	}, nil
+}
+
+func normalizeRole(role string) (string, error) {
+	role = strings.TrimSpace(role)
+	if role == "" {
+		return defaultRole, nil
+	}
+	switch role {
+	case "toplevel", "panel", "dock", "background", "overlay":
+		return role, nil
+	default:
+		return "", fmt.Errorf("unsupported webview role %q", role)
+	}
 }
 
 func resolveTarget(rawURL, rawPath string) (string, error) {
@@ -242,16 +270,27 @@ func writeHelperScript() (string, error) {
 	return file.Name(), nil
 }
 
-func startHelper(ctx context.Context, scriptPath string, cfg resolvedConfig) (*exec.Cmd, *bufio.Reader, *bytes.Buffer, error) {
-	args := []string{
+func helperArgs(scriptPath string, cfg resolvedConfig) []string {
+	return []string{
 		scriptPath,
 		"--uri", cfg.TargetURI,
 		"--app-id", cfg.AppID,
 		"--width", strconv.Itoa(cfg.Width),
 		"--height", strconv.Itoa(cfg.Height),
 		"--title", cfg.Title,
+		"--role", cfg.Role,
 	}
-	cmd := exec.CommandContext(ctx, "python3", args...)
+}
+
+func helperPython() string {
+	if override := strings.TrimSpace(os.Getenv("AGORA_WEBVIEW_PYTHON")); override != "" {
+		return override
+	}
+	return defaultPython
+}
+
+func startHelper(ctx context.Context, scriptPath string, cfg resolvedConfig) (*exec.Cmd, *bufio.Reader, *bytes.Buffer, error) {
+	cmd := exec.CommandContext(ctx, helperPython(), helperArgs(scriptPath, cfg)...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("helper stdout: %w", err)
@@ -307,7 +346,7 @@ func publishLifecycle(client *bus.Client, cfg resolvedConfig, ev helperEvent, ui
 			ID:    surfaceIDForPID(pid),
 			AppID: cfg.AppID,
 			Title: title,
-			Role:  "toplevel",
+			Role:  lifecycleRole(cfg, ev),
 		},
 		Client: schema.CompositorClientIdentity{
 			PID: int32(pid),
@@ -320,6 +359,16 @@ func publishLifecycle(client *bus.Client, cfg resolvedConfig, ev helperEvent, ui
 		return fmt.Errorf("publish %s: %w", topic, err)
 	}
 	return nil
+}
+
+func lifecycleRole(cfg resolvedConfig, ev helperEvent) string {
+	if ev.Role != "" {
+		return ev.Role
+	}
+	if cfg.Role != "" {
+		return cfg.Role
+	}
+	return defaultRole
 }
 
 func lifecycleMapping(event string) (topic string, eventName schema.CompositorSurfaceEventName, ok bool) {

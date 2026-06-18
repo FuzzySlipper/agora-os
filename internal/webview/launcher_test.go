@@ -51,6 +51,66 @@ func TestResolveTargetPath(t *testing.T) {
 	}
 }
 
+func TestNormalizeConfigDefaultsRole(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := normalizeConfig(Config{URL: "https://example.com"})
+	if err != nil {
+		t.Fatalf("normalizeConfig returned error: %v", err)
+	}
+	if cfg.Role != defaultRole {
+		t.Fatalf("got role %q, want %q", cfg.Role, defaultRole)
+	}
+}
+
+func TestNormalizeConfigRejectsUnknownRole(t *testing.T) {
+	t.Parallel()
+
+	_, err := normalizeConfig(Config{URL: "https://example.com", Role: "tooltip"})
+	if err == nil {
+		t.Fatal("expected unsupported role error")
+	}
+}
+
+func TestHelperArgsPassesRole(t *testing.T) {
+	t.Parallel()
+
+	args := helperArgs("/tmp/helper.py", resolvedConfig{
+		TargetURI: "https://example.com",
+		AppID:     "io.agoraos.Test",
+		Width:     640,
+		Height:    480,
+		Title:     "Test",
+		Role:      "panel",
+	})
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == "--role" && args[i+1] == "panel" {
+			return
+		}
+	}
+	t.Fatalf("helper args missing --role panel: %#v", args)
+}
+
+func TestHelperPythonDefaultAndOverride(t *testing.T) {
+	t.Setenv("AGORA_WEBVIEW_PYTHON", "")
+	if got := helperPython(); got != defaultPython {
+		t.Fatalf("got helper python %q, want %q", got, defaultPython)
+	}
+	t.Setenv("AGORA_WEBVIEW_PYTHON", "/tmp/python")
+	if got := helperPython(); got != "/tmp/python" {
+		t.Fatalf("got helper python %q, want override", got)
+	}
+}
+
+func TestLifecycleRoleUsesHelperEffectiveRole(t *testing.T) {
+	t.Parallel()
+
+	got := lifecycleRole(resolvedConfig{Role: "panel"}, helperEvent{Role: "toplevel"})
+	if got != "toplevel" {
+		t.Fatalf("got role %q, want toplevel", got)
+	}
+}
+
 func TestLifecycleMapping(t *testing.T) {
 	t.Parallel()
 

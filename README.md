@@ -150,7 +150,7 @@ That launches the human shell webview plus two agent-owned WebKitGTK windows, pr
 
 `cmd/webview-launcher` is the Phase 3 client-side piece that opens a WebKitGTK window as a normal Wayland client and mirrors its own lifecycle onto the event bus. Example usage: `webview-launcher --url=https://example.com` or `webview-launcher --path=./index.html`. It expects `python3` plus GTK/WebKit GI bindings in the guest runtime. Those `compositor.surface.*` messages are advisory convenience signals for shell/UI work; when the compositor bridge is present, it remains the authoritative source of surface ownership and policy decisions.
 
-For layer-shell panel/dock experiments, den-k8plus needs the Arch `gtk-layer-shell` package in the same Python GI environment used by `internal/webview/helper.py`. Verify the prerequisite with:
+For layer-shell panel/dock experiments, den-k8plus needs the Arch `gtk-layer-shell` package in the same Python GI environment used by `internal/webview/helper.py`; `webview-launcher` defaults to `/usr/bin/python3` for that helper, with `AGORA_WEBVIEW_PYTHON` available as an override. Verify the prerequisite with:
 
 ```sh
 pacman -Q gtk-layer-shell
