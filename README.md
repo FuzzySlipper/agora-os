@@ -150,6 +150,23 @@ That launches the human shell webview plus two agent-owned WebKitGTK windows, pr
 
 `cmd/webview-launcher` is the Phase 3 client-side piece that opens a WebKitGTK window as a normal Wayland client and mirrors its own lifecycle onto the event bus. Example usage: `webview-launcher --url=https://example.com` or `webview-launcher --path=./index.html`. It expects `python3` plus GTK/WebKit GI bindings in the guest runtime. Those `compositor.surface.*` messages are advisory convenience signals for shell/UI work; when the compositor bridge is present, it remains the authoritative source of surface ownership and policy decisions.
 
+For layer-shell panel/dock experiments, den-k8plus needs the Arch `gtk-layer-shell` package in the same Python GI environment used by `internal/webview/helper.py`. Verify the prerequisite with:
+
+```sh
+pacman -Q gtk-layer-shell
+test -f /usr/lib/girepository-1.0/GtkLayerShell-0.1.typelib
+XDG_RUNTIME_DIR=/run/user/1001 WAYLAND_DISPLAY=wayland-1 GDK_BACKEND=wayland \
+  /usr/bin/python3 - <<'PY'
+import gi
+gi.require_version('Gtk', '3.0')
+gi.require_version('GtkLayerShell', '0.1')
+from gi.repository import Gtk, GtkLayerShell
+print(GtkLayerShell.is_supported())
+PY
+```
+
+The `GtkLayerShell.is_supported()` check must run against a live Wayland session; without `WAYLAND_DISPLAY`, the import can succeed while support reports `False`.
+
 `cmd/event-bus-web` is the companion gateway for browser-style clients that cannot speak the Unix socket bus directly. It authenticates each WebSocket with a signed token, stamps published events with the authenticated uid via the trusted root-owned local bus connection, and filters subscriptions by identity. Programmatic clients should use `Authorization: Bearer <token>`; browser WebSocket clients should use `Sec-WebSocket-Protocol: agora.token.<token>`. Query-parameter tokens are intentionally unsupported. Origins default to strict same-origin, or can be overridden with the comma-separated `AGORA_WEBBUS_ALLOWED_ORIGINS` allow-list. The reserved bridge namespaces are `webview.broadcast.*` for shared channels and `webview.inbox.<uid>.*` for uid-scoped inboxes; human-shell tokens get the full feed.
 
 **Don't run the privileged services on your host.** They create system users, modify nftables rules, and write under `/var/log/agent-os/`. The VM-first workflow is the intended development loop.
