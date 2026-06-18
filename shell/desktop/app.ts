@@ -6,6 +6,7 @@ import { NotificationCenter } from "./widgets/notification-center.js";
 import { TaskbarWidget } from "./widgets/taskbar.js";
 import { createLayoutController, type LayoutController } from "./layout.js";
 import { createThemeController, type ThemeController } from "./theme.js";
+import { createWidgetController, type WidgetController } from "./widgets.js";
 
 const DEFAULT_SUBSCRIPTIONS = [
     "compositor.surface.*",
@@ -17,6 +18,8 @@ const DEFAULT_SUBSCRIPTIONS = [
     "shell.apply_theme",
     "shell.reset_theme",
     "shell.layout_updated",
+    "shell.widget.inject",
+    "shell.widget.remove",
 ];
 
 const emptyState = (): DesktopShellState => ({
@@ -40,11 +43,13 @@ export class ShellApp {
     private subscribed = false;
     private readonly theme: ThemeController;
     private readonly layout: LayoutController;
+    private readonly injectedWidgets: WidgetController;
 
     constructor(bus: BusConnection = createBusConnection({ protocols: tokenProtocols() })) {
         this.bus = bus;
         this.theme = createThemeController(this.bus);
         this.layout = createLayoutController({ bus: this.bus, onTheme: (theme) => this.theme.applyTheme(theme) });
+        this.injectedWidgets = createWidgetController({ bus: this.bus });
         this.registerDefaultWidgets();
     }
 

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"mime"
 	"net"
 	"net/http"
 	"os"
@@ -137,7 +138,12 @@ func (s *Server) StaticHandler() http.Handler {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	switch path.Clean(strings.TrimPrefix(r.URL.Path, "/api/shell")) {
+	cleanPath := path.Clean(strings.TrimPrefix(r.URL.Path, "/api/shell"))
+	if strings.HasPrefix(cleanPath, "/widget-proxy/") {
+		s.handleWidgetProxy(w, r, strings.TrimPrefix(cleanPath, "/widget-proxy/"))
+		return
+	}
+	switch cleanPath {
 	case "/state":
 		s.handleState(w, r)
 	case "/grants":
@@ -306,6 +312,67 @@ func (s *Server) handleLayoutJSON(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(raw)
+}
+
+func (s *Server) handleWidgetProxy(w http.ResponseWriter, r *http.Request, proxyPath string) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	parts := strings.SplitN(proxyPath, "/", 2)
+	if len(parts) != 2 || !validWidgetName(parts[0]) {
+		http.NotFound(w, r)
+		return
+	}
+	filePath := path.Clean("/" + parts[1])
+	if filePath == "/" || strings.Contains(filePath, "/.") {
+		http.NotFound(w, r)
+		return
+	}
+	widgetRoot := filepath.Join(s.shellConfigDir, "widgets", parts[0])
+	localPath := filepath.Join(widgetRoot, filepath.FromSlash(strings.TrimPrefix(filePath, "/")))
+	resolvedPath, ok, err := resolvedPathWithinDir(widgetRoot, localPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	if filePath == "/manifest.json" {
+		raw, err := os.ReadFile(resolvedPath)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				http.NotFound(w, r)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if !json.Valid(raw) {
+			http.Error(w, "manifest.json is not valid JSON", http.StatusBadGateway)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(raw)
+		return
+	}
+	raw, err := os.ReadFile(resolvedPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", mime.TypeByExtension(filepath.Ext(resolvedPath)))
 	_, _ = w.Write(raw)
 }
 
@@ -576,6 +643,33 @@ func lineHashID(line []byte) string {
 
 func bytesTrimSpace(line []byte) []byte {
 	return []byte(strings.TrimSpace(string(line)))
+}
+
+func validWidgetName(name string) bool {
+	if name == "" || len(name) > 64 {
+		return false
+	}
+	for i, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || (i > 0 && (r == '-' || r == '_')) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func resolvedPathWithinDir(root, candidate string) (string, bool, error) {
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", false, err
+	}
+	resolvedCandidate, err := filepath.EvalSymlinks(candidate)
+	if err != nil {
+		return "", false, err
+	}
+	resolvedRoot = filepath.Clean(resolvedRoot)
+	resolvedCandidate = filepath.Clean(resolvedCandidate)
+	return resolvedCandidate, resolvedCandidate == resolvedRoot || strings.HasPrefix(resolvedCandidate, resolvedRoot+string(os.PathSeparator)), nil
 }
 
 func defaultShellConfigDir() string {

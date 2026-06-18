@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -242,6 +243,91 @@ func TestLayoutJSONMissingReturnsNotFound(t *testing.T) {
 	server.ServeHTTP(resp, req)
 	if resp.Code != http.StatusNotFound {
 		t.Fatalf("got status %d, want 404", resp.Code)
+	}
+}
+
+func TestWidgetProxyServesWidgetFilesAndManifest(t *testing.T) {
+	t.Parallel()
+
+	configDir := t.TempDir()
+	widgetDir := filepath.Join(configDir, "widgets", "weather")
+	if err := os.MkdirAll(widgetDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(widgetDir, "index.html"), []byte("<h1>Weather</h1>"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	manifest := []byte(`{"name":"weather","title":"Weather","position":"top-right","bus_topics":["weather.current"]}`)
+	if err := os.WriteFile(filepath.Join(widgetDir, "manifest.json"), manifest, 0644); err != nil {
+		t.Fatal(err)
+	}
+	server := New(Config{ShellConfigDir: configDir})
+
+	for _, tt := range []struct {
+		path        string
+		contentType string
+		want        string
+	}{
+		{path: "/api/shell/widget-proxy/weather/index.html", contentType: "text/html", want: "<h1>Weather</h1>"},
+		{path: "/api/shell/widget-proxy/weather/manifest.json", contentType: "application/json", want: string(manifest)},
+	} {
+		t.Run(tt.path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+			resp := httptest.NewRecorder()
+			server.ServeHTTP(resp, req)
+			if resp.Code != http.StatusOK {
+				t.Fatalf("got status %d, want 200", resp.Code)
+			}
+			if got := resp.Header().Get("Content-Type"); !strings.HasPrefix(got, tt.contentType) {
+				t.Fatalf("got content-type %q, want prefix %q", got, tt.contentType)
+			}
+			if got := strings.TrimSpace(resp.Body.String()); got != tt.want {
+				t.Fatalf("got body %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWidgetProxyRejectsTraversalAndInvalidNames(t *testing.T) {
+	t.Parallel()
+
+	server := New(Config{ShellConfigDir: t.TempDir()})
+	for _, path := range []string{
+		"/api/shell/widget-proxy/../layout.json",
+		"/api/shell/widget-proxy/bad.name/index.html",
+		"/api/shell/widget-proxy/weather/../layout.json",
+		"/api/shell/widget-proxy/weather/.secret",
+	} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		resp := httptest.NewRecorder()
+		server.ServeHTTP(resp, req)
+		if resp.Code != http.StatusNotFound {
+			t.Fatalf("%s: got status %d, want 404", path, resp.Code)
+		}
+	}
+}
+
+func TestWidgetProxyRejectsSymlinkEscape(t *testing.T) {
+	t.Parallel()
+
+	configDir := t.TempDir()
+	widgetDir := filepath.Join(configDir, "widgets", "weather")
+	if err := os.MkdirAll(widgetDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	secretPath := filepath.Join(t.TempDir(), "secret.txt")
+	if err := os.WriteFile(secretPath, []byte("outside-secret"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secretPath, filepath.Join(widgetDir, "linked.txt")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	server := New(Config{ShellConfigDir: configDir})
+	req := httptest.NewRequest(http.MethodGet, "/api/shell/widget-proxy/weather/linked.txt", nil)
+	resp := httptest.NewRecorder()
+	server.ServeHTTP(resp, req)
+	if resp.Code != http.StatusNotFound {
+		t.Fatalf("got status %d and body %q, want 404", resp.Code, resp.Body.String())
 	}
 }
 
