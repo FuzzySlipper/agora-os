@@ -446,9 +446,29 @@ func normalizeLaunchRole(role string) (string, error) {
 	return role, nil
 }
 
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
+func launchCommandFromFlags(command, rawURL string) (string, error) {
+	command = strings.TrimSpace(command)
+	rawURL = strings.TrimSpace(rawURL)
+	switch {
+	case command != "" && rawURL != "":
+		return "", fmt.Errorf("--cmd and --url are mutually exclusive")
+	case command != "":
+		return command, nil
+	case rawURL != "":
+		return "webview-launcher --url " + shellQuote(rawURL), nil
+	default:
+		return "", fmt.Errorf("either --cmd or --url is required")
+	}
+}
+
 func buildLaunchRequest(args []string) (schema.LaunchAppRequest, error) {
 	fs := flag.NewFlagSet("launch", flag.ExitOnError)
-	cmd := fs.String("cmd", "", "command to launch (required)")
+	cmd := fs.String("cmd", "", "command to launch")
+	url := fs.String("url", "", "remote URL to open with webview-launcher")
 	sessionID := fs.String("session", "", "session id")
 	sessionToken := fs.String("session-token", os.Getenv("AGORA_COMPOSITOR_SESSION_TOKEN"), "session token (defaults to AGORA_COMPOSITOR_SESSION_TOKEN)")
 	auditID := fs.String("audit-correlation-id", "", "audit correlation id")
@@ -464,15 +484,16 @@ func buildLaunchRequest(args []string) (schema.LaunchAppRequest, error) {
 	env := envFlags{}
 	fs.Var(&env, "env", "environment variable KEY=VALUE; may be repeated")
 	fs.Parse(args)
-	if *cmd == "" {
-		return schema.LaunchAppRequest{}, fmt.Errorf("--cmd is required")
-	}
 	launchRole, err := normalizeLaunchRole(*role)
 	if err != nil {
 		return schema.LaunchAppRequest{}, err
 	}
+	command, err := launchCommandFromFlags(*cmd, *url)
+	if err != nil {
+		return schema.LaunchAppRequest{}, err
+	}
 	req := schema.LaunchAppRequest{
-		SessionID: *sessionID, SessionToken: *sessionToken, AuditCorrelationID: *auditID, Command: *cmd, Cwd: *cwd, Env: env, ExpectedAppID: *expectedAppID,
+		SessionID: *sessionID, SessionToken: *sessionToken, AuditCorrelationID: *auditID, Command: command, Cwd: *cwd, Env: env, ExpectedAppID: *expectedAppID,
 		ExpectedTitle: *expectedTitle, Role: launchRole, Output: *output, WaitSurface: *waitSurface, WaitTimeoutMs: *waitTimeout,
 	}
 	if *runAsUID != 0 {

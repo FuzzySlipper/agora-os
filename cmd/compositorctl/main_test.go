@@ -29,6 +29,33 @@ func TestBuildLaunchRequestAcceptsRole(t *testing.T) {
 	}
 }
 
+func TestBuildLaunchRequestAcceptsURL(t *testing.T) {
+	t.Parallel()
+
+	req, err := buildLaunchRequest([]string{"--url", "http://127.0.0.1:7780/shell/dist/desktop/", "--role", "panel"})
+	if err != nil {
+		t.Fatalf("buildLaunchRequest returned error: %v", err)
+	}
+	if req.Role != "panel" {
+		t.Fatalf("got role %q, want panel", req.Role)
+	}
+	if req.Command != "webview-launcher --url 'http://127.0.0.1:7780/shell/dist/desktop/'" {
+		t.Fatalf("command = %q", req.Command)
+	}
+}
+
+func TestBuildLaunchRequestRejectsCmdAndURL(t *testing.T) {
+	t.Parallel()
+
+	_, err := buildLaunchRequest([]string{"--cmd", "webview-launcher --url http://example.test", "--url", "http://example.test"})
+	if err == nil {
+		t.Fatal("expected mutual exclusion error")
+	}
+	if !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestBuildLaunchRequestRejectsInvalidRole(t *testing.T) {
 	t.Parallel()
 

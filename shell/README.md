@@ -37,7 +37,8 @@ passes so you can inspect the live UI before cleanup.
 ## Frontend build
 
 The checked-in assets served by Go live under `shell/dist/`. The editable
-TypeScript/HTML/CSS source lives under `shell/src/`.
+TypeScript/HTML/CSS source lives under `shell/src/`, `shell/shared/`, and
+`shell/desktop/`.
 
 Rebuild after frontend changes:
 
@@ -45,3 +46,20 @@ Rebuild after frontend changes:
 npm install --prefix shell
 npm run --prefix shell build
 ```
+
+## Desktop shell launch smoke
+
+After `event-bus-web` is serving the embedded shell assets on port 7780, launch
+the desktop shell as a layer-shell panel with:
+
+```sh
+compositorctl launch \
+  --role panel \
+  --url http://127.0.0.1:7780/shell/dist/desktop/ \
+  --expected-title "Agora Desktop Shell" \
+  --wait-surface
+```
+
+The desktop shell should render a clock, taskbar, and agent-health summary at
+the same host that serves the operator console. The operator console remains at
+`http://127.0.0.1:7780/shell/dist/` and `/shell/`.
