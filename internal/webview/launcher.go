@@ -35,15 +35,15 @@ const (
 )
 
 type Config struct {
-	URL    string
-	Path   string
-	Title  string
-	AppID  string
-	Width  int
-	Height int
-	Role   string
+	URL    string `json:"url,omitempty"`
+	Path   string `json:"path,omitempty"`
+	Title  string `json:"title,omitempty"`
+	AppID  string `json:"app_id,omitempty"`
+	Width  int    `json:"width,omitempty"`
+	Height int    `json:"height,omitempty"`
+	Role   string `json:"role,omitempty"`
 
-	BusSocket string
+	BusSocket string `json:"bus_socket,omitempty"`
 }
 
 type resolvedConfig struct {
@@ -138,9 +138,9 @@ func Launch(ctx context.Context, cfg Config) error {
 	if waitErr != nil {
 		msg := strings.TrimSpace(stderr.String())
 		if msg != "" {
-			return fmt.Errorf("webview helper: %w: %s", waitErr, msg)
+			return fmt.Errorf("webview helper role %q: %w: %s", resolved.Role, waitErr, msg)
 		}
-		return fmt.Errorf("webview helper: %w", waitErr)
+		return fmt.Errorf("webview helper role %q: %w", resolved.Role, waitErr)
 	}
 	return nil
 }
@@ -301,9 +301,9 @@ func startHelper(ctx context.Context, scriptPath string, cfg resolvedConfig) (*e
 	if err := cmd.Start(); err != nil {
 		msg := strings.TrimSpace(stderr.String())
 		if msg != "" {
-			return nil, nil, nil, fmt.Errorf("start helper: %w: %s", err, msg)
+			return nil, nil, nil, fmt.Errorf("start helper role %q: %w: %s", cfg.Role, err, msg)
 		}
-		return nil, nil, nil, fmt.Errorf("start helper: %w", err)
+		return nil, nil, nil, fmt.Errorf("start helper role %q: %w", cfg.Role, err)
 	}
 	return cmd, bufio.NewReader(stdout), stderr, nil
 }

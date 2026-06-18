@@ -1,9 +1,12 @@
 package webview
 
 import (
+	"context"
+	"encoding/json"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/patch/agora-os/internal/schema"
@@ -48,6 +51,18 @@ func TestResolveTargetPath(t *testing.T) {
 	want := (&url.URL{Scheme: "file", Path: path}).String()
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestConfigJSONIncludesRole(t *testing.T) {
+	t.Parallel()
+
+	encoded, err := json.Marshal(Config{URL: "https://example.com", Role: "panel"})
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+	if !strings.Contains(string(encoded), `"role":"panel"`) {
+		t.Fatalf("encoded config missing role tag: %s", encoded)
 	}
 }
 
@@ -99,6 +114,25 @@ func TestHelperPythonDefaultAndOverride(t *testing.T) {
 	t.Setenv("AGORA_WEBVIEW_PYTHON", "/tmp/python")
 	if got := helperPython(); got != "/tmp/python" {
 		t.Fatalf("got helper python %q, want override", got)
+	}
+}
+
+func TestStartHelperErrorIncludesRole(t *testing.T) {
+	t.Setenv("AGORA_WEBVIEW_PYTHON", filepath.Join(t.TempDir(), "missing-python"))
+
+	_, _, _, err := startHelper(context.Background(), "/tmp/helper.py", resolvedConfig{
+		TargetURI: "https://example.com",
+		AppID:     "io.agoraos.Test",
+		Width:     640,
+		Height:    480,
+		Title:     "Test",
+		Role:      "panel",
+	})
+	if err == nil {
+		t.Fatal("expected helper start error")
+	}
+	if !strings.Contains(err.Error(), `role "panel"`) {
+		t.Fatalf("error missing role context: %v", err)
 	}
 }
 
