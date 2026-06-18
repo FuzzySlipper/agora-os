@@ -208,6 +208,43 @@ func TestStaticHandlerServesShellDistAliasAndDesktop(t *testing.T) {
 	}
 }
 
+func TestLayoutJSONServesShellConfigFile(t *testing.T) {
+	t.Parallel()
+
+	configDir := t.TempDir()
+	layout := []byte("{\"widgets\":{\"clock\":{\"visible\":true,\"position\":\"top-right\",\"order\":1}},\"theme\":{\"properties\":{\"--taskbar-bg\":\"#222\"}}}")
+	if err := os.WriteFile(filepath.Join(configDir, "layout.json"), layout, 0644); err != nil {
+		t.Fatal(err)
+	}
+	server := New(Config{ShellConfigDir: configDir})
+	req := httptest.NewRequest(http.MethodGet, "/api/shell/layout.json", nil)
+	resp := httptest.NewRecorder()
+
+	server.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("got status %d, want 200", resp.Code)
+	}
+	if got := resp.Header().Get("Content-Type"); got != "application/json" {
+		t.Fatalf("got content-type %q, want application/json", got)
+	}
+	if got := bytes.TrimSpace(resp.Body.Bytes()); !bytes.Equal(got, layout) {
+		t.Fatalf("got body %s, want %s", got, layout)
+	}
+}
+
+func TestLayoutJSONMissingReturnsNotFound(t *testing.T) {
+	t.Parallel()
+
+	server := New(Config{ShellConfigDir: t.TempDir()})
+	req := httptest.NewRequest(http.MethodGet, "/api/shell/layout.json", nil)
+	resp := httptest.NewRecorder()
+
+	server.ServeHTTP(resp, req)
+	if resp.Code != http.StatusNotFound {
+		t.Fatalf("got status %d, want 404", resp.Code)
+	}
+}
+
 func startSchemaServer(t *testing.T, handler func(req schema.Request) schema.Response) string {
 	t.Helper()
 

@@ -4,6 +4,7 @@ import { AgentHealthWidget } from "./widgets/agent-health.js";
 import { ClockWidget } from "./widgets/clock.js";
 import { NotificationCenter } from "./widgets/notification-center.js";
 import { TaskbarWidget } from "./widgets/taskbar.js";
+import { createLayoutController, type LayoutController } from "./layout.js";
 import { createThemeController, type ThemeController } from "./theme.js";
 
 const DEFAULT_SUBSCRIPTIONS = [
@@ -15,6 +16,7 @@ const DEFAULT_SUBSCRIPTIONS = [
     "shell.theme",
     "shell.apply_theme",
     "shell.reset_theme",
+    "shell.layout_updated",
 ];
 
 const emptyState = (): DesktopShellState => ({
@@ -37,10 +39,12 @@ export class ShellApp {
     private mounted = false;
     private subscribed = false;
     private readonly theme: ThemeController;
+    private readonly layout: LayoutController;
 
     constructor(bus: BusConnection = createBusConnection({ protocols: tokenProtocols() })) {
         this.bus = bus;
         this.theme = createThemeController(this.bus);
+        this.layout = createLayoutController({ bus: this.bus, onTheme: (theme) => this.theme.applyTheme(theme) });
         this.registerDefaultWidgets();
     }
 
@@ -57,6 +61,7 @@ export class ShellApp {
         }
         this.connectBus();
         this.update(this.state);
+        void this.layout.loadFromServer();
     }
 
     unmount(): void {
@@ -155,11 +160,11 @@ function shellLayout(): string {
     return `
         <section class="shell-background" aria-hidden="true"></section>
         <section class="shell-grid" aria-label="Agora desktop shell">
-            <div class="shell-zone shell-zone--top-left" data-widget-slot="agent-health"></div>
-            <div class="shell-zone shell-zone--top-right" data-widget-slot="clock"></div>
-            <div class="shell-zone shell-zone--center" data-widget-slot="center"></div>
-            <div class="shell-zone shell-zone--bottom-right" data-widget-slot="notifications"></div>
-            <nav class="shell-taskbar" data-widget-slot="taskbar" aria-label="Desktop taskbar"></nav>
+            <div class="shell-widget-container shell-zone pos-top-left" data-widget-slot="agent-health"></div>
+            <div class="shell-widget-container shell-zone pos-top-right" data-widget-slot="clock"></div>
+            <div class="shell-widget-container shell-zone pos-center" data-widget-slot="center"></div>
+            <div class="shell-widget-container shell-zone pos-bottom-right" data-widget-slot="notifications"></div>
+            <nav class="shell-widget-container shell-taskbar pos-bottom" data-widget-slot="taskbar" aria-label="Desktop taskbar"></nav>
         </section>`;
 }
 

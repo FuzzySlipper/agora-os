@@ -71,10 +71,47 @@ body {
     min-height: 0;
 }
 
-.shell-zone--top-left {
+.shell-widget-container {
+    min-width: 0;
+    min-height: 0;
+}
+
+.shell-widget-container[hidden] {
+    display: none !important;
+}
+
+.pos-top-left {
     grid-area: top-left;
     align-self: start;
     justify-self: start;
+}
+
+.pos-top-right {
+    grid-area: top-right;
+    align-self: start;
+    justify-self: end;
+}
+
+.pos-center {
+    grid-area: center;
+    align-self: stretch;
+    justify-self: stretch;
+}
+
+.pos-bottom-right {
+    grid-area: bottom-right;
+    align-self: end;
+    justify-self: end;
+}
+
+.pos-bottom {
+    grid-area: bottom;
+    align-self: end;
+    justify-self: stretch;
+}
+
+.shell-zone--top-left,
+.pos-top-left[data-widget-slot="agent-health"] {
     display: inline-flex;
     gap: 0.5rem;
     align-items: center;
@@ -86,32 +123,13 @@ body {
     backdrop-filter: blur(18px);
 }
 
-.shell-zone--top-right {
-    grid-area: top-right;
-    align-self: start;
-    justify-self: end;
-}
-
-.shell-zone--center {
-    grid-area: center;
-    align-self: stretch;
-    justify-self: stretch;
-}
-
-.shell-zone--bottom-right {
-    grid-area: bottom-right;
-    align-self: end;
-    justify-self: end;
+.shell-zone--bottom-right,
+.pos-bottom-right[data-widget-slot="notifications"] {
     width: min(24rem, 100%);
 }
 
 .shell-taskbar {
-    grid-area: bottom;
-    position: fixed !important;
-    left: 1rem !important;
-    right: 1rem !important;
-    bottom: 1rem !important;
-    height: var(--taskbar-height) !important;
+    min-height: var(--taskbar-height) !important;
     z-index: 10 !important;
     display: flex !important;
     align-items: center !important;

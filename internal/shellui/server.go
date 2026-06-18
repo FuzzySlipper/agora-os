@@ -40,6 +40,7 @@ type Config struct {
 	AuditSocket      string
 	AdminLogPath     string
 	DecisionLogPath  string
+	ShellConfigDir   string
 }
 
 type Server struct {
@@ -53,6 +54,7 @@ type Server struct {
 	auditSocket      string
 	adminLogPath     string
 	decisionLogPath  string
+	shellConfigDir   string
 	upgrader         websocket.Upgrader
 }
 
@@ -108,6 +110,7 @@ func New(cfg Config) *Server {
 		auditSocket:      defaultString(cfg.AuditSocket, schema.AuditSocket),
 		adminLogPath:     defaultString(cfg.AdminLogPath, defaultAdminLogPath),
 		decisionLogPath:  defaultString(cfg.DecisionLogPath, defaultDecisionLogPath),
+		shellConfigDir:   defaultString(cfg.ShellConfigDir, defaultShellConfigDir()),
 	}
 	s.upgrader = websocket.Upgrader{CheckOrigin: s.checkOrigin}
 	return s
@@ -143,6 +146,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleEscalationDecision(w, r)
 	case "/audit/ws":
 		s.handleAuditWS(w, r)
+	case "/layout.json":
+		s.handleLayoutJSON(w, r)
 	default:
 		http.NotFound(w, r)
 	}
@@ -275,6 +280,33 @@ func (s *Server) handleEscalationDecision(w http.ResponseWriter, r *http.Request
 	}
 	s.publishBusEvent(schema.TopicAdminEscalationDecided, decision)
 	writeJSON(w, decision)
+}
+
+func (s *Server) handleLayoutJSON(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	layoutPath := filepath.Join(s.shellConfigDir, "layout.json")
+	if !strings.HasPrefix(filepath.Clean(layoutPath), filepath.Clean(s.shellConfigDir)+string(os.PathSeparator)) {
+		http.NotFound(w, r)
+		return
+	}
+	raw, err := os.ReadFile(layoutPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !json.Valid(raw) {
+		http.Error(w, "layout.json is not valid JSON", http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(raw)
 }
 
 func (s *Server) handleAuditWS(w http.ResponseWriter, r *http.Request) {
@@ -544,6 +576,16 @@ func lineHashID(line []byte) string {
 
 func bytesTrimSpace(line []byte) []byte {
 	return []byte(strings.TrimSpace(string(line)))
+}
+
+func defaultShellConfigDir() string {
+	if dir, err := os.UserConfigDir(); err == nil && dir != "" {
+		return filepath.Join(dir, "agora-shell")
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		return filepath.Join(home, ".config", "agora-shell")
+	}
+	return filepath.Join(".", "agora-shell")
 }
 
 func defaultString(value, fallback string) string {
