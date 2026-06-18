@@ -1,0 +1,19 @@
+[Unit]
+Description=Agora OS event bus web gateway and shell
+Documentation=https://github.com/FuzzySlipper/agora-os
+Wants=network.target event-bus.service
+After=network.target event-bus.service
+
+[Service]
+Type=simple
+ExecStartPre=/usr/bin/install -d -o root -g agents -m 0775 /run/agent-os
+ExecStart=/usr/local/bin/event-bus-web
+Restart=on-failure
+RestartSec=2s
+User=root
+Group=root
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

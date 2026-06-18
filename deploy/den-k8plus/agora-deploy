@@ -1,0 +1,465 @@
+#!/usr/bin/env bash
+# Trusted deployment wrapper for Agora OS compositor-stack updates on den-k8.
+# Installed as /usr/local/bin/agora-deploy, root-owned 0755, invoked through a
+# narrow sudoers whitelist. This script intentionally accepts only fixed action
+# names and fixed repository/install paths.
+set -euo pipefail
+IFS=$'\n\t'
+
+readonly REPO=/home/dev/agora-os
+readonly BUILD_ROOT=/var/tmp/agora-deploy
+readonly INSTALL_BIN_DIR=/usr/local/bin
+readonly PLUGIN_SRC="$REPO/compositor/wayfire-plugin"
+readonly PLUGIN_BUILD="$BUILD_ROOT/wayfire-plugin-build"
+readonly HOST_ASSETS_DIR="$REPO/deploy/den-k8plus"
+readonly WAYFIRE_CONFIG_TARGET=/home/agent/.config/wayfire.ini
+readonly BUILD_USER=agent
+readonly BUILD_GROUP=agents
+readonly LOG_LINES_DEFAULT=120
+readonly -a GO_TARGETS=(
+  compositor-bridge
+  compositorctl
+  event-bus
+  event-bus-web
+  webview-launcher
+)
+readonly -a USER_SERVICES=(compositor-bridge event-bus)
+readonly -a SYSTEM_SERVICES=(event-bus.service event-bus-web.service compositor-bridge.service)
+readonly -a HOST_UNIT_FILES=(event-bus.service event-bus-web.service compositor-bridge.service agora-wayfire.service)
+readonly -a HOST_ASSET_FILES=(event-bus.service event-bus-web.service compositor-bridge.service agora-wayfire.service wayfire.ini)
+
+usage() {
+  cat <<'USAGE'
+Usage: agora-deploy <action> [args]
+
+Actions:
+  build-go             Fast-forward the current tracked branch when possible, build fixed Go compositor binaries, install to /usr/local/bin.
+  build-plugin         Build compositor/wayfire-plugin with Meson/Ninja and install the Wayfire plugin + metadata.
+  install-host-assets  Install allow-listed deploy/den-k8plus units/config with guards, backups, verify, daemon-reload, and support-service restart.
+  restart              Restart known compositor support services if units exist; no-op with warning when not installed yet.
+  status               Report repo state, installed artifacts, host assets, plugin artifacts, and service states.
+  log [N]              Print recent compositor service logs; optional N is 1..1000 lines, default 120.
+  all                  Run build-go, build-plugin, install-host-assets, status.
+  help                 Show this help.
+
+No action accepts arbitrary filesystem paths.
+USAGE
+}
+
+die() { echo "error: $*" >&2; exit 1; }
+info() { echo "== $* =="; }
+
+require_root_for_mutation() {
+  [[ ${EUID} -eq 0 ]] || die "mutating action requires root; run via sudo agora-deploy $*"
+}
+
+need() {
+  command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
+}
+
+run_as_build_user() {
+  runuser -u "$BUILD_USER" -- "$@"
+}
+
+run_as_build_user_shell() {
+  runuser -u "$BUILD_USER" -- bash -lc "$1"
+}
+
+validate_static_paths() {
+  [[ -d "$REPO/.git" ]] || die "repo missing: $REPO"
+  [[ -d "$PLUGIN_SRC" ]] || die "Wayfire plugin source missing: $PLUGIN_SRC"
+  [[ -d "$REPO/cmd" ]] || die "cmd directory missing: $REPO/cmd"
+  [[ -d "$HOST_ASSETS_DIR" ]] || die "host assets directory missing: $HOST_ASSETS_DIR"
+  local owner group
+  owner=$(stat -c '%U' "$REPO")
+  group=$(stat -c '%G' "$REPO")
+  [[ "$owner" == "$BUILD_USER" ]] || die "$REPO owner is $owner, expected $BUILD_USER"
+  [[ "$group" == "$BUILD_GROUP" ]] || die "$REPO group is $group, expected $BUILD_GROUP"
+  [[ ! -L "$REPO" ]] || die "$REPO must not be a symlink"
+  [[ ! -L "$PLUGIN_SRC" ]] || die "$PLUGIN_SRC must not be a symlink"
+  [[ ! -L "$HOST_ASSETS_DIR" ]] || die "$HOST_ASSETS_DIR must not be a symlink"
+}
+
+ensure_clean_repo() {
+  local dirty
+  dirty=$(run_as_build_user git -C "$REPO" status --porcelain=v1)
+  [[ -z "$dirty" ]] || die "refusing to deploy dirty repo:\n$dirty"
+}
+
+ensure_host_assets_clean() {
+  local dirty file
+  dirty=$(run_as_build_user git -C "$REPO" status --porcelain=v1 -- deploy/den-k8plus)
+  [[ -z "$dirty" ]] || die "refusing to install dirty host assets:\n$dirty"
+  for file in "${HOST_ASSET_FILES[@]}"; do
+    run_as_build_user git -C "$REPO" ls-files --error-unmatch "deploy/den-k8plus/$file" >/dev/null || \
+      die "host asset is not tracked by git: deploy/den-k8plus/$file"
+  done
+}
+
+sync_tracked_branch_if_possible() {
+  info "sync repo"
+  run_as_build_user git -C "$REPO" fetch --prune origin
+  local branch upstream
+  branch=$(run_as_build_user git -C "$REPO" rev-parse --abbrev-ref HEAD)
+  upstream=$(run_as_build_user git -C "$REPO" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)
+  if [[ -n "$upstream" ]]; then
+    echo "branch: $branch, upstream: $upstream"
+    run_as_build_user git -C "$REPO" pull --ff-only
+  elif [[ "$branch" == "main" ]]; then
+    echo "branch: main, no upstream configured; fast-forwarding from origin/main"
+    run_as_build_user git -C "$REPO" merge --ff-only origin/main
+  else
+    die "current branch '$branch' has no upstream; checkout a tracked branch or main before deploying"
+  fi
+}
+
+build_go() {
+  require_root_for_mutation build-go
+  validate_static_paths
+  need go
+  need git
+  need install
+  ensure_clean_repo
+  sync_tracked_branch_if_possible
+  ensure_clean_repo
+
+  info "build Go compositor binaries"
+  install -d -o "$BUILD_USER" -g "$BUILD_GROUP" -m 0755 "$BUILD_ROOT"
+  local stage
+  stage=$(mktemp -d "$BUILD_ROOT/go-stage.XXXXXX")
+  chown "$BUILD_USER:$BUILD_GROUP" "$stage"
+  run_as_build_user bash -lc "cd '$REPO' && go build -trimpath -o '$stage/' ./cmd/compositor-bridge/ ./cmd/compositorctl/ ./cmd/event-bus/ ./cmd/event-bus-web/ ./cmd/webview-launcher/"
+
+  info "install Go compositor binaries"
+  local bin
+  for bin in "${GO_TARGETS[@]}"; do
+    [[ -x "$stage/$bin" ]] || die "build did not produce $stage/$bin"
+    install -o root -g root -m 0755 "$stage/$bin" "$INSTALL_BIN_DIR/$bin"
+    stat -c '%A %U:%G %s %y %n' "$INSTALL_BIN_DIR/$bin"
+  done
+  rm -rf "$stage"
+}
+
+build_plugin() {
+  require_root_for_mutation build-plugin
+  validate_static_paths
+  need meson
+  need ninja
+  need pkg-config
+  pkg-config --exists wayfire || die "pkg-config cannot find wayfire"
+
+  info "build Wayfire plugin"
+  install -d -o "$BUILD_USER" -g "$BUILD_GROUP" -m 0755 "$BUILD_ROOT"
+  rm -rf "$PLUGIN_BUILD"
+  install -d -o "$BUILD_USER" -g "$BUILD_GROUP" -m 0755 "$PLUGIN_BUILD"
+  run_as_build_user meson setup "$PLUGIN_BUILD" "$PLUGIN_SRC" --prefix=/usr
+  run_as_build_user meson compile -C "$PLUGIN_BUILD"
+
+  info "install Wayfire plugin"
+  meson install -C "$PLUGIN_BUILD"
+  local plugindir metadatadir
+  plugindir=$(pkg-config --variable=plugindir wayfire)
+  metadatadir=$(pkg-config --variable=metadatadir wayfire)
+  stat -c '%A %U:%G %s %y %n' "$plugindir/libagora-bridge.so" "$metadatadir/agora-bridge.xml"
+}
+
+reject_unit_line() {
+  local unit=$1 regex=$2 reason=$3
+  if grep -Eq "$regex" "$unit"; then
+    echo "rejected unit content in $unit:" >&2
+    grep -En "$regex" "$unit" >&2 || true
+    die "$reason"
+  fi
+}
+
+require_unit_line() {
+  local unit=$1 line=$2 reason=$3
+  grep -Fxq "$line" "$unit" || die "$reason in $unit; expected exact line: $line"
+}
+
+require_unit_line_count() {
+  local unit=$1 regex=$2 expected=$3 reason=$4 count
+  count=$(grep -Ec "$regex" "$unit" || true)
+  [[ "$count" == "$expected" ]] || die "$reason in $unit; expected $expected, found $count"
+}
+
+validate_unit_common_guards() {
+  local unit=$1
+  reject_unit_line "$unit" '^[[:space:]]*(ExecStartPost|EnvironmentFile|WorkingDirectory|SupplementaryGroups|CapabilityBoundingSet|AmbientCapabilities|DeviceAllow|BindPaths|ReadWritePaths|RootDirectory|RootImage)[[:space:]]*=' \
+    "unit uses a high-risk directive outside the reviewed allow-list"
+  require_unit_line "$unit" 'User=root' 'root service User guard failed'
+  require_unit_line "$unit" 'Group=root' 'root service Group guard failed'
+}
+
+validate_event_bus_unit() {
+  local unit=$1
+  validate_unit_common_guards "$unit"
+  require_unit_line_count "$unit" '^ExecStart=' 1 'event-bus ExecStart count guard failed'
+  require_unit_line_count "$unit" '^ExecStartPre=' 1 'event-bus ExecStartPre count guard failed'
+  require_unit_line "$unit" 'ExecStartPre=/usr/bin/install -d -o root -g agents -m 0775 /run/agent-os' 'event-bus runtime-dir guard failed'
+  require_unit_line "$unit" 'ExecStart=/usr/local/bin/event-bus' 'event-bus ExecStart guard failed'
+}
+
+validate_event_bus_web_unit() {
+  local unit=$1
+  validate_unit_common_guards "$unit"
+  require_unit_line_count "$unit" '^ExecStart=' 1 'event-bus-web ExecStart count guard failed'
+  require_unit_line_count "$unit" '^ExecStartPre=' 1 'event-bus-web ExecStartPre count guard failed'
+  require_unit_line "$unit" 'ExecStartPre=/usr/bin/install -d -o root -g agents -m 0775 /run/agent-os' 'event-bus-web runtime-dir guard failed'
+  require_unit_line "$unit" 'ExecStart=/usr/local/bin/event-bus-web' 'event-bus-web ExecStart guard failed'
+  require_unit_line "$unit" 'Wants=network.target event-bus.service' 'event-bus-web dependency Wants guard failed'
+  require_unit_line "$unit" 'After=network.target event-bus.service' 'event-bus-web dependency After guard failed'
+}
+
+validate_compositor_bridge_unit() {
+  local unit=$1 uid gid
+  uid=$(id -u "$BUILD_USER")
+  gid=$(getent group "$BUILD_GROUP" | cut -d: -f3)
+  [[ -n "$gid" ]] || die "cannot resolve group id for $BUILD_GROUP"
+  validate_unit_common_guards "$unit"
+  require_unit_line_count "$unit" '^ExecStart=' 1 'compositor-bridge ExecStart count guard failed'
+  require_unit_line_count "$unit" '^ExecStartPre=' 2 'compositor-bridge ExecStartPre count guard failed'
+  require_unit_line "$unit" 'ExecStartPre=/usr/bin/install -d -o root -g agents -m 0775 /run/agent-os' 'compositor-bridge runtime-dir guard failed'
+  require_unit_line "$unit" 'ExecStartPre=/usr/bin/install -d -o root -g root -m 0755 /var/log/agent-os' 'compositor-bridge log-dir guard failed'
+  require_unit_line "$unit" "Environment=AGORA_COMPOSITOR_UID=$uid" 'compositor-bridge UID guard failed'
+  require_unit_line "$unit" "Environment=AGORA_COMPOSITOR_GID=$gid" 'compositor-bridge GID guard failed'
+  require_unit_line "$unit" 'Environment=AGORA_COMPOSITOR_GRANT_LOG=/var/log/agent-os/compositor-grants.jsonl' 'compositor-bridge grant-log guard failed'
+  require_unit_line "$unit" 'ExecStart=/usr/local/bin/compositor-bridge' 'compositor-bridge ExecStart guard failed'
+}
+
+validate_agora_wayfire_unit() {
+  local unit=$1 expected_exec
+  expected_exec="ExecStart=/usr/bin/openvt -c 1 -f -s -w -- /usr/bin/runuser -u agent -- /usr/bin/bash -lc 'export XDG_RUNTIME_DIR=/run/user/1001; export XDG_CURRENT_DESKTOP=wayfire; exec /usr/bin/dbus-run-session -- /usr/bin/wayfire -c /home/agent/.config/wayfire.ini'"
+  validate_unit_common_guards "$unit"
+  require_unit_line_count "$unit" '^ExecStart=' 1 'agora-wayfire ExecStart count guard failed'
+  require_unit_line_count "$unit" '^ExecStartPre=' 1 'agora-wayfire ExecStartPre count guard failed'
+  require_unit_line "$unit" 'ExecStartPre=/usr/bin/install -d -o agent -g agents -m 0700 /run/user/1001' 'agora-wayfire runtime-dir guard failed'
+  require_unit_line "$unit" "$expected_exec" 'agora-wayfire openvt/runuser ExecStart guard failed'
+  require_unit_line "$unit" 'Wants=event-bus.service compositor-bridge.service' 'agora-wayfire support-service Wants guard failed'
+  reject_unit_line "$unit" '^Requires=.*(event-bus|compositor-bridge)' 'agora-wayfire must not hard-Require support services; support-service restarts must not bounce Wayfire'
+  reject_unit_line "$unit" '^[[:space:]]*(StandardInput|TTYPath|TTYReset|TTYVHangup)[[:space:]]*=' 'agora-wayfire must let openvt own tty setup'
+}
+
+validate_wayfire_config() {
+  local config=$1
+  grep -Fq '[agora-bridge]' "$config" || die "wayfire.ini missing [agora-bridge] section"
+  grep -Fxq 'socket_path = /run/agent-os/compositor-bridge.sock' "$config" || die "wayfire.ini compositor bridge socket guard failed"
+}
+
+validate_host_asset_sources() {
+  validate_static_paths
+  need git
+  need install
+  need mktemp
+  need systemd-analyze
+  ensure_host_assets_clean
+
+  local file src mode
+  for file in "${HOST_ASSET_FILES[@]}"; do
+    src="$HOST_ASSETS_DIR/$file"
+    [[ -f "$src" ]] || die "missing host asset: $src"
+    [[ ! -L "$src" ]] || die "host asset must not be a symlink: $src"
+    mode=$(stat -c '%a' "$src")
+    (( (8#$mode & 0002) == 0 )) || die "host asset is world-writable: $src"
+  done
+}
+
+stage_host_assets() {
+  local stage=$1 file
+  install -d -o root -g root -m 0700 "$stage"
+  for file in "${HOST_ASSET_FILES[@]}"; do
+    install -o root -g root -m 0644 "$HOST_ASSETS_DIR/$file" "$stage/$file"
+  done
+
+  validate_event_bus_unit "$stage/event-bus.service"
+  validate_event_bus_web_unit "$stage/event-bus-web.service"
+  validate_compositor_bridge_unit "$stage/compositor-bridge.service"
+  validate_agora_wayfire_unit "$stage/agora-wayfire.service"
+  validate_wayfire_config "$stage/wayfire.ini"
+
+  systemd-analyze verify "$stage/event-bus.service" "$stage/event-bus-web.service" "$stage/compositor-bridge.service" "$stage/agora-wayfire.service"
+}
+
+backup_existing_host_assets() {
+  local backup_dir=$1 target name
+  install -d -o root -g root -m 0700 "$backup_dir"
+  for name in "${HOST_UNIT_FILES[@]}"; do
+    target="/etc/systemd/system/$name"
+    if [[ -e "$target" ]]; then
+      cp -a "$target" "$backup_dir/$name.bak"
+    else
+      printf 'missing before install: %s\n' "$target" >"$backup_dir/$name.missing"
+    fi
+  done
+  if [[ -e "$WAYFIRE_CONFIG_TARGET" ]]; then
+    cp -a "$WAYFIRE_CONFIG_TARGET" "$backup_dir/wayfire.ini.bak"
+  else
+    printf 'missing before install: %s\n' "$WAYFIRE_CONFIG_TARGET" >"$backup_dir/wayfire.ini.missing"
+  fi
+  systemctl is-active agora-wayfire.service event-bus.service event-bus-web.service compositor-bridge.service sddm.service display-manager.service >"$backup_dir/pre-is-active.txt" 2>&1 || true
+  systemctl is-enabled agora-wayfire.service event-bus.service event-bus-web.service compositor-bridge.service sddm.service display-manager.service >"$backup_dir/pre-is-enabled.txt" 2>&1 || true
+  sha256sum /etc/systemd/system/agora-wayfire.service /etc/systemd/system/event-bus.service /etc/systemd/system/event-bus-web.service /etc/systemd/system/compositor-bridge.service "$WAYFIRE_CONFIG_TARGET" >"$backup_dir/pre-sha256.txt" 2>/dev/null || true
+}
+
+install_host_assets() {
+  require_root_for_mutation install-host-assets
+  validate_host_asset_sources
+
+  info "stage and verify host assets"
+  install -d -o root -g root -m 0755 "$BUILD_ROOT"
+  local stage backup_dir ts
+  stage=$(mktemp -d "$BUILD_ROOT/host-assets-stage.XXXXXX")
+  stage_host_assets "$stage"
+
+  ts=$(date +%Y%m%d-%H%M%S)
+  backup_dir="/root/agora-host-assets-backup-$ts"
+  info "backup existing host assets to $backup_dir"
+  backup_existing_host_assets "$backup_dir"
+
+  info "install host assets"
+  install -o root -g root -m 0644 "$stage/event-bus.service" /etc/systemd/system/event-bus.service
+  install -o root -g root -m 0644 "$stage/event-bus-web.service" /etc/systemd/system/event-bus-web.service
+  install -o root -g root -m 0644 "$stage/compositor-bridge.service" /etc/systemd/system/compositor-bridge.service
+  install -o root -g root -m 0644 "$stage/agora-wayfire.service" /etc/systemd/system/agora-wayfire.service
+  install -d -o "$BUILD_USER" -g "$BUILD_GROUP" -m 0755 /home/agent/.config
+  install -o "$BUILD_USER" -g "$BUILD_GROUP" -m 0644 "$stage/wayfire.ini" "$WAYFIRE_CONFIG_TARGET"
+
+  info "daemon reload and post-install verify"
+  systemctl daemon-reload
+  systemd-analyze verify /etc/systemd/system/event-bus.service /etc/systemd/system/event-bus-web.service /etc/systemd/system/compositor-bridge.service /etc/systemd/system/agora-wayfire.service
+  sha256sum /etc/systemd/system/agora-wayfire.service /etc/systemd/system/event-bus.service /etc/systemd/system/event-bus-web.service /etc/systemd/system/compositor-bridge.service "$WAYFIRE_CONFIG_TARGET" >"$backup_dir/post-sha256.txt"
+
+  info "restart support services only"
+  restart_services
+
+  info "post-install state"
+  echo "backup_dir: $backup_dir"
+  systemctl is-active agora-wayfire.service event-bus.service event-bus-web.service compositor-bridge.service sddm.service display-manager.service || true
+  systemctl is-enabled agora-wayfire.service event-bus.service event-bus-web.service compositor-bridge.service sddm.service display-manager.service || true
+  rm -rf "$stage"
+}
+
+restart_services() {
+  require_root_for_mutation restart
+  info "restart compositor support services"
+  local restarted=0 svc
+  for svc in "${SYSTEM_SERVICES[@]}"; do
+    if systemctl list-unit-files "$svc" >/dev/null 2>&1; then
+      echo "restarting system unit $svc"
+      systemctl restart "$svc"
+      restarted=1
+    fi
+  done
+
+  if [[ -d /run/user/1001 ]]; then
+    for svc in "${USER_SERVICES[@]}"; do
+      if runuser -u "$BUILD_USER" -- env XDG_RUNTIME_DIR=/run/user/1001 systemctl --user list-unit-files "$svc.service" >/dev/null 2>&1; then
+        echo "restarting $BUILD_USER user unit $svc.service"
+        runuser -u "$BUILD_USER" -- env XDG_RUNTIME_DIR=/run/user/1001 systemctl --user restart "$svc.service"
+        restarted=1
+      fi
+    done
+  fi
+
+  if [[ "$restarted" -eq 0 ]]; then
+    echo "warning: no known compositor support service units are installed yet; restart is a no-op" >&2
+  fi
+}
+
+status() {
+  validate_static_paths
+  info "repo"
+  run_as_build_user git -C "$REPO" status --short --branch || true
+  printf 'head: '; run_as_build_user git -C "$REPO" rev-parse --short=12 HEAD || true
+
+  info "installed Go binaries"
+  local bin
+  for bin in "${GO_TARGETS[@]}"; do
+    if [[ -e "$INSTALL_BIN_DIR/$bin" ]]; then
+      stat -c '%A %U:%G %s %y %n' "$INSTALL_BIN_DIR/$bin"
+    else
+      echo "missing: $INSTALL_BIN_DIR/$bin"
+    fi
+  done
+
+  info "host assets"
+  local src target unit
+  for unit in "${HOST_UNIT_FILES[@]}"; do
+    src="$HOST_ASSETS_DIR/$unit"
+    target="/etc/systemd/system/$unit"
+    if [[ -e "$target" ]]; then
+      stat -c '%A %U:%G %s %y %n' "$target"
+      if command -v sha256sum >/dev/null 2>&1 && [[ -f "$src" ]]; then
+        printf '  source sha256:   '; sha256sum "$src" | awk '{print $1}'
+        printf '  installed sha256:'; sha256sum "$target" | awk '{print " " $1}'
+      fi
+    else
+      echo "missing: $target"
+    fi
+  done
+  if [[ -e "$WAYFIRE_CONFIG_TARGET" ]]; then
+    stat -c '%A %U:%G %s %y %n' "$WAYFIRE_CONFIG_TARGET"
+  else
+    echo "missing: $WAYFIRE_CONFIG_TARGET"
+  fi
+
+  info "Wayfire plugin artifacts"
+  if command -v pkg-config >/dev/null 2>&1 && pkg-config --exists wayfire; then
+    local plugindir metadatadir artifact
+    plugindir=$(pkg-config --variable=plugindir wayfire)
+    metadatadir=$(pkg-config --variable=metadatadir wayfire)
+    for artifact in "$plugindir/libagora-bridge.so" "$metadatadir/agora-bridge.xml"; do
+      if [[ -e "$artifact" ]]; then
+        stat -c '%A %U:%G %s %y %n' "$artifact"
+      else
+        echo "missing: $artifact"
+      fi
+    done
+  else
+    echo "wayfire pkg-config metadata missing"
+  fi
+
+  info "system services"
+  systemctl --no-pager --full status "${SYSTEM_SERVICES[@]}" agora-wayfire.service 2>/dev/null || true
+
+  info "$BUILD_USER user services"
+  if [[ -d /run/user/1001 ]]; then
+    runuser -u "$BUILD_USER" -- env XDG_RUNTIME_DIR=/run/user/1001 systemctl --user --no-pager --full status compositor-bridge.service event-bus.service 2>/dev/null || true
+  else
+    echo "/run/user/1001 missing; $BUILD_USER user manager likely not active"
+  fi
+}
+
+show_logs() {
+  local lines=${1:-$LOG_LINES_DEFAULT}
+  [[ "$lines" =~ ^[0-9]+$ ]] || die "log line count must be numeric"
+  (( lines >= 1 && lines <= 1000 )) || die "log line count must be between 1 and 1000"
+
+  info "system service logs"
+  journalctl --no-pager -n "$lines" -u compositor-bridge.service -u event-bus.service -u event-bus-web.service -u agora-wayfire.service 2>/dev/null || true
+
+  info "$BUILD_USER user service logs"
+  if [[ -d /run/user/1001 ]]; then
+    runuser -u "$BUILD_USER" -- env XDG_RUNTIME_DIR=/run/user/1001 journalctl --user --no-pager -n "$lines" -u compositor-bridge.service -u event-bus.service 2>/dev/null || true
+  else
+    echo "/run/user/1001 missing; $BUILD_USER user manager likely not active"
+  fi
+}
+
+main() {
+  local action=${1:-help}
+  shift || true
+  case "$action" in
+    build-go) [[ $# -eq 0 ]] || die "build-go takes no args"; build_go ;;
+    build-plugin) [[ $# -eq 0 ]] || die "build-plugin takes no args"; build_plugin ;;
+    install-host-assets) [[ $# -eq 0 ]] || die "install-host-assets takes no args"; install_host_assets ;;
+    restart) [[ $# -eq 0 ]] || die "restart takes no args"; restart_services ;;
+    status) [[ $# -eq 0 ]] || die "status takes no args"; status ;;
+    log) [[ $# -le 1 ]] || die "log takes optional line count only"; show_logs "${1:-$LOG_LINES_DEFAULT}" ;;
+    all) [[ $# -eq 0 ]] || die "all takes no args"; build_go; build_plugin; install_host_assets; status ;;
+    help|-h|--help) usage ;;
+    *) usage >&2; die "unknown action: $action" ;;
+  esac
+}
+
+main "$@"
