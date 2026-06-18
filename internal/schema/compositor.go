@@ -67,6 +67,7 @@ const (
 	MethodUpsertSurfacePolicy = "upsert_surface_policy"
 	MethodRemoveSurfacePolicy = "remove_surface_policy"
 	MethodSetInputContext     = "set_input_context"
+	MethodSetViewProperty     = "set_view_property"
 	MethodCloseSurface        = "close_surface"
 	MethodCloseSurfacesByUID  = "close_surfaces_by_uid"
 	MethodGrantViewport       = "grant_viewport"
@@ -102,6 +103,7 @@ const (
 	PluginMessagePolicyUpsert       CompositorPluginMessageType = "policy_upsert"
 	PluginMessagePolicyRemove       CompositorPluginMessageType = "policy_remove"
 	PluginMessageInputContext       CompositorPluginMessageType = "input_context"
+	PluginMessageSetViewProperty    CompositorPluginMessageType = "set_view_property"
 	PluginMessageCloseSurface       CompositorPluginMessageType = "close_surface"
 	PluginMessageCloseSurfacesByUID CompositorPluginMessageType = "close_surfaces_by_uid"
 )
@@ -236,6 +238,12 @@ type CompositorPolicyRemove struct {
 type CompositorInputContextUpdate struct {
 	Type     CompositorPluginMessageType `json:"type"`
 	ActorUID *uint32                     `json:"actor_uid,omitempty"`
+}
+
+type CompositorSetViewProperty struct {
+	Type       CompositorPluginMessageType `json:"type"`
+	SurfaceID  string                      `json:"surface_id"`
+	Properties map[string]any              `json:"properties"`
 }
 
 type CompositorCloseSurface struct {
@@ -373,6 +381,11 @@ type ExportArtifactsResponse struct {
 	SessionID string   `json:"session_id"`
 	To        string   `json:"to"`
 	Copied    []string `json:"copied,omitempty"`
+}
+
+type SetViewPropertyRequest struct {
+	SurfaceID  string         `json:"surface_id"`
+	Properties map[string]any `json:"properties"`
 }
 
 type InjectInputRequest struct {

@@ -698,6 +698,111 @@ func TestResetSessionClosesSurfacesForExitedLaunches(t *testing.T) {
 	}
 }
 
+func TestDispatchSetViewPropertyRoutesToPlugin(t *testing.T) {
+	bridge, err := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	server, client, cleanup := unixSocketPair(t)
+	defer cleanup()
+
+	go bridge.HandlePluginConn(server)
+	dec := json.NewDecoder(client)
+	readInitialSync(t, dec)
+
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{
+		Type:    schema.PluginMessageSurfaceEvent,
+		Event:   schema.SurfaceEventMapped,
+		Surface: schema.CompositorSurface{ID: "view-prop", WayfireViewID: 42},
+		Client:  schema.CompositorClientIdentity{UID: 60001},
+	})
+	var discard schema.CompositorPolicyUpsert
+	_ = dec.Decode(&discard)
+
+	body, err := json.Marshal(schema.SetViewPropertyRequest{
+		SurfaceID: "view-prop",
+		Properties: map[string]any{
+			"always_on_top": true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	respCh := make(chan schema.Response, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		resp, err := bridge.dispatch(0, schema.Request{Method: schema.MethodSetViewProperty, Body: body})
+		if err != nil {
+			errCh <- err
+			return
+		}
+		respCh <- resp
+	}()
+
+	var msg schema.CompositorSetViewProperty
+	if err := dec.Decode(&msg); err != nil {
+		t.Fatalf("decode set_view_property: %v", err)
+	}
+	if msg.Type != schema.PluginMessageSetViewProperty || msg.SurfaceID != "view-prop" || msg.Properties["always_on_top"] != true {
+		t.Fatalf("unexpected set_view_property message: %+v", msg)
+	}
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("dispatch returned error: %v", err)
+	case resp := <-respCh:
+		if !resp.OK {
+			t.Fatalf("dispatch response not OK: %+v", resp)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("timed out waiting for dispatch response")
+	}
+}
+
+func TestDispatchSetViewPropertyRejectsInvalidProperties(t *testing.T) {
+	bridge, err := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	body, err := json.Marshal(schema.SetViewPropertyRequest{
+		SurfaceID: "view-prop",
+		Properties: map[string]any{
+			"always_on_top": "yes",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	if _, err := bridge.dispatch(0, schema.Request{Method: schema.MethodSetViewProperty, Body: body}); err == nil {
+		t.Fatal("expected invalid property type error")
+	} else if !strings.Contains(err.Error(), "always_on_top must be a boolean") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestDispatchSetViewPropertyRejectsUnsupportedExtraProperties(t *testing.T) {
+	bridge, err := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	body, err := json.Marshal(schema.SetViewPropertyRequest{
+		SurfaceID: "view-prop",
+		Properties: map[string]any{
+			"always_on_top": true,
+			"opacity":       0.5,
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	if _, err := bridge.dispatch(0, schema.Request{Method: schema.MethodSetViewProperty, Body: body}); err == nil {
+		t.Fatal("expected unsupported property error")
+	} else if !strings.Contains(err.Error(), "unsupported view properties") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestDispatchAllowsNonRootListSurfaces(t *testing.T) {
 	bridge, err := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
 	if err != nil {

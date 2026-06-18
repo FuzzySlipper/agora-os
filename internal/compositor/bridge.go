@@ -963,6 +963,37 @@ func (b *Bridge) SetInputContext(actorUID *uint32) error {
 	return b.plugin.Send(msg)
 }
 
+func (b *Bridge) SetViewProperty(req schema.SetViewPropertyRequest) error {
+	if req.SurfaceID == "" {
+		return fmt.Errorf("surface_id is required")
+	}
+	if len(req.Properties) == 0 {
+		return fmt.Errorf("at least one property is required")
+	}
+	if _, ok := req.Properties["always_on_top"]; !ok {
+		return fmt.Errorf("unsupported view properties: only always_on_top is currently supported")
+	}
+	if len(req.Properties) != 1 {
+		return fmt.Errorf("unsupported view properties: only always_on_top is currently supported")
+	}
+	if _, ok := req.Properties["always_on_top"].(bool); !ok {
+		return fmt.Errorf("always_on_top must be a boolean")
+	}
+
+	b.mu.RLock()
+	_, tracked := b.surfaces[req.SurfaceID]
+	b.mu.RUnlock()
+	if !tracked {
+		return compositorError(schema.ErrorSurfaceNotFound, "surface %s not found", req.SurfaceID)
+	}
+
+	return b.sendToPlugin(schema.CompositorSetViewProperty{
+		Type:       schema.PluginMessageSetViewProperty,
+		SurfaceID:  req.SurfaceID,
+		Properties: req.Properties,
+	})
+}
+
 func (b *Bridge) CloseSurface(surfaceID string) error {
 	return b.sendToPlugin(schema.CompositorCloseSurface{
 		Type:      schema.PluginMessageCloseSurface,
@@ -2105,6 +2136,15 @@ func (b *Bridge) dispatch(peerUID uint32, req schema.Request) (schema.Response, 
 			return schema.Response{}, fmt.Errorf("bad body: %w", err)
 		}
 		if err := b.SetInputContext(body.ActorUID); err != nil {
+			return schema.Response{}, err
+		}
+		return okResponse("updated"), nil
+	case schema.MethodSetViewProperty:
+		var body schema.SetViewPropertyRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			return schema.Response{}, fmt.Errorf("bad body: %w", err)
+		}
+		if err := b.SetViewProperty(body); err != nil {
 			return schema.Response{}, err
 		}
 		return okResponse("updated"), nil

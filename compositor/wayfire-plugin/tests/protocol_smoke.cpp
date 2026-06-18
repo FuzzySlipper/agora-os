@@ -50,6 +50,13 @@ int main()
     assert(close_uid_msg.kind == bridge_message_kind::close_surfaces_by_uid);
     assert(close_uid_msg.owner_uid.has_value() && (*close_uid_msg.owner_uid == 60003));
 
+    auto property_msg = parse_bridge_message(
+        "{\"type\":\"set_view_property\",\"surface_id\":\"view-10\","
+        "\"properties\":{\"always_on_top\":true}}");
+    assert(property_msg.kind == bridge_message_kind::set_view_property);
+    assert(property_msg.surface_id == "view-10");
+    assert(property_msg.always_on_top.has_value() && (*property_msg.always_on_top == true));
+
     auto inject_msg = parse_bridge_message(
         "{\"type\":\"inject_input\",\"request_id\":\"input-1\",\"surface_id\":\"view-11\","
         "\"coordinate_space\":\"surface-local\",\"events\":["

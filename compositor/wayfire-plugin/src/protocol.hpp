@@ -51,6 +51,7 @@ enum class bridge_message_kind
     capture_surface,
     inject_input,
     place_surface,
+    set_view_property,
 };
 
 enum class input_event_kind
@@ -92,6 +93,7 @@ struct bridge_message_t
     int32_t height = 0;
     std::optional<uint32_t> actor_uid;
     std::optional<uint32_t> owner_uid;
+    std::optional<bool> always_on_top;
 };
 
 inline void append_unicode_escape(std::string& out, unsigned char ch)
@@ -301,6 +303,18 @@ inline std::optional<int32_t> find_int_field(const std::string& text, const char
     if (std::regex_search(text, match, re) && (match.size() > 1))
     {
         return static_cast<int32_t>(std::stol(match[1].str()));
+    }
+
+    return std::nullopt;
+}
+
+inline std::optional<bool> find_bool_field(const std::string& text, const char *key)
+{
+    std::regex re(std::string{"\""} + key + "\"\\s*:\\s*(true|false)");
+    std::smatch match;
+    if (std::regex_search(text, match, re) && (match.size() > 1))
+    {
+        return match[1].str() == "true";
     }
 
     return std::nullopt;
@@ -620,6 +634,21 @@ inline bridge_message_t parse_bridge_message(const std::string& line)
             message.y = find_int_field(*geom, "y").value_or(0);
             message.width = find_int_field(*geom, "width").value_or(0);
             message.height = find_int_field(*geom, "height").value_or(0);
+        }
+        return message;
+    }
+
+    if (*type == "set_view_property")
+    {
+        message.kind = bridge_message_kind::set_view_property;
+        message.surface_id = find_string_field(line, "surface_id").value_or("");
+        auto properties = find_braced_region(line, "properties", '{', '}');
+        if (properties.has_value())
+        {
+            message.always_on_top = find_bool_field(*properties, "always_on_top");
+        } else
+        {
+            message.always_on_top = find_bool_field(line, "always_on_top");
         }
         return message;
     }

@@ -64,6 +64,8 @@ func main() {
 		err = cmdSetInputContext(args[1:], *pretty)
 	case "clear-input-context":
 		err = cmdClearInputContext(*pretty)
+	case "set-view-property":
+		err = cmdSetViewProperty(args[1:], *pretty)
 	case "list-surfaces":
 		err = cmdListSurfaces(*pretty)
 	default:
@@ -101,6 +103,7 @@ Commands:
   check-access       Ask the compositor bridge whether an agent may access a surface
   set-input-context  Mark the current compositor input stream as driven by an agent uid
   clear-input-context  Return the compositor input stream to human mode
+  set-view-property  Set a tracked surface view property such as always_on_top
   list-surfaces      List tracked compositor surfaces
 
 Run compositorctl <command> --help for command-specific flags.
@@ -733,6 +736,44 @@ func cmdClearInputContext(pretty bool) error {
 		return err
 	}
 	return printJSON(resp, pretty)
+}
+
+func cmdSetViewProperty(args []string, pretty bool) error {
+	req, err := buildSetViewPropertyRequest(args)
+	if err != nil {
+		return err
+	}
+	resp, err := call(compositorSock, schema.MethodSetViewProperty, req)
+	if err != nil {
+		return err
+	}
+	return printJSON(resp, pretty)
+}
+
+func buildSetViewPropertyRequest(args []string) (schema.SetViewPropertyRequest, error) {
+	fs := flag.NewFlagSet("set-view-property", flag.ExitOnError)
+	surfaceID := fs.String("surface", "", "tracked surface id (required)")
+	alwaysOnTop := fs.String("always-on-top", "", "set always_on_top to true or false")
+	fs.Parse(args)
+
+	if *surfaceID == "" {
+		return schema.SetViewPropertyRequest{}, fmt.Errorf("--surface is required")
+	}
+	properties := make(map[string]any)
+	if *alwaysOnTop != "" {
+		switch strings.ToLower(*alwaysOnTop) {
+		case "true", "1", "yes", "on":
+			properties["always_on_top"] = true
+		case "false", "0", "no", "off":
+			properties["always_on_top"] = false
+		default:
+			return schema.SetViewPropertyRequest{}, fmt.Errorf("--always-on-top must be true or false")
+		}
+	}
+	if len(properties) == 0 {
+		return schema.SetViewPropertyRequest{}, fmt.Errorf("at least one property flag is required")
+	}
+	return schema.SetViewPropertyRequest{SurfaceID: *surfaceID, Properties: properties}, nil
 }
 
 func cmdListSurfaces(pretty bool) error {
