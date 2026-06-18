@@ -14,7 +14,9 @@ import atexit
 import hashlib
 import json
 import os
+import re
 import shlex
+import socket
 import struct
 import subprocess
 import sys
@@ -38,6 +40,21 @@ class RunResult:
     argv: list[str]
     stdout: str
     stderr: str
+
+
+@dataclass(frozen=True)
+class PageReadinessExpectation:
+    scenario_id: str
+    step: int
+    projection_hash: str | None = None
+    phase: str = "initial"
+
+
+class ProofReadinessError(RuntimeError):
+    def __init__(self, category: str, message: str, details: dict[str, Any] | None = None):
+        super().__init__(f"{category}: {message}")
+        self.category = category
+        self.details = details or {}
 
 
 def run(argv: list[str], *, cwd: Path | None = None, timeout: int = 30) -> RunResult:
@@ -226,6 +243,186 @@ def capture(compositorctl: Path, session_id: str, session_token: str, surface_id
     ], timeout=20)
 
 
+def expected_projection_for_step(asha_artifact: dict[str, Any], step: int) -> str | None:
+    evidence = asha_artifact.get("cameraEvidence", {})
+    if step <= 0:
+        value = evidence.get("initial", {}).get("projectionHash")
+    else:
+        steps = evidence.get("steps", [])
+        value = None
+        if isinstance(steps, list) and step - 1 < len(steps):
+            value = steps[step - 1].get("after", {}).get("projectionHash")
+        if value is None and step >= len(steps):
+            value = evidence.get("final", {}).get("projectionHash")
+    return value if isinstance(value, str) and value else None
+
+
+def flatten_a11y_text(node: dict[str, Any]) -> list[str]:
+    texts: list[str] = []
+    for key in ("name", "description", "role", "semantic_role"):
+        value = node.get(key)
+        if isinstance(value, str) and value.strip():
+            texts.append(value.strip())
+    children = node.get("children")
+    if isinstance(children, list):
+        for child in children:
+            if isinstance(child, dict):
+                texts.extend(flatten_a11y_text(child))
+    return texts
+
+
+def parse_readiness_markers(texts: list[str]) -> dict[str, Any]:
+    haystack = "\n".join(texts)
+    markers: dict[str, Any] = {"has_title": "ASHA First-Person Agora Control" in haystack}
+    scenario_match = re.search(r'"scenarioId"\s*:\s*"([^"]+)"', haystack) or re.search(r"Scenario:\s*([a-zA-Z0-9_.:-]+)", haystack)
+    if scenario_match:
+        markers["scenario_id"] = scenario_match.group(1)
+    step_match = re.search(r'"step"\s*:\s*(\d+)', haystack)
+    if step_match:
+        markers["step"] = int(step_match.group(1))
+    projection_match = re.search(r'"projectionHash"\s*:\s*"([^"]+)"', haystack) or re.search(r"projectionHash\s+([^\s,}]+)", haystack)
+    if projection_match:
+        markers["projection_hash"] = projection_match.group(1)
+    markers["text_sample"] = haystack[:1200]
+    return markers
+
+
+def evaluate_marker_readiness(markers: dict[str, Any], expectation: PageReadinessExpectation, *, backend: str) -> dict[str, Any]:
+    failures: list[str] = []
+    title = markers.get("title")
+    if title is not None and title != "ASHA First-Person Agora Control":
+        failures.append(f"title {title!r} != 'ASHA First-Person Agora Control'")
+    ready_value = markers.get("bodyReady")
+    if ready_value not in ("true", True):
+        failures.append(f"bodyReady marker is {ready_value!r}, expected true")
+    if markers.get("scenario_id") is None and markers.get("scenarioId") is not None:
+        markers["scenario_id"] = markers.get("scenarioId")
+    if markers.get("projection_hash") is None and markers.get("projectionHash") is not None:
+        markers["projection_hash"] = markers.get("projectionHash")
+    if markers.get("step") is None and markers.get("bodyStep") not in (None, ""):
+        raw_step = markers.get("bodyStep")
+        try:
+            markers["step"] = int(str(raw_step))
+        except (TypeError, ValueError):
+            failures.append(f"step marker {raw_step!r} is not an integer")
+    if markers.get("scenario_id") != expectation.scenario_id:
+        failures.append(f"scenario id {markers.get('scenario_id')!r} != {expectation.scenario_id!r}")
+    if markers.get("step") != expectation.step:
+        failures.append(f"step {markers.get('step')!r} != {expectation.step!r}")
+    if expectation.projection_hash and markers.get("projection_hash") != expectation.projection_hash:
+        failures.append(f"projectionHash {markers.get('projection_hash')!r} != {expectation.projection_hash!r}")
+    result = {
+        "status": "ready" if not failures else "not_ready",
+        "phase": expectation.phase,
+        "backend": backend,
+        "expected": {
+            "scenarioId": expectation.scenario_id,
+            "step": expectation.step,
+            "projectionHash": expectation.projection_hash,
+        },
+        "markers": markers,
+        "failures": failures,
+    }
+    if failures:
+        raise ProofReadinessError("surface_mapped_page_not_ready", "; ".join(failures), result)
+    return result
+
+
+def evaluate_page_readiness(a11y_response: dict[str, Any], expectation: PageReadinessExpectation) -> dict[str, Any]:
+    root = a11y_response.get("root")
+    if not isinstance(root, dict):
+        raise ProofReadinessError("surface_mapped_page_not_ready", "a11y semantic response did not include a root node", {"response": a11y_response})
+    texts = flatten_a11y_text(root)
+    markers = parse_readiness_markers(texts)
+    failures: list[str] = []
+    if not markers.get("has_title"):
+        failures.append("missing ASHA proof page title")
+    if markers.get("scenario_id") != expectation.scenario_id:
+        failures.append(f"scenario id {markers.get('scenario_id')!r} != {expectation.scenario_id!r}")
+    if markers.get("step") != expectation.step:
+        failures.append(f"step {markers.get('step')!r} != {expectation.step!r}")
+    if expectation.projection_hash and markers.get("projection_hash") != expectation.projection_hash:
+        failures.append(f"projectionHash {markers.get('projection_hash')!r} != {expectation.projection_hash!r}")
+    result = {
+        "status": "ready" if not failures else "not_ready",
+        "phase": expectation.phase,
+        "backend": a11y_response.get("backend"),
+        "expected": {
+            "scenarioId": expectation.scenario_id,
+            "step": expectation.step,
+            "projectionHash": expectation.projection_hash,
+        },
+        "markers": markers,
+        "failures": failures,
+    }
+    if failures:
+        raise ProofReadinessError("surface_mapped_page_not_ready", "; ".join(failures), result)
+    return result
+
+
+def read_page_readiness_via_app_command(compositorctl: Path, surface_id: str, session_id: str, session_token: str, expectation: PageReadinessExpectation) -> dict[str, Any]:
+    response = run_json([
+        str(compositorctl), "--pretty", "app", "command",
+        "--surface", surface_id,
+        "--session", session_id,
+        "--session-token", session_token,
+        "--command", json.dumps({"type": "readiness", "scenarioId": expectation.scenario_id}),
+        "--timeout-ms", "3000",
+    ], timeout=20)
+    result = response.get("result")
+    if not isinstance(result, dict) or not result.get("ok"):
+        raise ProofReadinessError("surface_mapped_page_not_ready", "app-command readiness response was not ok", {"response": response})
+    markers = result.get("readiness")
+    if not isinstance(markers, dict):
+        raise ProofReadinessError("surface_mapped_page_not_ready", "app-command readiness response did not include readiness markers", {"response": response})
+    markers = dict(markers)
+    markers["request_id"] = response.get("request_id")
+    return evaluate_marker_readiness(markers, expectation, backend="webview-app-command")
+
+
+def assert_page_readiness(compositorctl: Path, surface_id: str, expectation: PageReadinessExpectation, *, session_id: str = "", session_token: str = "") -> dict[str, Any]:
+    if not surface_id:
+        raise ProofReadinessError("no_surface", "launch response did not include a surface id")
+    app_command_error: str | None = None
+    if session_id and session_token:
+        try:
+            return read_page_readiness_via_app_command(compositorctl, surface_id, session_id, session_token, expectation)
+        except ProofReadinessError:
+            raise
+        except RuntimeError as exc:
+            app_command_error = str(exc)
+    try:
+        response = run_json([str(compositorctl), "--pretty", "a11y", "semantic", "--surface", surface_id, "--depth", "14"], timeout=20)
+    except RuntimeError as exc:
+        detail = f"a11y semantic readiness query failed: {exc}"
+        if app_command_error:
+            detail = f"app-command readiness failed: {app_command_error}; {detail}"
+        raise ProofReadinessError("surface_mapped_page_not_ready", detail) from exc
+    return evaluate_page_readiness(response, expectation)
+
+
+def assert_capture_has_ready_proof_content(readiness: dict[str, Any], inspection: dict[str, Any], expectation: PageReadinessExpectation) -> None:
+    if inspection.get("status") == "visible" and readiness.get("status") != "ready":
+        raise ProofReadinessError("capture_visible_proof_content_missing", "capture is visible but proof readiness markers are missing", {"readiness": readiness, "inspection": inspection, "expected": expectation.__dict__})
+
+
+def assert_state_advanced(before: dict[str, Any], after: dict[str, Any], command: str) -> None:
+    before_markers = before.get("markers", {})
+    after_markers = after.get("markers", {})
+    if after_markers.get("step") == before_markers.get("step") or after_markers.get("projection_hash") == before_markers.get("projection_hash"):
+        raise ProofReadinessError(
+            "input_accepted_state_did_not_advance",
+            f"input for {command} was accepted but page state markers did not advance",
+            {"before": before_markers, "after": after_markers, "command": command},
+        )
+
+
+def free_loopback_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
 def maybe_sleep(seconds: float) -> None:
     if seconds > 0:
         time.sleep(seconds)
@@ -293,6 +490,7 @@ def run_live(args: argparse.Namespace) -> int:
 
     atexit.register(cleanup_session_once)
 
+    app_command_port = free_loopback_port()
     launch_cmd = " ".join([
         shlex.quote(str(webview_launcher)),
         "--path", shlex.quote(str(page_path)),
@@ -300,6 +498,7 @@ def run_live(args: argparse.Namespace) -> int:
         "--app-id", shlex.quote("org.agora.ASHAFirstPersonControl"),
         "--width", str(args.width),
         "--height", str(args.height),
+        "--app-command-port", str(app_command_port),
     ])
     launch = run_json([
         str(compositorctl), "--pretty", "launch",
@@ -314,7 +513,7 @@ def run_live(args: argparse.Namespace) -> int:
     surface = launch.get("surface") or {}
     surface_id = surface.get("surface", {}).get("id") or surface.get("id")
     if not surface_id:
-        raise RuntimeError(f"launch response did not include surface id: {launch}")
+        raise ProofReadinessError("no_surface", f"launch response did not include surface id: {launch}")
 
     readiness_notes: list[str] = []
     try:
@@ -323,8 +522,24 @@ def run_live(args: argparse.Namespace) -> int:
         readiness_notes.append(f"initial render-idle wait timed out; continuing to capture because surface is mapped/capturable: {exc}")
     maybe_sleep(args.settle_seconds)
     before = capture(compositorctl, session_id, session_token, surface_id, "initial")
+    before_path = capture_image_path(before)
+    before_inspection = inspect_png(before_path)
+    initial_expectation = PageReadinessExpectation(
+        scenario_id=SCENARIO_ID,
+        step=0,
+        projection_hash=expected_projection_for_step(asha_artifact, 0),
+        phase="initial",
+    )
+    try:
+        before_readiness = assert_page_readiness(compositorctl, surface_id, initial_expectation, session_id=session_id, session_token=session_token)
+    except ProofReadinessError as exc:
+        if before_inspection["status"] == "visible":
+            raise ProofReadinessError("capture_visible_proof_content_missing", str(exc), {"readiness": exc.details, "inspection": before_inspection}) from exc
+        raise
+    assert_capture_has_ready_proof_content(before_readiness, before_inspection, initial_expectation)
 
     step_results = []
+    previous_readiness = before_readiness
     for index, command in enumerate(commands, start=1):
         before_frame = surface.get("frame_count", 0) if isinstance(surface, dict) else 0
         key_result = run_json([
@@ -348,7 +563,24 @@ def run_live(args: argparse.Namespace) -> int:
             readiness_notes.append(f"render-idle wait after {command['command']} timed out; capture still attempted: {exc}")
         maybe_sleep(args.settle_seconds)
         cap = capture(compositorctl, session_id, session_token, surface_id, f"after-{index}-{command['sequence_id']}")
-        step_results.append({"index": index, "command": command, "keyResult": key_result, "waitFrame": wait_frame, "capture": cap})
+        cap_path = capture_image_path(cap)
+        cap_inspection = inspect_png(cap_path)
+        expectation = PageReadinessExpectation(
+            scenario_id=SCENARIO_ID,
+            step=index,
+            projection_hash=expected_projection_for_step(asha_artifact, index),
+            phase=f"after-{index}-{command['sequence_id']}",
+        )
+        try:
+            readiness = assert_page_readiness(compositorctl, surface_id, expectation, session_id=session_id, session_token=session_token)
+        except ProofReadinessError as exc:
+            if cap_inspection["status"] == "visible":
+                raise ProofReadinessError("capture_visible_proof_content_missing", str(exc), {"readiness": exc.details, "inspection": cap_inspection}) from exc
+            raise
+        assert_capture_has_ready_proof_content(readiness, cap_inspection, expectation)
+        assert_state_advanced(previous_readiness, readiness, command["command"])
+        step_results.append({"index": index, "command": command, "keyResult": key_result, "waitFrame": wait_frame, "capture": cap, "inspection": cap_inspection, "readiness": readiness})
+        previous_readiness = readiness
 
     after = step_results[-1]["capture"] if step_results else before
     before_path = capture_image_path(before)
@@ -382,6 +614,7 @@ def run_live(args: argparse.Namespace) -> int:
             "launchId": launch["launch_id"],
             "surfaceId": surface_id,
             "auditCorrelationId": audit_id,
+            "appCommandPort": app_command_port,
         },
         "ashaDemo": {
             "repo": str(asha_demo_root),
@@ -398,12 +631,15 @@ def run_live(args: argparse.Namespace) -> int:
             "keyResults": [{"command": step["command"], "accepted": step["keyResult"].get("accepted"), "rejected": step["keyResult"].get("rejected")} for step in step_results],
         },
         "readiness": {
-            "policy": "surface must map, capture must be visible/nonblank, and before/after must differ; render-idle wait is advisory because some WebKit/Wayfire paths keep frame_count at zero",
+            "policy": "surface must map, capture must be visible/nonblank, accessibility text must expose the ASHA proof title, scenario id, step, and projectionHash markers, input must advance those markers, and before/after pixels must differ; render-idle wait is advisory because some WebKit/Wayfire paths keep frame_count at zero",
+            "backend": before_readiness.get("backend"),
+            "initial": before_readiness,
+            "steps": [{"command": step["command"], "readiness": step["readiness"]} for step in step_results],
             "notes": readiness_notes,
         },
         "captures": {
             "before": before,
-            "steps": [{"command": step["command"], "capture": step["capture"]} for step in step_results],
+            "steps": [{"command": step["command"], "capture": step["capture"], "inspection": step["inspection"]} for step in step_results],
             "after": after,
             "beforeInspection": before_inspection,
             "afterInspection": after_inspection,
@@ -451,6 +687,70 @@ def self_test() -> int:
         diff = compare_pngs(before, after)
         assert diff["status"] == "changed", diff
         assert diff["changedPixels"] == 1, diff
+
+    ready_tree = {
+        "backend": "self-test",
+        "root": {
+            "name": "ASHA First-Person Agora Control",
+            "role": "document",
+            "children": [
+                {"name": "Scenario: first-person-agora-control-basic"},
+                {"name": '{"scenarioId":"first-person-agora-control-basic","step":0,"projectionHash":"fnv1a64:initial"}'},
+            ],
+        },
+    }
+    ready = evaluate_page_readiness(
+        ready_tree,
+        PageReadinessExpectation(SCENARIO_ID, step=0, projection_hash="fnv1a64:initial", phase="self-test"),
+    )
+    assert ready["status"] == "ready", ready
+    advanced_tree = {
+        "backend": "self-test",
+        "root": {
+            "name": "ASHA First-Person Agora Control",
+            "role": "document",
+            "children": [
+                {"name": '{"scenarioId":"first-person-agora-control-basic","step":1,"projectionHash":"fnv1a64:after"}'},
+            ],
+        },
+    }
+    advanced = evaluate_page_readiness(
+        advanced_tree,
+        PageReadinessExpectation(SCENARIO_ID, step=1, projection_hash="fnv1a64:after", phase="self-test-after"),
+    )
+    assert_state_advanced(ready, advanced, "moveForward")
+    app_markers = {
+        "title": "ASHA First-Person Agora Control",
+        "bodyReady": "true",
+        "scenarioId": SCENARIO_ID,
+        "step": 0,
+        "projectionHash": "fnv1a64:initial",
+    }
+    app_ready = evaluate_marker_readiness(dict(app_markers), PageReadinessExpectation(SCENARIO_ID, 0, "fnv1a64:initial"), backend="self-test-app-command")
+    assert app_ready["status"] == "ready", app_ready
+    for missing_ready in (dict(app_markers, bodyReady=""), {k: v for k, v in app_markers.items() if k != "bodyReady"}, {**{k: v for k, v in app_markers.items() if k != "bodyReady"}, "ready": True}):
+        try:
+            evaluate_marker_readiness(missing_ready, PageReadinessExpectation(SCENARIO_ID, 0, "fnv1a64:initial"), backend="self-test-app-command")
+        except ProofReadinessError as exc:
+            assert exc.category == "surface_mapped_page_not_ready", exc
+        else:
+            raise AssertionError("expected app-command readiness failure when bodyReady is absent or false")
+    for bad_tree, category in [
+        ({"backend": "self-test", "root": {"name": "ASHA First-Person Agora Control", "children": [{"name": '{"scenarioId":"wrong","step":0,"projectionHash":"fnv1a64:initial"}'}]}}, "surface_mapped_page_not_ready"),
+        ({"backend": "self-test"}, "surface_mapped_page_not_ready"),
+    ]:
+        try:
+            evaluate_page_readiness(bad_tree, PageReadinessExpectation(SCENARIO_ID, step=0, projection_hash="fnv1a64:initial"))
+        except ProofReadinessError as exc:
+            assert exc.category == category, exc
+        else:
+            raise AssertionError("expected readiness failure")
+    try:
+        assert_state_advanced(ready, ready, "moveForward")
+    except ProofReadinessError as exc:
+        assert exc.category == "input_accepted_state_did_not_advance", exc
+    else:
+        raise AssertionError("expected state advancement failure")
     print("self-test passed")
     return 0
 

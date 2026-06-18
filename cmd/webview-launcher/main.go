@@ -21,6 +21,7 @@ func main() {
 	flag.IntVar(&cfg.Width, "width", 1280, "initial window width in pixels")
 	flag.IntVar(&cfg.Height, "height", 800, "initial window height in pixels")
 	flag.StringVar(&cfg.Role, "role", "toplevel", "webview shell role: toplevel, panel, dock, background, overlay")
+	flag.IntVar(&cfg.AppCommandPort, "app-command-port", 0, "loopback port for typed app-command readiness endpoint (0 disables)")
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

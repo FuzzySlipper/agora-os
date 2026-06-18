@@ -18,8 +18,13 @@ python3 scripts/asha_agora_control_proof.py
 The live command expects `/usr/local/bin/compositorctl`, `/usr/local/bin/webview-launcher`,
 and `/home/dev/asha-demo` by default. It registers an exit cleanup handler after
 session creation, so ordinary failure paths also attempt to destroy the temporary
-session. It does not define ASHA camera semantics; it only launches, drives,
-captures, and classifies the public ASHA demo surface.
+session. The launcher starts a loopback app-command readiness endpoint for the
+webview helper, and the proof fails closed unless typed page markers confirm the
+ASHA proof title, scenario id, step number, projection hash, and post-input state
+advancement. This distinguishes “surface mapped” from “proof page actually
+ready” and catches visible-but-wrong captures. It does not define ASHA camera
+semantics; it only launches, drives, captures, and classifies the public ASHA
+demo surface.
 
 ## vm.sh — dev VM wrapper
 

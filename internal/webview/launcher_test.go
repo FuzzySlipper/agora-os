@@ -182,7 +182,7 @@ func TestLifecycleMapping(t *testing.T) {
 func TestHelperEnvAddsWaylandDefaults(t *testing.T) {
 	t.Parallel()
 
-	env := helperEnv([]string{"HOME=/tmp"})
+	env := helperEnv([]string{"HOME=/tmp"}, resolvedConfig{AppCommandPort: 41234})
 	joined := make(map[string]struct{}, len(env))
 	for _, item := range env {
 		joined[item] = struct{}{}
@@ -192,5 +192,8 @@ func TestHelperEnvAddsWaylandDefaults(t *testing.T) {
 	}
 	if _, ok := joined["PYTHONUNBUFFERED=1"]; !ok {
 		t.Fatal("expected PYTHONUNBUFFERED=1 in helper env")
+	}
+	if _, ok := joined["AGORA_APP_COMMAND_PORT=41234"]; !ok {
+		t.Fatal("expected AGORA_APP_COMMAND_PORT in helper env")
 	}
 }

@@ -35,25 +35,27 @@ const (
 )
 
 type Config struct {
-	URL    string `json:"url,omitempty"`
-	Path   string `json:"path,omitempty"`
-	Title  string `json:"title,omitempty"`
-	AppID  string `json:"app_id,omitempty"`
-	Width  int    `json:"width,omitempty"`
-	Height int    `json:"height,omitempty"`
-	Role   string `json:"role,omitempty"`
+	URL            string `json:"url,omitempty"`
+	Path           string `json:"path,omitempty"`
+	Title          string `json:"title,omitempty"`
+	AppID          string `json:"app_id,omitempty"`
+	Width          int    `json:"width,omitempty"`
+	Height         int    `json:"height,omitempty"`
+	Role           string `json:"role,omitempty"`
+	AppCommandPort int    `json:"app_command_port,omitempty"`
 
 	BusSocket string `json:"bus_socket,omitempty"`
 }
 
 type resolvedConfig struct {
-	TargetURI string
-	Title     string
-	AppID     string
-	Width     int
-	Height    int
-	Role      string
-	BusSocket string
+	TargetURI      string
+	Title          string
+	AppID          string
+	Width          int
+	Height         int
+	Role           string
+	AppCommandPort int
+	BusSocket      string
 }
 
 type helperEvent struct {
@@ -198,6 +200,9 @@ func normalizeConfig(cfg Config) (resolvedConfig, error) {
 	if err != nil {
 		return resolvedConfig{}, err
 	}
+	if cfg.AppCommandPort < 0 || cfg.AppCommandPort > 65535 {
+		return resolvedConfig{}, fmt.Errorf("app command port must be 0-65535, got %d", cfg.AppCommandPort)
+	}
 
 	title := strings.TrimSpace(cfg.Title)
 	if title == "" {
@@ -205,13 +210,14 @@ func normalizeConfig(cfg Config) (resolvedConfig, error) {
 	}
 
 	return resolvedConfig{
-		TargetURI: targetURI,
-		Title:     title,
-		AppID:     appID,
-		Width:     width,
-		Height:    height,
-		Role:      role,
-		BusSocket: busSocket,
+		TargetURI:      targetURI,
+		Title:          title,
+		AppID:          appID,
+		Width:          width,
+		Height:         height,
+		Role:           role,
+		AppCommandPort: cfg.AppCommandPort,
+		BusSocket:      busSocket,
 	}, nil
 }
 
@@ -294,7 +300,7 @@ func writeHelperScript() (string, error) {
 }
 
 func helperArgs(scriptPath string, cfg resolvedConfig) []string {
-	return []string{
+	args := []string{
 		scriptPath,
 		"--uri", cfg.TargetURI,
 		"--app-id", cfg.AppID,
@@ -303,6 +309,10 @@ func helperArgs(scriptPath string, cfg resolvedConfig) []string {
 		"--title", cfg.Title,
 		"--role", cfg.Role,
 	}
+	if cfg.AppCommandPort > 0 {
+		args = append(args, "--app-command-port", strconv.Itoa(cfg.AppCommandPort))
+	}
+	return args
 }
 
 func helperPython() string {
@@ -320,7 +330,7 @@ func startHelper(ctx context.Context, scriptPath string, cfg resolvedConfig) (*e
 	}
 	stderr := &bytes.Buffer{}
 	cmd.Stderr = stderr
-	cmd.Env = helperEnv(os.Environ())
+	cmd.Env = helperEnv(os.Environ(), cfg)
 	if err := cmd.Start(); err != nil {
 		msg := strings.TrimSpace(stderr.String())
 		if msg != "" {
@@ -331,13 +341,17 @@ func startHelper(ctx context.Context, scriptPath string, cfg resolvedConfig) (*e
 	return cmd, bufio.NewReader(stdout), stderr, nil
 }
 
-func helperEnv(base []string) []string {
-	for _, entry := range base {
+func helperEnv(base []string, cfg resolvedConfig) []string {
+	env := append([]string(nil), base...)
+	if cfg.AppCommandPort > 0 {
+		env = append(env, "AGORA_APP_COMMAND_PORT="+strconv.Itoa(cfg.AppCommandPort))
+	}
+	for _, entry := range env {
 		if strings.HasPrefix(entry, "GDK_BACKEND=") {
-			return append(append([]string(nil), base...), "PYTHONUNBUFFERED=1")
+			return append(env, "PYTHONUNBUFFERED=1")
 		}
 	}
-	return append(append([]string(nil), base...), "GDK_BACKEND=wayland", "PYTHONUNBUFFERED=1")
+	return append(env, "GDK_BACKEND=wayland", "PYTHONUNBUFFERED=1")
 }
 
 func terminateHelper(cmd *exec.Cmd) {
