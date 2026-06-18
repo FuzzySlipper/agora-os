@@ -1,5 +1,9 @@
 import { createBusConnection, type BusConnection } from "../shared/bus.js";
 import type { AgentInfo, BusEnvelope, DesktopShellState, ShellNotification, ShellWidget, SurfaceEvent } from "../shared/types.js";
+import { AgentHealthWidget } from "./widgets/agent-health.js";
+import { ClockWidget } from "./widgets/clock.js";
+import { NotificationCenter } from "./widgets/notification-center.js";
+import { TaskbarWidget } from "./widgets/taskbar.js";
 
 const DEFAULT_SUBSCRIPTIONS = [
     "compositor.surface.*",
@@ -29,10 +33,10 @@ export class ShellApp {
     private root: HTMLElement | null = null;
     private mounted = false;
     private subscribed = false;
-    private clockTimer: number | null = null;
 
     constructor(bus: BusConnection = createBusConnection({ protocols: tokenProtocols() })) {
         this.bus = bus;
+        this.registerDefaultWidgets();
     }
 
     mount(container: HTMLElement): void {
@@ -47,16 +51,11 @@ export class ShellApp {
             this.mountWidget(widget);
         }
         this.connectBus();
-        this.startClock();
         this.update(this.state);
     }
 
     unmount(): void {
         this.bus.disconnect();
-        if (this.clockTimer !== null) {
-            window.clearInterval(this.clockTimer);
-            this.clockTimer = null;
-        }
         for (const widget of this.widgets.values()) {
             widget.unmount();
         }
@@ -82,6 +81,13 @@ export class ShellApp {
 
     getWidget(id: string): ShellWidget | undefined {
         return this.widgets.get(id);
+    }
+
+    private registerDefaultWidgets(): void {
+        this.registerWidget(new AgentHealthWidget());
+        this.registerWidget(new ClockWidget());
+        this.registerWidget(new NotificationCenter());
+        this.registerWidget(new TaskbarWidget((topic, body) => this.bus.publish(topic, body)));
     }
 
     update(state: DesktopShellState): void {
@@ -138,42 +144,17 @@ export class ShellApp {
             agentCount.textContent = String(this.state.agents.length);
         }
     }
-
-    private startClock(): void {
-        if (this.clockTimer !== null) {
-            window.clearInterval(this.clockTimer);
-        }
-        const tick = () => {
-            const clock = this.root?.querySelector<HTMLTimeElement>(".shell-clock");
-            if (!clock) {
-                return;
-            }
-            const now = new Date();
-            clock.dateTime = now.toISOString();
-            clock.textContent = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-        };
-        tick();
-        this.clockTimer = window.setInterval(tick, 30_000);
-    }
 }
 
 function shellLayout(): string {
     return `
         <section class="shell-background" aria-hidden="true"></section>
         <section class="shell-grid" aria-label="Agora desktop shell">
-            <div class="shell-zone shell-zone--top-left" data-widget-slot="agent-health">
-                <span class="shell-health-dot"></span>
-                <span><span data-agent-count>0</span> agents</span>
-            </div>
-            <div class="shell-zone shell-zone--top-right" data-widget-slot="clock">
-                <time class="shell-clock">--:--</time>
-            </div>
+            <div class="shell-zone shell-zone--top-left" data-widget-slot="agent-health"></div>
+            <div class="shell-zone shell-zone--top-right" data-widget-slot="clock"></div>
             <div class="shell-zone shell-zone--center" data-widget-slot="center"></div>
             <div class="shell-zone shell-zone--bottom-right" data-widget-slot="notifications"></div>
-            <nav class="shell-taskbar" data-widget-slot="taskbar" aria-label="Desktop taskbar">
-                <button class="shell-launcher" type="button" aria-label="Open launcher">⌘</button>
-                <span class="shell-surface-count"><span data-surface-count>0</span> surfaces</span>
-            </nav>
+            <nav class="shell-taskbar" data-widget-slot="taskbar" aria-label="Desktop taskbar"></nav>
         </section>`;
 }
 
@@ -208,11 +189,13 @@ function applyAgentEvent(state: DesktopShellState, event: BusEnvelope): void {
     if (!event.body || typeof event.body !== "object") {
         return;
     }
-    const body = event.body as { agent?: AgentInfo } | AgentInfo;
-    const agent = ("agent" in body ? body.agent : body) as AgentInfo | undefined;
-    if (!agent?.identity) {
+    const body = event.body as { agent?: Partial<AgentInfo> } | Partial<AgentInfo>;
+    const rawAgent = ("agent" in body ? body.agent : body) as Partial<AgentInfo> | undefined;
+    const identity = rawAgent?.identity ?? rawAgent?.name ?? (rawAgent?.uid === undefined ? undefined : String(rawAgent.uid));
+    if (!identity || !rawAgent?.status) {
         return;
     }
+    const agent: AgentInfo = { ...rawAgent, identity, status: rawAgent.status };
     const existing = state.agents.findIndex((entry) => entry.identity === agent.identity);
     if (existing >= 0) {
         state.agents[existing] = { ...state.agents[existing], ...agent };

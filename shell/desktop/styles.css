@@ -124,7 +124,8 @@ body {
     backdrop-filter: blur(22px) !important;
 }
 
-.shell-clock {
+.shell-clock,
+agora-clock {
     display: block;
     min-width: 5rem;
     padding: 0.55rem 0.8rem;
@@ -139,6 +140,23 @@ body {
     backdrop-filter: blur(18px);
 }
 
+agora-agent-health {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.7rem;
+}
+
+.agent-health-widget__summary {
+    white-space: nowrap;
+}
+
+.agent-health-widget__dots {
+    display: inline-flex;
+    gap: 0.35rem;
+    align-items: center;
+}
+
+.agent-health-widget__dot,
 .shell-health-dot {
     width: var(--health-dot-size);
     height: var(--health-dot-size);
@@ -147,6 +165,26 @@ body {
     box-shadow: 0 0 18px var(--shell-accent);
 }
 
+.agent-health-widget__dot--active {
+    background: #34d399;
+    box-shadow: 0 0 14px rgba(52, 211, 153, 0.8);
+}
+
+.agent-health-widget__dot--idle {
+    background: #fbbf24;
+    box-shadow: 0 0 14px rgba(251, 191, 36, 0.75);
+}
+
+.agent-health-widget__dot--offline {
+    background: #f87171;
+    box-shadow: 0 0 14px rgba(248, 113, 113, 0.75);
+}
+
+agora-taskbar {
+    display: contents;
+}
+
+.taskbar-widget__launch,
 .shell-launcher {
     width: 2.4rem;
     height: 2.4rem;
@@ -159,11 +197,45 @@ body {
     cursor: pointer;
 }
 
+.taskbar-widget__surface {
+    width: 2rem;
+    height: 2rem;
+    border: 1px solid transparent;
+    border-radius: 0.7rem;
+    background: rgba(148, 163, 184, 0.16);
+    color: var(--shell-text);
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.taskbar-widget__surface--focused {
+    border-color: var(--shell-accent);
+    box-shadow: 0 0 0 2px rgba(118, 228, 247, 0.20);
+}
+
+.taskbar-widget__surfaces {
+    display: flex;
+    flex: 1;
+    gap: 0.45rem;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.taskbar-widget__session,
 .shell-surface-count {
     color: var(--shell-muted);
     font-size: 0.9rem;
+    white-space: nowrap;
 }
 
+agora-notification-center {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+}
+
+.notification-center__item,
 .shell-notification,
 .shell-zone--bottom-right > * {
     border: 1px solid var(--shell-border);
@@ -171,4 +243,18 @@ body {
     background: var(--notif-bg);
     box-shadow: 0 16px 44px rgba(0, 0, 0, 0.32);
     backdrop-filter: blur(18px);
+}
+
+.notification-center__title {
+    display: block;
+    margin-bottom: 0.25rem;
+    color: var(--shell-text);
+    font-size: 0.85rem;
+}
+
+.notification-center__message {
+    margin: 0;
+    color: var(--shell-muted);
+    font-size: 0.82rem;
+    line-height: 1.35;
 }

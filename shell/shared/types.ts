@@ -18,6 +18,8 @@ export type AgentStatus = "running" | "exited" | "stopped" | "available" | "busy
 
 export interface AgentInfo {
     identity: string;
+    name?: string;
+    uid?: number;
     status: AgentStatus;
     last_seen?: string;
 }
