@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "mkdir -p dist && cp src/index.html src/styles.css dist/ && rm -rf dist/build && tsc --project tsconfig.json && cp dist/build/src/app.js dist/app.js && rm -rf dist/build",
+    "build": "npm run build-console && npm run build-desktop",
+    "build-console": "mkdir -p dist && cp src/index.html src/styles.css dist/ && rm -rf dist/build && tsc --project tsconfig.json && cp dist/build/src/app.js dist/app.js && rm -rf dist/build",
     "build-desktop": "mkdir -p dist/desktop && cp desktop/index.html desktop/styles.css dist/desktop/ && tsc --project tsconfig.desktop.json"
   },
   "devDependencies": {

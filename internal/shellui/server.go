@@ -114,7 +114,23 @@ func New(cfg Config) *Server {
 }
 
 func (s *Server) StaticHandler() http.Handler {
-	return s.assets
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqPath := r.URL.Path
+		if !strings.HasPrefix(reqPath, "/") {
+			reqPath = "/" + reqPath
+		}
+		if strings.HasPrefix(path.Clean(reqPath), "/dist") {
+			servePath := strings.TrimPrefix(reqPath, "/dist")
+			if servePath == "" {
+				servePath = "/"
+			}
+			clone := r.Clone(r.Context())
+			clone.URL.Path = servePath
+			s.assets.ServeHTTP(w, clone)
+			return
+		}
+		s.assets.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {

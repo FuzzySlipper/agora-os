@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/patch/agora-os/internal/schema"
@@ -164,6 +165,46 @@ func TestEscalationDecisionAppendsDecisionLog(t *testing.T) {
 	}
 	if decision.ID != pending[0].ID || decision.Decision != schema.DecisionApprove {
 		t.Fatalf("got decision %+v", decision)
+	}
+}
+
+func TestStaticHandlerServesShellDistAliasAndDesktop(t *testing.T) {
+	t.Parallel()
+
+	server := New(Config{
+		Assets: fstest.MapFS{
+			"index.html":         {Data: []byte("operator console")},
+			"desktop/index.html": {Data: []byte("desktop shell")},
+		},
+	})
+	handler := server.StaticHandler()
+
+	tests := []struct {
+		path string
+		want string
+	}{
+		{path: "/", want: "operator console"},
+		{path: "/dist/", want: "operator console"},
+		{path: "/dist/desktop/", want: "desktop shell"},
+		{path: "dist/desktop/", want: "desktop shell"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			target := tt.path
+			if target[0] != '/' {
+				target = "/"
+			}
+			req := httptest.NewRequest(http.MethodGet, target, nil)
+			req.URL.Path = tt.path
+			resp := httptest.NewRecorder()
+			handler.ServeHTTP(resp, req)
+			if resp.Code != http.StatusOK {
+				t.Fatalf("got status %d, want 200", resp.Code)
+			}
+			if body := resp.Body.String(); body != tt.want {
+				t.Fatalf("got body %q, want %q", body, tt.want)
+			}
+		})
 	}
 }
 
