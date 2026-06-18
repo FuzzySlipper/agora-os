@@ -356,6 +356,15 @@ func (b *Bridge) LaunchApp(req schema.LaunchAppRequest) (schema.LaunchAppRespons
 	return b.launchAppAsPeer(0, req)
 }
 
+func launchCommand(req schema.LaunchAppRequest) string {
+	command := req.Command
+	role := strings.TrimSpace(req.Role)
+	if role != "" && role != "toplevel" && !strings.Contains(command, "--role") {
+		command += " --role " + role
+	}
+	return command
+}
+
 func (b *Bridge) launchAppAsPeer(peerUID uint32, req schema.LaunchAppRequest) (schema.LaunchAppResponse, error) {
 	if strings.TrimSpace(req.Command) == "" {
 		return schema.LaunchAppResponse{}, fmt.Errorf("command is required")
@@ -378,7 +387,8 @@ func (b *Bridge) launchAppAsPeer(peerUID uint32, req schema.LaunchAppRequest) (s
 		}
 	}
 
-	cmd := exec.Command("sh", "-lc", req.Command)
+	command := launchCommand(req)
+	cmd := exec.Command("sh", "-lc", command)
 	sys := &syscall.SysProcAttr{Setpgid: true}
 	cred, err := launchCredential(peerUID, req)
 	if err != nil {
@@ -418,7 +428,7 @@ func (b *Bridge) launchAppAsPeer(peerUID uint32, req schema.LaunchAppRequest) (s
 		LaunchID:  launchID,
 		SessionID: req.SessionID,
 		PID:       cmd.Process.Pid,
-		Command:   req.Command,
+		Command:   command,
 		Cwd:       req.Cwd,
 		Status:    "running",
 		StartedAt: now,

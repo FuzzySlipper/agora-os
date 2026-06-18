@@ -919,6 +919,27 @@ func unixSocketPair(t *testing.T) (server net.Conn, client net.Conn, cleanup fun
 	return server, client, cleanup
 }
 
+func TestLaunchCommandAppendsNonDefaultRole(t *testing.T) {
+	t.Parallel()
+
+	command := launchCommand(schema.LaunchAppRequest{Command: "webview-launcher --url http://example.test", Role: "panel"})
+	if command != "webview-launcher --url http://example.test --role panel" {
+		t.Fatalf("got command %q", command)
+	}
+}
+
+func TestLaunchCommandDoesNotAppendDefaultOrDuplicateRole(t *testing.T) {
+	t.Parallel()
+
+	if got := launchCommand(schema.LaunchAppRequest{Command: "sleep 30", Role: "toplevel"}); got != "sleep 30" {
+		t.Fatalf("default role changed command: %q", got)
+	}
+	already := "webview-launcher --url http://example.test --role dock"
+	if got := launchCommand(schema.LaunchAppRequest{Command: already, Role: "panel"}); got != already {
+		t.Fatalf("duplicate role rewrite = %q, want %q", got, already)
+	}
+}
+
 func TestLaunchCredentialOverrideRequiresRootPeer(t *testing.T) {
 	uid := uint32(0)
 	gid := uint32(0)

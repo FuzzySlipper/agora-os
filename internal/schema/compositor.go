@@ -454,6 +454,7 @@ type LaunchAppRequest struct {
 	RunAsGID           *uint32           `json:"run_as_gid,omitempty"`
 	ExpectedAppID      string            `json:"expected_app_id,omitempty"`
 	ExpectedTitle      string            `json:"expected_title,omitempty"`
+	Role               string            `json:"role,omitempty"`
 	Output             string            `json:"output,omitempty"`
 	WaitSurface        bool              `json:"wait_surface,omitempty"`
 	WaitTimeoutMs      int               `json:"wait_timeout_ms,omitempty"`

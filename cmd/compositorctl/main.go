@@ -423,7 +423,27 @@ func cmdOutput(args []string, pretty bool) error {
 	}
 }
 
-func cmdLaunch(args []string, pretty bool) error {
+func validLaunchRole(role string) bool {
+	switch role {
+	case "toplevel", "panel", "dock", "background", "overlay":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeLaunchRole(role string) (string, error) {
+	role = strings.TrimSpace(role)
+	if role == "" {
+		return "toplevel", nil
+	}
+	if !validLaunchRole(role) {
+		return "", fmt.Errorf("invalid --role %q (valid values: toplevel, panel, dock, background, overlay)", role)
+	}
+	return role, nil
+}
+
+func buildLaunchRequest(args []string) (schema.LaunchAppRequest, error) {
 	fs := flag.NewFlagSet("launch", flag.ExitOnError)
 	cmd := fs.String("cmd", "", "command to launch (required)")
 	sessionID := fs.String("session", "", "session id")
@@ -434,6 +454,7 @@ func cmdLaunch(args []string, pretty bool) error {
 	runAsGID := fs.Uint("gid", 0, "run process as GID (bridge must have permission; default bridge policy may choose agent)")
 	expectedAppID := fs.String("expected-app-id", "", "expected compositor app id")
 	expectedTitle := fs.String("expected-title", "", "expected surface title substring")
+	role := fs.String("role", "toplevel", "webview role: toplevel, panel, dock, background, overlay")
 	output := fs.String("output", "", "logical output name to place the launched surface into")
 	waitSurface := fs.Bool("wait-surface", false, "wait for first matching surface")
 	waitTimeout := fs.Int("wait-timeout-ms", 5000, "surface wait timeout in milliseconds")
@@ -441,11 +462,15 @@ func cmdLaunch(args []string, pretty bool) error {
 	fs.Var(&env, "env", "environment variable KEY=VALUE; may be repeated")
 	fs.Parse(args)
 	if *cmd == "" {
-		return fmt.Errorf("--cmd is required")
+		return schema.LaunchAppRequest{}, fmt.Errorf("--cmd is required")
+	}
+	launchRole, err := normalizeLaunchRole(*role)
+	if err != nil {
+		return schema.LaunchAppRequest{}, err
 	}
 	req := schema.LaunchAppRequest{
 		SessionID: *sessionID, SessionToken: *sessionToken, AuditCorrelationID: *auditID, Command: *cmd, Cwd: *cwd, Env: env, ExpectedAppID: *expectedAppID,
-		ExpectedTitle: *expectedTitle, Output: *output, WaitSurface: *waitSurface, WaitTimeoutMs: *waitTimeout,
+		ExpectedTitle: *expectedTitle, Role: launchRole, Output: *output, WaitSurface: *waitSurface, WaitTimeoutMs: *waitTimeout,
 	}
 	if *runAsUID != 0 {
 		uid := uint32(*runAsUID)
@@ -454,6 +479,14 @@ func cmdLaunch(args []string, pretty bool) error {
 	if *runAsGID != 0 {
 		gid := uint32(*runAsGID)
 		req.RunAsGID = &gid
+	}
+	return req, nil
+}
+
+func cmdLaunch(args []string, pretty bool) error {
+	req, err := buildLaunchRequest(args)
+	if err != nil {
+		return err
 	}
 	return callAndPrint(schema.MethodLaunchApp, req, pretty)
 }
