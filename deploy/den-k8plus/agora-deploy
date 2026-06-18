@@ -329,6 +329,9 @@ install_host_assets() {
   systemd-analyze verify /etc/systemd/system/event-bus.service /etc/systemd/system/event-bus-web.service /etc/systemd/system/compositor-bridge.service /etc/systemd/system/agora-wayfire.service
   sha256sum /etc/systemd/system/agora-wayfire.service /etc/systemd/system/event-bus.service /etc/systemd/system/event-bus-web.service /etc/systemd/system/compositor-bridge.service "$WAYFIRE_CONFIG_TARGET" >"$backup_dir/post-sha256.txt"
 
+  info "enable support services"
+  systemctl enable "${SYSTEM_SERVICES[@]}"
+
   info "restart support services only"
   restart_services
 
