@@ -4,6 +4,7 @@ import { AgentHealthWidget } from "./widgets/agent-health.js";
 import { ClockWidget } from "./widgets/clock.js";
 import { NotificationCenter } from "./widgets/notification-center.js";
 import { TaskbarWidget } from "./widgets/taskbar.js";
+import { createThemeController, type ThemeController } from "./theme.js";
 
 const DEFAULT_SUBSCRIPTIONS = [
     "compositor.surface.*",
@@ -12,6 +13,8 @@ const DEFAULT_SUBSCRIPTIONS = [
     "agent.work.progress",
     "conversation.turn.responded",
     "shell.theme",
+    "shell.apply_theme",
+    "shell.reset_theme",
 ];
 
 const emptyState = (): DesktopShellState => ({
@@ -33,9 +36,11 @@ export class ShellApp {
     private root: HTMLElement | null = null;
     private mounted = false;
     private subscribed = false;
+    private readonly theme: ThemeController;
 
     constructor(bus: BusConnection = createBusConnection({ protocols: tokenProtocols() })) {
         this.bus = bus;
+        this.theme = createThemeController(this.bus);
         this.registerDefaultWidgets();
     }
 
