@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "mkdir -p dist && cp src/index.html src/styles.css dist/ && tsc --project tsconfig.json"
+    "build": "mkdir -p dist && cp src/index.html src/styles.css dist/ && rm -rf dist/build && tsc --project tsconfig.json && cp dist/build/src/app.js dist/app.js && rm -rf dist/build"
   },
   "devDependencies": {
     "typescript": "^5.8.3"
