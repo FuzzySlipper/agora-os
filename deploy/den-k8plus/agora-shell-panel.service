@@ -1,0 +1,22 @@
+[Unit]
+Description=Agora Desktop Shell Panel
+Wants=event-bus-web.service compositor-bridge.service agora-wayfire.service
+Requires=event-bus-web.service compositor-bridge.service
+BindsTo=agora-wayfire.service
+PartOf=agora-wayfire.service
+After=event-bus-web.service compositor-bridge.service agora-wayfire.service
+
+[Service]
+Type=simple
+User=agent
+Group=agents
+Environment=HOME=/home/agent
+Environment=XDG_RUNTIME_DIR=/run/user/1001
+ExecStart=/usr/bin/bash /usr/local/bin/agora-shell-panel-supervisor
+Restart=on-failure
+RestartSec=3s
+TimeoutStopSec=10s
+KillMode=control-group
+
+[Install]
+WantedBy=agora-wayfire.service

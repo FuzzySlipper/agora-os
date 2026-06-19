@@ -25,8 +25,10 @@ readonly -a GO_TARGETS=(
 )
 readonly -a USER_SERVICES=(compositor-bridge event-bus)
 readonly -a SYSTEM_SERVICES=(event-bus.service event-bus-web.service compositor-bridge.service)
-readonly -a HOST_UNIT_FILES=(event-bus.service event-bus-web.service compositor-bridge.service agora-wayfire.service)
-readonly -a HOST_ASSET_FILES=(event-bus.service event-bus-web.service compositor-bridge.service agora-wayfire.service wayfire.ini)
+readonly SHELL_PANEL_SERVICE=agora-shell-panel.service
+readonly -a HOST_UNIT_FILES=(event-bus.service event-bus-web.service compositor-bridge.service agora-wayfire.service agora-shell-panel.service)
+readonly -a HOST_EXEC_FILES=(agora-shell-panel-supervisor)
+readonly -a HOST_ASSET_FILES=(event-bus.service event-bus-web.service compositor-bridge.service agora-wayfire.service agora-shell-panel.service wayfire.ini agora-shell-panel-supervisor)
 
 usage() {
   cat <<'USAGE'
@@ -240,10 +242,40 @@ validate_agora_wayfire_unit() {
   reject_unit_line "$unit" '^[[:space:]]*(StandardInput|TTYPath|TTYReset|TTYVHangup)[[:space:]]*=' 'agora-wayfire must let openvt own tty setup'
 }
 
+validate_agora_shell_panel_unit() {
+  local unit=$1
+  reject_unit_line "$unit" '^[[:space:]]*(ExecStartPost|EnvironmentFile|WorkingDirectory|SupplementaryGroups|CapabilityBoundingSet|AmbientCapabilities|DeviceAllow|BindPaths|ReadWritePaths|RootDirectory|RootImage)[[:space:]]*=' \
+    "agora-shell-panel unit uses a high-risk directive outside the reviewed allow-list"
+  require_unit_line_count "$unit" '^ExecStart=' 1 'agora-shell-panel ExecStart count guard failed'
+  require_unit_line "$unit" 'User=agent' 'agora-shell-panel User guard failed'
+  require_unit_line "$unit" 'Group=agents' 'agora-shell-panel Group guard failed'
+  require_unit_line "$unit" 'Wants=event-bus-web.service compositor-bridge.service agora-wayfire.service' 'agora-shell-panel Wants guard failed'
+  require_unit_line "$unit" 'Requires=event-bus-web.service compositor-bridge.service' 'agora-shell-panel Requires guard failed'
+  require_unit_line "$unit" 'BindsTo=agora-wayfire.service' 'agora-shell-panel BindsTo guard failed'
+  require_unit_line "$unit" 'PartOf=agora-wayfire.service' 'agora-shell-panel PartOf guard failed'
+  require_unit_line "$unit" 'After=event-bus-web.service compositor-bridge.service agora-wayfire.service' 'agora-shell-panel After guard failed'
+  require_unit_line "$unit" 'Environment=HOME=/home/agent' 'agora-shell-panel HOME guard failed'
+  require_unit_line "$unit" 'Environment=XDG_RUNTIME_DIR=/run/user/1001' 'agora-shell-panel runtime-dir guard failed'
+  require_unit_line "$unit" 'ExecStart=/usr/bin/bash /usr/local/bin/agora-shell-panel-supervisor' 'agora-shell-panel ExecStart guard failed'
+  require_unit_line "$unit" 'Restart=on-failure' 'agora-shell-panel Restart guard failed'
+  require_unit_line "$unit" 'RestartSec=3s' 'agora-shell-panel RestartSec guard failed'
+  require_unit_line "$unit" 'WantedBy=agora-wayfire.service' 'agora-shell-panel install guard failed'
+}
+
 validate_wayfire_config() {
   local config=$1
   grep -Fq '[agora-bridge]' "$config" || die "wayfire.ini missing [agora-bridge] section"
   grep -Fxq 'socket_path = /run/agent-os/compositor-bridge.sock' "$config" || die "wayfire.ini compositor bridge socket guard failed"
+}
+
+validate_shell_panel_supervisor() {
+  local script=$1
+  [[ -x "$script" ]] || die "agora-shell-panel-supervisor must be executable in git source"
+  grep -Fq 'SHELL_URL=${AGORA_SHELL_URL:-http://127.0.0.1:7780/shell/dist/desktop/}' "$script" || die "shell panel supervisor URL guard failed"
+  grep -Fq 'EXPECTED_APP_ID=${AGORA_SHELL_EXPECTED_APP_ID:-agora-webview}' "$script" || die "shell panel supervisor app-id guard failed"
+  grep -Fq 'EXPECTED_TITLE=${AGORA_SHELL_EXPECTED_TITLE:-agora-webview}' "$script" || die "shell panel supervisor title guard failed"
+  grep -Fq 'wait-timeout-ms "$WAIT_TIMEOUT_MS"' "$script" || die "shell panel supervisor wait-surface guard failed"
+  grep -Fq '"$COMPOSITORCTL" terminate --launch-id "$launch_id"' "$script" || die "shell panel supervisor cleanup guard failed"
 }
 
 validate_host_asset_sources() {
@@ -268,16 +300,21 @@ stage_host_assets() {
   local stage=$1 file
   install -d -o root -g root -m 0700 "$stage"
   for file in "${HOST_ASSET_FILES[@]}"; do
-    install -o root -g root -m 0644 "$HOST_ASSETS_DIR/$file" "$stage/$file"
+    case " ${HOST_EXEC_FILES[*]} " in
+      *" $file "*) install -o root -g root -m 0755 "$HOST_ASSETS_DIR/$file" "$stage/$file" ;;
+      *) install -o root -g root -m 0644 "$HOST_ASSETS_DIR/$file" "$stage/$file" ;;
+    esac
   done
 
   validate_event_bus_unit "$stage/event-bus.service"
   validate_event_bus_web_unit "$stage/event-bus-web.service"
   validate_compositor_bridge_unit "$stage/compositor-bridge.service"
   validate_agora_wayfire_unit "$stage/agora-wayfire.service"
+  validate_agora_shell_panel_unit "$stage/agora-shell-panel.service"
   validate_wayfire_config "$stage/wayfire.ini"
+  validate_shell_panel_supervisor "$stage/agora-shell-panel-supervisor"
 
-  systemd-analyze verify "$stage/event-bus.service" "$stage/event-bus-web.service" "$stage/compositor-bridge.service" "$stage/agora-wayfire.service"
+  systemd-analyze verify "$stage/event-bus.service" "$stage/event-bus-web.service" "$stage/compositor-bridge.service" "$stage/agora-wayfire.service" "$stage/agora-shell-panel.service"
 }
 
 backup_existing_host_assets() {
@@ -296,9 +333,14 @@ backup_existing_host_assets() {
   else
     printf 'missing before install: %s\n' "$WAYFIRE_CONFIG_TARGET" >"$backup_dir/wayfire.ini.missing"
   fi
-  systemctl is-active agora-wayfire.service event-bus.service event-bus-web.service compositor-bridge.service sddm.service display-manager.service >"$backup_dir/pre-is-active.txt" 2>&1 || true
-  systemctl is-enabled agora-wayfire.service event-bus.service event-bus-web.service compositor-bridge.service sddm.service display-manager.service >"$backup_dir/pre-is-enabled.txt" 2>&1 || true
-  sha256sum /etc/systemd/system/agora-wayfire.service /etc/systemd/system/event-bus.service /etc/systemd/system/event-bus-web.service /etc/systemd/system/compositor-bridge.service "$WAYFIRE_CONFIG_TARGET" >"$backup_dir/pre-sha256.txt" 2>/dev/null || true
+  if [[ -e "$INSTALL_BIN_DIR/agora-shell-panel-supervisor" ]]; then
+    cp -a "$INSTALL_BIN_DIR/agora-shell-panel-supervisor" "$backup_dir/agora-shell-panel-supervisor.bak"
+  else
+    printf 'missing before install: %s\n' "$INSTALL_BIN_DIR/agora-shell-panel-supervisor" >"$backup_dir/agora-shell-panel-supervisor.missing"
+  fi
+  systemctl is-active agora-wayfire.service event-bus.service event-bus-web.service compositor-bridge.service agora-shell-panel.service sddm.service display-manager.service >"$backup_dir/pre-is-active.txt" 2>&1 || true
+  systemctl is-enabled agora-wayfire.service event-bus.service event-bus-web.service compositor-bridge.service agora-shell-panel.service sddm.service display-manager.service >"$backup_dir/pre-is-enabled.txt" 2>&1 || true
+  sha256sum /etc/systemd/system/agora-wayfire.service /etc/systemd/system/event-bus.service /etc/systemd/system/event-bus-web.service /etc/systemd/system/compositor-bridge.service /etc/systemd/system/agora-shell-panel.service "$WAYFIRE_CONFIG_TARGET" "$INSTALL_BIN_DIR/agora-shell-panel-supervisor" >"$backup_dir/pre-sha256.txt" 2>/dev/null || true
 }
 
 install_host_assets() {
@@ -321,16 +363,18 @@ install_host_assets() {
   install -o root -g root -m 0644 "$stage/event-bus-web.service" /etc/systemd/system/event-bus-web.service
   install -o root -g root -m 0644 "$stage/compositor-bridge.service" /etc/systemd/system/compositor-bridge.service
   install -o root -g root -m 0644 "$stage/agora-wayfire.service" /etc/systemd/system/agora-wayfire.service
+  install -o root -g root -m 0644 "$stage/agora-shell-panel.service" /etc/systemd/system/agora-shell-panel.service
+  install -o root -g root -m 0755 "$stage/agora-shell-panel-supervisor" "$INSTALL_BIN_DIR/agora-shell-panel-supervisor"
   install -d -o "$BUILD_USER" -g "$BUILD_GROUP" -m 0755 /home/agent/.config
   install -o "$BUILD_USER" -g "$BUILD_GROUP" -m 0644 "$stage/wayfire.ini" "$WAYFIRE_CONFIG_TARGET"
 
   info "daemon reload and post-install verify"
   systemctl daemon-reload
-  systemd-analyze verify /etc/systemd/system/event-bus.service /etc/systemd/system/event-bus-web.service /etc/systemd/system/compositor-bridge.service /etc/systemd/system/agora-wayfire.service
-  sha256sum /etc/systemd/system/agora-wayfire.service /etc/systemd/system/event-bus.service /etc/systemd/system/event-bus-web.service /etc/systemd/system/compositor-bridge.service "$WAYFIRE_CONFIG_TARGET" >"$backup_dir/post-sha256.txt"
+  systemd-analyze verify /etc/systemd/system/event-bus.service /etc/systemd/system/event-bus-web.service /etc/systemd/system/compositor-bridge.service /etc/systemd/system/agora-wayfire.service /etc/systemd/system/agora-shell-panel.service
+  sha256sum /etc/systemd/system/agora-wayfire.service /etc/systemd/system/event-bus.service /etc/systemd/system/event-bus-web.service /etc/systemd/system/compositor-bridge.service /etc/systemd/system/agora-shell-panel.service "$WAYFIRE_CONFIG_TARGET" "$INSTALL_BIN_DIR/agora-shell-panel-supervisor" >"$backup_dir/post-sha256.txt"
 
-  info "enable support services"
-  systemctl enable "${SYSTEM_SERVICES[@]}"
+  info "enable support services and shell panel autostart"
+  systemctl enable "${SYSTEM_SERVICES[@]}" "$SHELL_PANEL_SERVICE"
 
   info "restart support services only"
   restart_services
@@ -405,6 +449,18 @@ status() {
   else
     echo "missing: $WAYFIRE_CONFIG_TARGET"
   fi
+  for src in "${HOST_EXEC_FILES[@]}"; do
+    local executable="$INSTALL_BIN_DIR/$src"
+    if [[ -e "$executable" ]]; then
+      stat -c '%A %U:%G %s %y %n' "$executable"
+      if command -v sha256sum >/dev/null 2>&1 && [[ -f "$HOST_ASSETS_DIR/$src" ]]; then
+        printf '  source sha256:   '; sha256sum "$HOST_ASSETS_DIR/$src" | awk '{print $1}'
+        printf '  installed sha256:'; sha256sum "$executable" | awk '{print " " $1}'
+      fi
+    else
+      echo "missing: $executable"
+    fi
+  done
 
   info "Wayfire plugin artifacts"
   if command -v pkg-config >/dev/null 2>&1 && pkg-config --exists wayfire; then
@@ -423,7 +479,7 @@ status() {
   fi
 
   info "system services"
-  systemctl --no-pager --full status "${SYSTEM_SERVICES[@]}" agora-wayfire.service 2>/dev/null || true
+  systemctl --no-pager --full status "${SYSTEM_SERVICES[@]}" "$SHELL_PANEL_SERVICE" agora-wayfire.service 2>/dev/null || true
 
   info "$BUILD_USER user services"
   if [[ -d /run/user/1001 ]]; then
@@ -439,7 +495,7 @@ show_logs() {
   (( lines >= 1 && lines <= 1000 )) || die "log line count must be between 1 and 1000"
 
   info "system service logs"
-  journalctl --no-pager -n "$lines" -u compositor-bridge.service -u event-bus.service -u event-bus-web.service -u agora-wayfire.service 2>/dev/null || true
+  journalctl --no-pager -n "$lines" -u compositor-bridge.service -u event-bus.service -u event-bus-web.service -u agora-shell-panel.service -u agora-wayfire.service 2>/dev/null || true
 
   info "$BUILD_USER user service logs"
   if [[ -d /run/user/1001 ]]; then
