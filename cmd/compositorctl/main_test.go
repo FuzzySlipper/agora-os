@@ -103,6 +103,43 @@ func TestBuildSetViewPropertyRequestRequiresProperty(t *testing.T) {
 	}
 }
 
+func TestDefaultShellConfigDirUsesSharedDirWhenPresent(t *testing.T) {
+	sharedDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "xdg"))
+	t.Setenv("HOME", filepath.Join(t.TempDir(), "home"))
+
+	got := defaultShellConfigDirWithShared(sharedDir)
+	if got != sharedDir {
+		t.Fatalf("got default shell config dir %q, want shared dir %q", got, sharedDir)
+	}
+}
+
+func TestDefaultShellConfigDirFallsBackToXDGWhenSharedMissing(t *testing.T) {
+	missingSharedDir := filepath.Join(t.TempDir(), "missing-shared")
+	xdg := filepath.Join(t.TempDir(), "xdg")
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+	t.Setenv("HOME", filepath.Join(t.TempDir(), "home"))
+
+	got := defaultShellConfigDirWithShared(missingSharedDir)
+	want := filepath.Join(xdg, "agora-shell")
+	if got != want {
+		t.Fatalf("got default shell config dir %q, want %q", got, want)
+	}
+}
+
+func TestDefaultShellConfigDirFallsBackToHomeWhenSharedAndXDGMissing(t *testing.T) {
+	missingSharedDir := filepath.Join(t.TempDir(), "missing-shared")
+	home := filepath.Join(t.TempDir(), "home")
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("HOME", home)
+
+	got := defaultShellConfigDirWithShared(missingSharedDir)
+	want := filepath.Join(home, ".config", "agora-shell")
+	if got != want {
+		t.Fatalf("got default shell config dir %q, want %q", got, want)
+	}
+}
+
 func TestBuildShellSetThemePayloadValidatesAndCopiesCSS(t *testing.T) {
 	t.Parallel()
 

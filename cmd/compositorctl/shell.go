@@ -14,6 +14,7 @@ import (
 
 	"github.com/patch/agora-os/internal/bus"
 	"github.com/patch/agora-os/internal/schema"
+	"github.com/patch/agora-os/internal/shellui"
 )
 
 const defaultThemeCSSURL = "/api/shell/theme.css"
@@ -94,7 +95,7 @@ Subcommands:
 
 Common flags:
   --bus-socket PATH  event bus socket (default /run/agent-os/bus.sock)
-  --config-dir PATH  shell config dir (default $XDG_CONFIG_HOME/agora-shell or ~/.config/agora-shell)
+  --config-dir PATH  shell config dir (default /etc/agora-shell when present, otherwise $XDG_CONFIG_HOME/agora-shell or ~/.config/agora-shell)
 `)
 }
 
@@ -437,6 +438,13 @@ func publishShellEvent(busSocket, topic string, body any) error {
 }
 
 func defaultShellConfigDir() string {
+	return defaultShellConfigDirWithShared(shellui.DefaultShellConfigDir)
+}
+
+func defaultShellConfigDirWithShared(sharedDir string) string {
+	if info, err := os.Stat(sharedDir); err == nil && info.IsDir() {
+		return sharedDir
+	}
 	if xdg := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); xdg != "" {
 		return filepath.Join(xdg, "agora-shell")
 	}
