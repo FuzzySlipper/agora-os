@@ -54,15 +54,18 @@ func TestResolveTargetPath(t *testing.T) {
 	}
 }
 
-func TestConfigJSONIncludesRole(t *testing.T) {
+func TestConfigJSONIncludesRoleAndFullscreen(t *testing.T) {
 	t.Parallel()
 
-	encoded, err := json.Marshal(Config{URL: "https://example.com", Role: "panel"})
+	encoded, err := json.Marshal(Config{URL: "https://example.com", Role: "panel", Fullscreen: true})
 	if err != nil {
 		t.Fatalf("marshal config: %v", err)
 	}
 	if !strings.Contains(string(encoded), `"role":"panel"`) {
 		t.Fatalf("encoded config missing role tag: %s", encoded)
+	}
+	if !strings.Contains(string(encoded), `"fullscreen":true`) {
+		t.Fatalf("encoded config missing fullscreen tag: %s", encoded)
 	}
 }
 
@@ -91,19 +94,29 @@ func TestHelperArgsPassesRole(t *testing.T) {
 	t.Parallel()
 
 	args := helperArgs("/tmp/helper.py", resolvedConfig{
-		TargetURI: "https://example.com",
-		AppID:     "io.agoraos.Test",
-		Width:     640,
-		Height:    480,
-		Title:     "Test",
-		Role:      "panel",
+		TargetURI:  "https://example.com",
+		AppID:      "io.agoraos.Test",
+		Width:      640,
+		Height:     480,
+		Title:      "Test",
+		Role:       "panel",
+		Fullscreen: true,
 	})
+	foundRole := false
+	foundFullscreen := false
 	for i := 0; i < len(args)-1; i++ {
 		if args[i] == "--role" && args[i+1] == "panel" {
-			return
+			foundRole = true
 		}
 	}
-	t.Fatalf("helper args missing --role panel: %#v", args)
+	for _, arg := range args {
+		if arg == "--fullscreen" {
+			foundFullscreen = true
+		}
+	}
+	if !foundRole || !foundFullscreen {
+		t.Fatalf("helper args missing role/fullscreen: %#v", args)
+	}
 }
 
 func TestHelperPythonDefaultAndOverride(t *testing.T) {

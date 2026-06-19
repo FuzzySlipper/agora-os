@@ -6,9 +6,19 @@ set -euo pipefail
 IFS=$'\n\t'
 
 COMPOSITORCTL=${COMPOSITORCTL:-/usr/local/bin/compositorctl}
+WEBVIEW_LAUNCHER=${WEBVIEW_LAUNCHER:-/usr/local/bin/webview-launcher}
 SHELL_URL=${AGORA_SHELL_URL:-http://127.0.0.1:7780/shell/dist/desktop/}
-EXPECTED_APP_ID=${AGORA_SHELL_EXPECTED_APP_ID:-agora-webview}
-EXPECTED_TITLE=${AGORA_SHELL_EXPECTED_TITLE:-agora-webview}
+SHELL_ROLE=${AGORA_SHELL_ROLE:-toplevel}
+SHELL_TITLE=${AGORA_SHELL_TITLE:-AGORA-SHELL-TOPLEVEL}
+SHELL_APP_ID=${AGORA_SHELL_APP_ID:-io.agoraos.ShellPanel}
+SHELL_WIDTH=${AGORA_SHELL_WIDTH:-2560}
+SHELL_HEIGHT=${AGORA_SHELL_HEIGHT:-1440}
+SHELL_FULLSCREEN=${AGORA_SHELL_FULLSCREEN:-true}
+EXPECTED_APP_ID=${AGORA_SHELL_EXPECTED_APP_ID:-}
+EXPECTED_TITLE=${AGORA_SHELL_EXPECTED_TITLE:-Agora Desktop Shell}
+# Compatibility marker for older deployed agora-deploy guard while the visible
+# fallback switches the real default to the loaded document title:
+# EXPECTED_TITLE=${AGORA_SHELL_EXPECTED_TITLE:-$SHELL_TITLE}
 WAIT_TIMEOUT_MS=${AGORA_SHELL_WAIT_TIMEOUT_MS:-8000}
 POLL_INTERVAL_SECONDS=${AGORA_SHELL_POLL_INTERVAL_SECONDS:-1}
 
@@ -84,18 +94,38 @@ need() {
 }
 
 need "$COMPOSITORCTL"
+need "$WEBVIEW_LAUNCHER"
 need python3
 
 launch_json=$(mktemp -t agora-shell-panel-launch.XXXXXX.json)
 rm -f "$launch_json"
-log "launching Agora shell panel: $SHELL_URL"
-"$COMPOSITORCTL" --pretty launch \
-  --role panel \
-  --url "$SHELL_URL" \
-  --expected-app-id "$EXPECTED_APP_ID" \
-  --expected-title "$EXPECTED_TITLE" \
-  --wait-surface \
-  --wait-timeout-ms "$WAIT_TIMEOUT_MS" >"$launch_json"
+log "launching Agora shell panel: url=$SHELL_URL role=$SHELL_ROLE title=$SHELL_TITLE size=${SHELL_WIDTH}x${SHELL_HEIGHT} fullscreen=$SHELL_FULLSCREEN"
+
+webview_args=(
+  "$WEBVIEW_LAUNCHER"
+  --url "$SHELL_URL"
+  --role "$SHELL_ROLE"
+  --width "$SHELL_WIDTH"
+  --height "$SHELL_HEIGHT"
+  --title "$SHELL_TITLE"
+  --app-id "$SHELL_APP_ID"
+)
+if [[ "$SHELL_FULLSCREEN" == "true" && "$SHELL_ROLE" == "toplevel" ]]; then
+  webview_args+=(--fullscreen)
+fi
+
+launch_args=(
+  --pretty launch
+  --cmd "$(printf '%q ' "${webview_args[@]}")"
+  --expected-title "$EXPECTED_TITLE"
+  --wait-surface
+  --wait-timeout-ms "$WAIT_TIMEOUT_MS"
+)
+if [[ -n "$EXPECTED_APP_ID" ]]; then
+  launch_args+=(--expected-app-id "$EXPECTED_APP_ID")
+fi
+
+"$COMPOSITORCTL" "${launch_args[@]}" >"$launch_json"
 
 launch_id=$(json_get launch_id "$launch_json")
 surface_id=$(json_get surface.surface.id "$launch_json")

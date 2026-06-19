@@ -75,21 +75,27 @@ without bouncing the compositor when support services restart.
 
 The service intentionally executes `/usr/local/bin/agora-shell-panel-supervisor`
 instead of `compositorctl launch` directly. `compositorctl launch --wait-surface`
-returns after the WebKit layer-shell surface maps, so it is not itself a
-foreground supervisor. The wrapper launches the corrected deployed shell URL,
-records the returned `launch_id`/surface/pids, polls `compositorctl list-surfaces`,
-terminates the launch on SIGTERM, and exits non-zero if the panel surface or
-process disappears. systemd then satisfies the crash-restart requirement with
+returns after the shell surface maps, so it is not itself a foreground
+supervisor. The wrapper launches the corrected deployed shell URL, records the
+returned `launch_id`/surface/pids, polls `compositorctl list-surfaces`,
+terminates the launch on SIGTERM, and exits non-zero if the surface or process
+disappears. systemd then satisfies the crash-restart requirement with
 `Restart=on-failure` and `RestartSec=3s`.
 
-Canonical launch shape:
+The default launch is a fullscreen toplevel WebKit window (`AGORA_SHELL_ROLE` is
+`toplevel`) because den-k8plus physical-display testing showed WebKitGTK inside
+GtkLayerShell can map successfully while presenting black/no frames on this
+Wayfire stack. Plain GTK layer-shell surfaces and WebKit toplevel surfaces render
+correctly, so the service defaults to the visible fallback. To opt back into the
+layer-shell path for debugging after the compositor/WebKit issue is fixed, set
+`AGORA_SHELL_ROLE=panel` and, if desired, `AGORA_SHELL_EXPECTED_APP_ID=agora-webview`.
+
+Canonical visible fallback shape:
 
 ```sh
 /usr/local/bin/compositorctl --pretty launch \
-  --role panel \
-  --url http://127.0.0.1:7780/shell/dist/desktop/ \
-  --expected-app-id agora-webview \
-  --expected-title agora-webview \
+  --cmd "/usr/local/bin/webview-launcher --url http://127.0.0.1:7780/shell/dist/desktop/ --role toplevel --width 2560 --height 1440 --title AGORA-SHELL-TOPLEVEL --app-id io.agoraos.ShellPanel --fullscreen" \
+  --expected-title "Agora Desktop Shell" \
   --wait-surface \
   --wait-timeout-ms 8000
 ```

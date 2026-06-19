@@ -91,13 +91,14 @@ READINESS_POLL_SCRIPT = r"""
 
 
 class Launcher(Gtk.Application):
-    def __init__(self, uri, title, width, height, app_id, role, app_command_port):
+    def __init__(self, uri, title, width, height, app_id, role, fullscreen, app_command_port):
         super().__init__(application_id=app_id, flags=Gio.ApplicationFlags.FLAGS_NONE)
         self.uri = uri
         self.initial_title = title
         self.width = width
         self.height = height
         self.role = role
+        self.fullscreen = fullscreen
         self.app_command_port = app_command_port
         self.effective_role = role
         self.window = None
@@ -119,6 +120,8 @@ class Launcher(Gtk.Application):
         self.window.connect("destroy", self.on_destroy)
         self.window.connect("notify::is-active", self.on_is_active)
         self.setup_layer_shell()
+        if self.fullscreen and self.role == "toplevel":
+            self.window.fullscreen()
 
         content_manager = WebKit2.UserContentManager()
         content_manager.register_script_message_handler("agoraReadiness")
@@ -251,13 +254,14 @@ def parse_args(argv):
     parser.add_argument("--width", type=int, default=1280)
     parser.add_argument("--height", type=int, default=800)
     parser.add_argument("--role", choices=("toplevel", "panel", "dock", "background", "overlay"), default="toplevel")
+    parser.add_argument("--fullscreen", action="store_true", help="fullscreen the toplevel window after creation")
     parser.add_argument("--app-command-port", type=int, default=0)
     return parser.parse_args(argv)
 
 
 def main(argv):
     args = parse_args(argv)
-    app = Launcher(args.uri, args.title, args.width, args.height, args.app_id, args.role, args.app_command_port)
+    app = Launcher(args.uri, args.title, args.width, args.height, args.app_id, args.role, args.fullscreen, args.app_command_port)
     return app.run([])
 
 

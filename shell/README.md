@@ -88,15 +88,19 @@ assets with no dependency on a checkout path.
 ## Desktop shell launch smoke
 
 After `event-bus-web` is serving the embedded shell assets on port 7780, launch
-the desktop shell as a layer-shell panel with:
+the desktop shell with the same visible fallback used by the host service:
 
 ```sh
 compositorctl launch \
-  --role panel \
-  --url http://127.0.0.1:7780/shell/dist/desktop/ \
+  --cmd "webview-launcher --url http://127.0.0.1:7780/shell/dist/desktop/ --role toplevel --width 2560 --height 1440 --title AGORA-SHELL-TOPLEVEL --app-id io.agoraos.ShellPanel --fullscreen" \
   --expected-title "Agora Desktop Shell" \
   --wait-surface
 ```
+
+WebKitGTK layer-shell smokes (`--role panel`/`overlay`) are still useful for
+debugging, but on the current den-k8plus Wayfire/WebKit stack they can map while
+presenting black/no frames. Treat compositor presentation/capture evidence as
+the visibility gate, not `mapped` alone.
 
 The desktop shell should render a clock, taskbar, and agent-health summary at
 the same host that serves the operator console. The operator console remains at
