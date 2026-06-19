@@ -492,6 +492,17 @@ func TestWidgetProxyRejectsSymlinkEscape(t *testing.T) {
 	}
 }
 
+func TestDefaultShellConfigDirIsSharedEtcPath(t *testing.T) {
+	t.Parallel()
+
+	if got := defaultShellConfigDir(); got != DefaultShellConfigDir {
+		t.Fatalf("got default shell config dir %q, want %q", got, DefaultShellConfigDir)
+	}
+	if DefaultShellConfigDir != "/etc/agora-shell" {
+		t.Fatalf("unexpected shared shell config dir %q", DefaultShellConfigDir)
+	}
+}
+
 func startSchemaServer(t *testing.T, handler func(req schema.Request) schema.Response) string {
 	t.Helper()
 

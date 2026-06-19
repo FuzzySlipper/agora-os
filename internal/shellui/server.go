@@ -31,6 +31,8 @@ const (
 	shellSessionTokenTTL    = time.Hour
 )
 
+const DefaultShellConfigDir = "/etc/agora-shell"
+
 type Config struct {
 	Secret           []byte
 	Now              func() time.Time
@@ -876,13 +878,7 @@ func resolvedPathWithinDir(root, candidate string) (string, bool, error) {
 }
 
 func defaultShellConfigDir() string {
-	if dir, err := os.UserConfigDir(); err == nil && dir != "" {
-		return filepath.Join(dir, "agora-shell")
-	}
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		return filepath.Join(home, ".config", "agora-shell")
-	}
-	return filepath.Join(".", "agora-shell")
+	return DefaultShellConfigDir
 }
 
 func defaultString(value, fallback string) string {

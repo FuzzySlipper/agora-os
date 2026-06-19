@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	iofs "io/fs"
 	"log"
 	"net/http"
@@ -20,7 +21,15 @@ const (
 	defaultListen     = "127.0.0.1:7780"
 	defaultSecretFile = "/run/agent-os/event-bus-web.secret"
 	allowedOriginsEnv = "AGORA_WEBBUS_ALLOWED_ORIGINS"
+	shellConfigDirEnv = "SHELL_CONFIG_DIR"
 )
+
+type serveConfig struct {
+	listen         string
+	busSocket      string
+	secretFile     string
+	shellConfigDir string
+}
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "mint-token" {
@@ -31,11 +40,10 @@ func main() {
 }
 
 func serve(args []string) {
-	fs := flag.NewFlagSet("event-bus-web", flag.ExitOnError)
-	listen := fs.String("listen", defaultListen, "HTTP listen address")
-	busSocket := fs.String("bus-socket", schema.BusSocket, "Unix socket path for the local event bus")
-	secretFile := fs.String("secret-file", defaultSecretFile, "path to the HMAC signing secret")
-	fs.Parse(args)
+	cfg, err := parseServeConfig(args)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	if os.Getuid() != 0 {
 		log.Fatal("event-bus-web must run as root so it can publish authenticated subordinate uids onto the event bus")
@@ -43,12 +51,12 @@ func serve(args []string) {
 	if err := os.MkdirAll(schema.SocketDir, 0755); err != nil {
 		log.Fatal(err)
 	}
-	secret, err := webbus.LoadOrCreateSecret(*secretFile)
+	secret, err := webbus.LoadOrCreateSecret(cfg.secretFile)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	gateway := webbus.NewGateway(*busSocket, secret)
+	gateway := webbus.NewGateway(cfg.busSocket, secret)
 	for _, origin := range parseAllowedOrigins(os.Getenv(allowedOriginsEnv)) {
 		gateway.AllowedOrigins[origin] = struct{}{}
 	}
@@ -61,10 +69,11 @@ func serve(args []string) {
 		Secret:           secret,
 		AllowedOrigins:   gateway.AllowedOrigins,
 		Assets:           shellFS,
-		BusSocket:        *busSocket,
+		BusSocket:        cfg.busSocket,
 		IsolationSocket:  schema.IsolationSocket,
 		CompositorSocket: schema.CompositorControlSocket,
 		AuditSocket:      schema.AuditSocket,
+		ShellConfigDir:   cfg.shellConfigDir,
 	})
 
 	mux := http.NewServeMux()
@@ -84,9 +93,36 @@ func serve(args []string) {
 	} else {
 		log.Printf("event-bus-web origin policy: allow-list from %s", allowedOriginsEnv)
 	}
-	log.Printf("event-bus-web listening on http://%s/ws", *listen)
-	log.Printf("event-bus-web shell UI on http://%s/shell/", *listen)
-	log.Fatal(http.ListenAndServe(*listen, mux))
+	log.Printf("event-bus-web shell config dir: %s", cfg.shellConfigDir)
+	log.Printf("event-bus-web listening on http://%s/ws", cfg.listen)
+	log.Printf("event-bus-web shell UI on http://%s/shell/", cfg.listen)
+	log.Fatal(http.ListenAndServe(cfg.listen, mux))
+}
+
+func parseServeConfig(args []string) (serveConfig, error) {
+	cfg := serveConfig{
+		listen:         defaultListen,
+		busSocket:      schema.BusSocket,
+		secretFile:     defaultSecretFile,
+		shellConfigDir: defaultShellConfigDir(),
+	}
+	fs := flag.NewFlagSet("event-bus-web", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.StringVar(&cfg.listen, "listen", cfg.listen, "HTTP listen address")
+	fs.StringVar(&cfg.busSocket, "bus-socket", cfg.busSocket, "Unix socket path for the local event bus")
+	fs.StringVar(&cfg.secretFile, "secret-file", cfg.secretFile, "path to the HMAC signing secret")
+	fs.StringVar(&cfg.shellConfigDir, "shell-config-dir", cfg.shellConfigDir, "shell config directory (default /etc/agora-shell, overridden by SHELL_CONFIG_DIR)")
+	if err := fs.Parse(args); err != nil {
+		return serveConfig{}, err
+	}
+	return cfg, nil
+}
+
+func defaultShellConfigDir() string {
+	if dir := strings.TrimSpace(os.Getenv(shellConfigDirEnv)); dir != "" {
+		return dir
+	}
+	return shellui.DefaultShellConfigDir
 }
 
 func mintToken(args []string) {
