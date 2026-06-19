@@ -14,6 +14,7 @@ import (
 
 	"github.com/patch/agora-os/internal/bus"
 	"github.com/patch/agora-os/internal/schema"
+	"github.com/patch/agora-os/internal/shelldefaults"
 	"github.com/patch/agora-os/internal/shellui"
 )
 
@@ -54,7 +55,7 @@ type shellWidgetInfo struct {
 
 func cmdShell(args []string, pretty bool) error {
 	if len(args) == 0 {
-		return fmt.Errorf("shell subcommand is required: set-theme, set-wallpaper, reset-theme, add-widget, remove-widget, list-widgets, state")
+		return fmt.Errorf("shell subcommand is required: set-theme, set-wallpaper, reset-theme, add-widget, remove-widget, install-defaults, install-example-widgets, list-widgets, state")
 	}
 	if args[0] == "--help" || args[0] == "-h" || args[0] == "help" {
 		shellUsage()
@@ -72,6 +73,10 @@ func cmdShell(args []string, pretty bool) error {
 		return cmdShellAddWidget(args[1:], options, pretty)
 	case "remove-widget":
 		return cmdShellRemoveWidget(args[1:], options, pretty)
+	case "install-defaults":
+		return cmdShellInstallDefaults(args[1:], options, pretty)
+	case "install-example-widgets":
+		return cmdShellInstallExampleWidgets(args[1:], options, pretty)
 	case "list-widgets":
 		return cmdShellListWidgets(args[1:], options, pretty)
 	case "state":
@@ -88,10 +93,12 @@ Subcommands:
   set-theme      Publish shell.apply_theme with --properties JSON and/or --css FILE
   set-wallpaper  Publish shell.apply_theme with --url
   reset-theme    Publish shell.reset_theme
-  add-widget     Install widget from --url path/URL and publish shell.widget.inject
-  remove-widget  Remove installed widget and publish shell.widget.remove
-  list-widgets   List widgets under the shell config directory
-  state          Print current shell config state
+  add-widget                Install widget from --url path/URL and publish shell.widget.inject
+  remove-widget             Remove installed widget and publish shell.widget.remove
+  install-defaults          Create layout.json if missing and install packaged example widgets
+  install-example-widgets   Install packaged example widgets without changing layout.json
+  list-widgets              List widgets under the shell config directory
+  state                     Print current shell config state
 
 Common flags:
   --bus-socket PATH  event bus socket (default /run/agent-os/bus.sock)
@@ -298,6 +305,77 @@ func buildShellRemoveWidgetPayload(name, configDir string) (shellWidgetPayload, 
 		return shellWidgetPayload{}, err
 	}
 	return shellWidgetPayload{Name: name}, nil
+}
+
+func cmdShellInstallDefaults(args []string, defaults shellOptions, pretty bool) error {
+	options := defaults
+	fs := shellFlagSet("install-defaults", &options)
+	fs.Parse(args)
+	result, err := installShellDefaults(options.configDir)
+	if err != nil {
+		return err
+	}
+	return printJSONObject(result, pretty)
+}
+
+func cmdShellInstallExampleWidgets(args []string, defaults shellOptions, pretty bool) error {
+	options := defaults
+	fs := shellFlagSet("install-example-widgets", &options)
+	fs.Parse(args)
+	result, err := installShellExampleWidgets(options.configDir)
+	if err != nil {
+		return err
+	}
+	return printJSONObject(result, pretty)
+}
+
+type shellDefaultsInstallResult struct {
+	ConfigDir        string   `json:"config_dir"`
+	LayoutInstalled  bool     `json:"layout_installed,omitempty"`
+	LayoutPreserved  bool     `json:"layout_preserved,omitempty"`
+	WidgetsInstalled []string `json:"widgets_installed"`
+}
+
+func installShellDefaults(configDir string) (shellDefaultsInstallResult, error) {
+	result, err := installShellExampleWidgets(configDir)
+	if err != nil {
+		return result, err
+	}
+	layoutPath := filepath.Join(configDir, "layout.json")
+	if _, err := os.Stat(layoutPath); err == nil {
+		result.LayoutPreserved = true
+		return result, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return result, err
+	}
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return result, err
+	}
+	if err := os.WriteFile(layoutPath, []byte(shelldefaults.LayoutJSON), 0644); err != nil {
+		return result, err
+	}
+	result.LayoutInstalled = true
+	return result, nil
+}
+
+func installShellExampleWidgets(configDir string) (shellDefaultsInstallResult, error) {
+	widgetDir := filepath.Join(configDir, "widgets", shelldefaults.HelloWorldWidgetName)
+	if err := os.MkdirAll(widgetDir, 0755); err != nil {
+		return shellDefaultsInstallResult{}, err
+	}
+	files := map[string]string{
+		"index.html":    shelldefaults.HelloWorldIndexHTML,
+		"manifest.json": shelldefaults.HelloWorldManifestJSON,
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(widgetDir, name), []byte(content), 0644); err != nil {
+			return shellDefaultsInstallResult{}, err
+		}
+	}
+	return shellDefaultsInstallResult{
+		ConfigDir:        configDir,
+		WidgetsInstalled: []string{shelldefaults.HelloWorldWidgetName},
+	}, nil
 }
 
 func cmdShellListWidgets(args []string, defaults shellOptions, pretty bool) error {

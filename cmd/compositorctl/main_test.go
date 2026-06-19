@@ -11,6 +11,7 @@ import (
 
 	"github.com/patch/agora-os/internal/bus"
 	"github.com/patch/agora-os/internal/schema"
+	"github.com/patch/agora-os/internal/shelldefaults"
 )
 
 func TestBuildLaunchRequestDefaultsRole(t *testing.T) {
@@ -137,6 +138,88 @@ func TestDefaultShellConfigDirFallsBackToHomeWhenSharedAndXDGMissing(t *testing.
 	want := filepath.Join(home, ".config", "agora-shell")
 	if got != want {
 		t.Fatalf("got default shell config dir %q, want %q", got, want)
+	}
+}
+
+func TestInstallShellDefaultsCreatesLayoutAndHelloWorldWidget(t *testing.T) {
+	t.Parallel()
+
+	configDir := t.TempDir()
+	result, err := installShellDefaults(configDir)
+	if err != nil {
+		t.Fatalf("installShellDefaults returned error: %v", err)
+	}
+	if result.ConfigDir != configDir || !result.LayoutInstalled || result.LayoutPreserved {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	if len(result.WidgetsInstalled) != 1 || result.WidgetsInstalled[0] != shelldefaults.HelloWorldWidgetName {
+		t.Fatalf("widgets installed = %#v", result.WidgetsInstalled)
+	}
+	assertFileContent(t, filepath.Join(configDir, "layout.json"), shelldefaults.LayoutJSON)
+	assertFileContent(t, filepath.Join(configDir, "widgets", "hello-world", "index.html"), shelldefaults.HelloWorldIndexHTML)
+	assertFileContent(t, filepath.Join(configDir, "widgets", "hello-world", "manifest.json"), shelldefaults.HelloWorldManifestJSON)
+
+	widgets, err := listShellWidgets(configDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(widgets) != 1 || widgets[0].Name != "hello-world" || !widgets[0].HasIndex || !widgets[0].HasManifest {
+		t.Fatalf("widgets = %+v", widgets)
+	}
+}
+
+func TestInstallShellDefaultsPreservesExistingLayout(t *testing.T) {
+	t.Parallel()
+
+	configDir := t.TempDir()
+	layoutPath := filepath.Join(configDir, "layout.json")
+	customLayout := "{\"widgets\":{\"hello-world\":{\"visible\":false}}}\n"
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(layoutPath, []byte(customLayout), 0644); err != nil {
+		t.Fatal(err)
+	}
+	result, err := installShellDefaults(configDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.LayoutPreserved || result.LayoutInstalled {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	assertFileContent(t, layoutPath, customLayout)
+	assertFileContent(t, filepath.Join(configDir, "widgets", "hello-world", "manifest.json"), shelldefaults.HelloWorldManifestJSON)
+}
+
+func TestInstallShellExampleWidgetsDoesNotCreateLayout(t *testing.T) {
+	t.Parallel()
+
+	configDir := t.TempDir()
+	if _, err := installShellExampleWidgets(configDir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(configDir, "layout.json")); !os.IsNotExist(err) {
+		t.Fatalf("layout.json should not be created by install-example-widgets, stat err=%v", err)
+	}
+	assertFileContent(t, filepath.Join(configDir, "widgets", "hello-world", "index.html"), shelldefaults.HelloWorldIndexHTML)
+}
+
+func TestPackagedHelloWorldFilesMatchExampleSources(t *testing.T) {
+	t.Parallel()
+
+	assertFileContent(t, filepath.Join("..", "..", "shell", "example-widgets", "layout.json"), shelldefaults.LayoutJSON)
+	assertFileContent(t, filepath.Join("..", "..", "shell", "example-widgets", "hello-world", "index.html"), shelldefaults.HelloWorldIndexHTML)
+	assertFileContent(t, filepath.Join("..", "..", "shell", "example-widgets", "hello-world", "manifest.json"), shelldefaults.HelloWorldManifestJSON)
+}
+
+func assertFileContent(t *testing.T, path string, want string) {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != want {
+		t.Fatalf("%s content = %q, want %q", path, raw, want)
 	}
 }
 

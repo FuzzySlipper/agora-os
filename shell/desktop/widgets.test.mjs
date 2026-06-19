@@ -100,6 +100,8 @@ assert.ok(!bus.handlers.has("bad topic"), "rejects invalid manifest topic");
 
 windowRef.postMessageFrom(iframe.contentWindow, { type: "pub", topic: "current", body: { temp: 72 } });
 assert.deepEqual(bus.published, [{ topic: "widget.weather.current", body: { temp: 72 } }]);
+windowRef.postMessageFrom(iframe.contentWindow, { type: "pub", topic: "weather.loaded", body: { ok: true } });
+assert.equal(bus.published.at(-1).topic, "widget.weather.loaded", "does not duplicate widget name prefix");
 windowRef.postMessageFrom(iframe.contentWindow, { type: "pub", topic: "admin.escalation.requested", body: { nope: true } });
 assert.equal(bus.published.at(-1).topic, "widget.weather.admin.escalation.requested", "prefixes spoofed topics");
 
@@ -117,5 +119,37 @@ assert.equal(iframe.contentWindow.posted.length, forwardedCount, "removed widget
 
 await controller.injectFromPayload({ name: "../../bad" });
 assert.equal(documentRef.grid.children.length, 0, "invalid widget names are ignored");
+
+const defaultBus = new FakeBus();
+const defaultDocument = new FakeDocument();
+const defaultController = createWidgetController({
+  bus: defaultBus,
+  documentRef: defaultDocument,
+  windowRef: new FakeWindow(),
+  fetchLayout: async (url) => {
+    assert.equal(url, "/api/shell/layout.json");
+    return new Response(JSON.stringify({
+      widgets: {
+        clock: { visible: true, position: "top-right" },
+        "hello-world": { visible: true, position: "top-left" },
+        hidden: { visible: false, position: "center" },
+      },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  },
+  fetchManifest: async (url) => {
+    assert.equal(url, "/api/shell/widget-proxy/hello-world/manifest.json");
+    return new Response(JSON.stringify({
+      name: "hello-world",
+      title: "Hello World",
+      position: "top-left",
+      size: { width: 180, height: 60 },
+      bus_topics: [],
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  },
+});
+await defaultController.loadFromServerLayout();
+assert.equal(defaultDocument.grid.children.length, 1, "loads visible installed widgets from layout on shell boot");
+assert.equal(defaultDocument.grid.children[0].dataset.widgetSlot, "hello-world");
+assert.ok(defaultDocument.grid.children[0].classList.contains("pos-top-left"));
 
 console.log("widget iframe bridge tests passed");

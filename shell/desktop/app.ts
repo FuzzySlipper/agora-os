@@ -67,6 +67,7 @@ export class ShellApp {
         this.connectBus();
         this.update(this.state);
         void this.layout.loadFromServer();
+        void this.injectedWidgets.loadFromServerLayout();
     }
 
     unmount(): void {

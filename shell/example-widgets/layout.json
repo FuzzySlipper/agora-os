@@ -1,0 +1,9 @@
+{
+  "widgets": {
+    "clock": { "visible": true, "position": "top-right", "order": 1 },
+    "hello-world": { "visible": true, "position": "top-left", "order": 1 },
+    "notifications": { "visible": true, "position": "bottom-right", "order": 1 },
+    "taskbar": { "visible": true, "position": "bottom", "order": 1 },
+    "center": { "visible": false, "position": "center", "order": 1 }
+  }
+}

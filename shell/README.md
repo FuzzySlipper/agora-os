@@ -47,6 +47,28 @@ npm install --prefix shell
 npm run --prefix shell build
 ```
 
+## Default config and example widgets
+
+Package defaults live under `shell/example-widgets/` and are installed with
+`compositorctl`:
+
+```sh
+# Create layout.json only if it is missing and install packaged widgets.
+compositorctl shell install-defaults
+
+# Refresh packaged widgets without touching an existing customized layout.json.
+compositorctl shell install-example-widgets
+
+# Confirm installed widgets.
+compositorctl shell list-widgets
+```
+
+By default the CLI uses `/etc/agora-shell` when that shared config directory is
+present; pass `--config-dir /path/to/agora-shell` for development or tests. The
+packaged `hello-world` widget is listed in the default `layout.json`, loads via
+`/api/shell/widget-proxy/hello-world/`, and publishes a `loaded` postMessage that
+the shell prefixes onto the event bus as `widget.hello-world.loaded`.
+
 ## Desktop shell launch smoke
 
 After `event-bus-web` is serving the embedded shell assets on port 7780, launch

@@ -1,0 +1,7 @@
+{
+  "name": "hello-world",
+  "title": "Hello World",
+  "position": "top-left",
+  "size": { "width": 180, "height": 60 },
+  "bus_topics": []
+}

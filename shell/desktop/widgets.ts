@@ -31,6 +31,8 @@ export interface WidgetControllerOptions {
     documentRef?: Document;
     windowRef?: Window;
     fetchManifest?: (url: string) => Promise<Response>;
+    fetchLayout?: (url: string) => Promise<Response>;
+    layoutURL?: string;
 }
 
 interface InjectedWidget {
@@ -43,12 +45,16 @@ interface InjectedWidget {
 
 const VALID_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
 const VALID_TOPIC = /^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$/;
+const DEFAULT_LAYOUT_URL = "/api/shell/layout.json";
+const BUILT_IN_WIDGETS = new Set(["agent-health", "clock", "center", "notifications", "taskbar"]);
 
 export class WidgetController {
     private readonly bus: WidgetBus;
     private readonly documentRef: Document;
     private readonly windowRef: Window;
     private readonly fetchManifest: (url: string) => Promise<Response>;
+    private readonly fetchLayout: (url: string) => Promise<Response>;
+    private readonly layoutURL: string;
     private readonly widgets = new Map<string, InjectedWidget>();
     private installed = false;
     private readonly messageHandler = (event: MessageEvent) => this.handleMessage(event);
@@ -58,6 +64,8 @@ export class WidgetController {
         this.documentRef = options.documentRef ?? document;
         this.windowRef = options.windowRef ?? window;
         this.fetchManifest = options.fetchManifest ?? ((url) => fetch(url, { cache: "no-store" }));
+        this.fetchLayout = options.fetchLayout ?? ((url) => fetch(url, { cache: "no-store" }));
+        this.layoutURL = options.layoutURL ?? DEFAULT_LAYOUT_URL;
     }
 
     install(): void {
@@ -90,6 +98,28 @@ export class WidgetController {
             return;
         }
         this.injectWidget(manifest);
+    }
+
+    async loadFromServerLayout(): Promise<void> {
+        try {
+            const response = await this.fetchLayout(this.layoutURL);
+            if (!response.ok) {
+                return;
+            }
+            const layout = await response.json() as { widgets?: unknown };
+            const widgets = layout.widgets;
+            if (!widgets || typeof widgets !== "object" || Array.isArray(widgets)) {
+                return;
+            }
+            for (const [name, config] of Object.entries(widgets as Record<string, unknown>)) {
+                if (!VALID_NAME.test(name) || BUILT_IN_WIDGETS.has(name) || !layoutWidgetVisible(config)) {
+                    continue;
+                }
+                await this.injectFromPayload({ name });
+            }
+        } catch {
+            return;
+        }
     }
 
     injectWidget(manifest: WidgetManifest): void {
@@ -175,10 +205,11 @@ export class WidgetController {
             return;
         }
         const rawTopic = event.data.topic.trim().replace(/^\.+/, "");
-        if (!rawTopic || !VALID_TOPIC.test(rawTopic)) {
+        const relativeTopic = rawTopic.startsWith(`${widget.name}.`) ? rawTopic.slice(widget.name.length + 1) : rawTopic;
+        if (!relativeTopic || !VALID_TOPIC.test(relativeTopic)) {
             return;
         }
-        this.bus.publish(`widget.${widget.name}.${rawTopic}`, event.data.body);
+        this.bus.publish(`widget.${widget.name}.${relativeTopic}`, event.data.body);
     }
 
     private widgetForSource(source: MessageEventSource | null): InjectedWidget | undefined {
@@ -195,6 +226,13 @@ export function createWidgetController(options: WidgetControllerOptions): Widget
     const controller = new WidgetController(options);
     controller.install();
     return controller;
+}
+
+function layoutWidgetVisible(config: unknown): boolean {
+    if (!config || typeof config !== "object" || Array.isArray(config)) {
+        return true;
+    }
+    return (config as { visible?: unknown }).visible !== false;
 }
 
 function parseWidgetName(payload: unknown): string | null {

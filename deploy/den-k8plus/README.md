@@ -117,6 +117,22 @@ normal `install-host-assets` action. Treat that wrapper promotion plus any
 `/etc/systemd/system` install/restart as the sysadmin/privileged gate for this
 service.
 
+## Default shell content
+
+Default first-launch content is installed into the shared config directory with:
+
+```sh
+compositorctl shell install-defaults --config-dir /etc/agora-shell
+compositorctl shell list-widgets --config-dir /etc/agora-shell
+```
+
+`install-defaults` creates `/etc/agora-shell/layout.json` only when it is missing
+and installs the packaged `hello-world` widget under
+`/etc/agora-shell/widgets/hello-world/`. Use `install-example-widgets` when you
+want to refresh packaged widgets without touching an operator-customized layout.
+The shell loads visible non-built-in widgets from `layout.json` on boot, so a
+panel restart after this install shows the `hello-world` iframe at `top-left`.
+
 ## Desktop shell token/session smoke
 
 `event-bus-web.service` serves the desktop shell and the browser WebSocket bridge
