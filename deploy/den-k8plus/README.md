@@ -57,6 +57,42 @@ sudo -n /usr/local/bin/agora-deploy all
 these host assets through the guarded path, and reports status. The `build-go`
 sub-action still requires the repo to be clean and on a tracked branch or `main`.
 
+## Desktop shell token/session smoke
+
+`event-bus-web.service` serves the desktop shell and the browser WebSocket bridge
+on `127.0.0.1:7780`. The service keeps the HMAC secret root-owned for the
+normal `event-bus-web mint-token` path, so local browser/operator smokes should
+not read `/run/agent-os/event-bus-web.secret` directly.
+
+For local-only shell sessions, the shell API exposes:
+
+```sh
+curl -fsS http://127.0.0.1:7780/api/shell/session-token
+```
+
+The endpoint is loopback-only, returns `Cache-Control: no-store`, and mints a
+short-lived human WebSocket token for the desktop shell. The shell page
+(`/shell/dist/desktop/`) requests this endpoint automatically when no `#token=`
+fragment or stored token is already present, then connects to `/ws` with the
+`agora.token.<token>` WebSocket subprotocol. This preserves the existing `/ws`
+authentication and origin policy while avoiding ad hoc unprivileged root-secret
+reads.
+
+A live widget/theme smoke can use the deployed service plus the CLI event path:
+
+```sh
+curl -fsS http://127.0.0.1:7780/shell/dist/desktop/
+TOKEN_JSON=$(curl -fsS http://127.0.0.1:7780/api/shell/session-token)
+compositorctl shell add-widget --config-dir /home/agent/.config/agora-shell \
+  --name smoke_widget --url /path/to/widget-dir
+compositorctl shell set-theme --config-dir /home/agent/.config/agora-shell \
+  --properties '{"--shell-accent":"#88ccff"}'
+```
+
+Then verify in the browser page that `window.agoraDesktopShell.bus.status` is
+`"connected"`, the injected widget iframe appears, and the theme applied event
+is consumed/published.
+
 ## Verification
 
 After deploying host assets, expected checks are:

@@ -28,6 +28,7 @@ const (
 	defaultAdminLogPath     = "/var/log/agent-os/admin-agent.log"
 	defaultDecisionLogPath  = "/var/log/agent-os/admin-human-decisions.jsonl"
 	defaultShellAuditWSPath = "/api/shell/audit/ws"
+	shellSessionTokenTTL    = time.Hour
 )
 
 type Config struct {
@@ -63,6 +64,13 @@ type State struct {
 	Agents             []schema.AgentInfo                `json:"agents,omitempty"`
 	Surfaces           []schema.CompositorTrackedSurface `json:"surfaces,omitempty"`
 	PendingEscalations []schema.AdminEscalationEvent     `json:"pending_escalations,omitempty"`
+}
+
+type sessionTokenResponse struct {
+	Token     string `json:"token"`
+	Role      string `json:"role"`
+	ExpiresAt int64  `json:"expires_at"`
+	Use       string `json:"use"`
 }
 
 type grantRequest struct {
@@ -146,6 +154,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch cleanPath {
 	case "/state":
 		s.handleState(w, r)
+	case "/session-token":
+		s.handleSessionToken(w, r)
 	case "/grants":
 		s.handleGrant(w, r)
 	case "/escalations/decide":
@@ -191,6 +201,30 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		Agents:             agents,
 		Surfaces:           surfaces,
 		PendingEscalations: pending,
+	})
+}
+
+func (s *Server) handleSessionToken(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !isLoopbackRemoteAddr(r.RemoteAddr) {
+		http.Error(w, "shell session tokens are available only to loopback clients", http.StatusForbidden)
+		return
+	}
+	expiresAt := s.now().Add(shellSessionTokenTTL).Unix()
+	token, err := webbus.MintToken(s.secret, webbus.Claims{Role: webbus.RoleHuman, UID: 0, Exp: expiresAt})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, sessionTokenResponse{
+		Token:     token,
+		Role:      string(webbus.RoleHuman),
+		ExpiresAt: expiresAt,
+		Use:       "websocket-subprotocol",
 	})
 }
 
@@ -601,6 +635,15 @@ func (s *Server) authenticateHuman(r *http.Request) (webbus.Identity, string, er
 		return webbus.Identity{}, "", errors.New("human token required")
 	}
 	return identity, selectedSubprotocol, nil
+}
+
+func isLoopbackRemoteAddr(remoteAddr string) bool {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		host = remoteAddr
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func (s *Server) checkOrigin(r *http.Request) bool {

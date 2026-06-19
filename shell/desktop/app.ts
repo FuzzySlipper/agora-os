@@ -45,7 +45,7 @@ export class ShellApp {
     private readonly layout: LayoutController;
     private readonly injectedWidgets: WidgetController;
 
-    constructor(bus: BusConnection = createBusConnection({ protocols: tokenProtocols() })) {
+    constructor(bus: BusConnection = createBusConnection({ protocols: tokenProtocolsFromStorage() })) {
         this.bus = bus;
         this.theme = createThemeController(this.bus);
         this.layout = createLayoutController({ bus: this.bus, onTheme: (theme) => this.theme.applyTheme(theme) });
@@ -241,15 +241,45 @@ function applyTheme(theme: Record<string, unknown>): void {
     }
 }
 
-function tokenProtocols(): string[] | undefined {
-    const token = new URLSearchParams(window.location.hash.replace(/^#/, "")).get("token")
-        ?? localStorage.getItem("agora.shell.token");
+function tokenProtocolsFromStorage(): string[] | undefined {
+    const token = tokenFromLocationOrStorage();
     return token ? [`agora.token.${token}`] : undefined;
+}
+
+function tokenFromLocationOrStorage(): string | null {
+    return new URLSearchParams(window.location.hash.replace(/^#/, "")).get("token")
+        ?? sessionStorage.getItem("agora.shell.token")
+        ?? localStorage.getItem("agora.shell.token");
+}
+
+async function tokenProtocolsForBootstrap(): Promise<string[] | undefined> {
+    const existing = tokenFromLocationOrStorage();
+    if (existing) {
+        return [`agora.token.${existing}`];
+    }
+    try {
+        const response = await fetch("/api/shell/session-token", { cache: "no-store" });
+        if (!response.ok) {
+            return undefined;
+        }
+        const body = await response.json() as { token?: unknown };
+        if (typeof body.token !== "string" || body.token === "") {
+            return undefined;
+        }
+        sessionStorage.setItem("agora.shell.token", body.token);
+        return [`agora.token.${body.token}`];
+    } catch {
+        return undefined;
+    }
+}
+
+async function mountDefaultShell(widgetRoot: HTMLElement): Promise<void> {
+    const app = new ShellApp(createBusConnection({ protocols: await tokenProtocolsForBootstrap() }));
+    app.mount(widgetRoot);
+    Object.assign(window, { agoraDesktopShell: app });
 }
 
 const widgetRoot = document.getElementById("widget-root");
 if (widgetRoot) {
-    const app = new ShellApp();
-    app.mount(widgetRoot);
-    Object.assign(window, { agoraDesktopShell: app });
+    void mountDefaultShell(widgetRoot);
 }

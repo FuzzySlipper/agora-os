@@ -418,6 +418,56 @@ func TestWidgetProxyRejectsTraversalAndInvalidNames(t *testing.T) {
 	}
 }
 
+func TestSessionTokenEndpointMintsLoopbackHumanToken(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	secret := []byte("01234567890123456789012345678901")
+	server := New(Config{Secret: secret, Now: func() time.Time { return now }})
+	req := httptest.NewRequest(http.MethodGet, "/api/shell/session-token", nil)
+	req.RemoteAddr = "127.0.0.1:45555"
+	resp := httptest.NewRecorder()
+
+	server.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("got status %d and body %q, want 200", resp.Code, resp.Body.String())
+	}
+	if got := resp.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("got Cache-Control %q, want no-store", got)
+	}
+	var body sessionTokenResponse
+	if err := json.Unmarshal(resp.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Role != string(webbus.RoleHuman) || body.Use != "websocket-subprotocol" {
+		t.Fatalf("got response %+v", body)
+	}
+	claims, err := webbus.VerifyToken(secret, body.Token, now)
+	if err != nil {
+		t.Fatalf("VerifyToken: %v", err)
+	}
+	if claims.Role != webbus.RoleHuman || claims.UID != 0 {
+		t.Fatalf("got claims %+v, want human uid 0", claims)
+	}
+	if body.ExpiresAt != now.Add(shellSessionTokenTTL).Unix() || claims.Exp != body.ExpiresAt {
+		t.Fatalf("got expires_at=%d claims.exp=%d", body.ExpiresAt, claims.Exp)
+	}
+}
+
+func TestSessionTokenEndpointRejectsNonLoopback(t *testing.T) {
+	t.Parallel()
+
+	server := New(Config{Secret: []byte("01234567890123456789012345678901")})
+	req := httptest.NewRequest(http.MethodGet, "/api/shell/session-token", nil)
+	req.RemoteAddr = "203.0.113.10:45555"
+	resp := httptest.NewRecorder()
+
+	server.ServeHTTP(resp, req)
+	if resp.Code != http.StatusForbidden {
+		t.Fatalf("got status %d, want 403", resp.Code)
+	}
+}
+
 func TestWidgetProxyRejectsSymlinkEscape(t *testing.T) {
 	t.Parallel()
 
