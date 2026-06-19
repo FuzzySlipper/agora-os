@@ -36,12 +36,14 @@ Usage: agora-deploy <action> [args]
 
 Actions:
   build-go             Fast-forward the current tracked branch when possible, build fixed Go compositor binaries, install to /usr/local/bin.
+  build-shell          Rebuild shell UI assets as agent, rebuild event-bus-web, and install it to /usr/local/bin.
   build-plugin         Build compositor/wayfire-plugin with Meson/Ninja and install the Wayfire plugin + metadata.
   install-host-assets  Install allow-listed deploy/den-k8plus units/config with guards, backups, verify, daemon-reload, and support-service restart.
   restart              Restart known compositor support services if units exist; no-op with warning when not installed yet.
+  restart-shell        Restart event-bus-web.service only.
   status               Report repo state, installed artifacts, host assets, plugin artifacts, and service states.
   log [N]              Print recent compositor service logs; optional N is 1..1000 lines, default 120.
-  all                  Run build-go, build-plugin, install-host-assets, status.
+  all                  Run build-shell, build-go, build-plugin, install-host-assets, restart-shell, status.
   help                 Show this help.
 
 No action accepts arbitrary filesystem paths.
@@ -139,6 +141,36 @@ build_go() {
     install -o root -g root -m 0755 "$stage/$bin" "$INSTALL_BIN_DIR/$bin"
     stat -c '%A %U:%G %s %y %n' "$INSTALL_BIN_DIR/$bin"
   done
+  rm -rf "$stage"
+}
+
+build_shell() {
+  require_root_for_mutation build-shell
+  validate_static_paths
+  need go
+  need git
+  need install
+  need mktemp
+  need npm
+  ensure_clean_repo
+  sync_tracked_branch_if_possible
+  ensure_clean_repo
+
+  info "build shell UI assets"
+  run_as_build_user bash -lc "cd '$REPO/shell' && npm run build"
+  ensure_clean_repo
+
+  info "build event-bus-web with embedded shell assets"
+  install -d -o "$BUILD_USER" -g "$BUILD_GROUP" -m 0755 "$BUILD_ROOT"
+  local stage
+  stage=$(mktemp -d "$BUILD_ROOT/shell-stage.XXXXXX")
+  chown "$BUILD_USER:$BUILD_GROUP" "$stage"
+  run_as_build_user bash -lc "cd '$REPO' && go build -trimpath -o '$stage/event-bus-web' ./cmd/event-bus-web/"
+  [[ -x "$stage/event-bus-web" ]] || die "build did not produce $stage/event-bus-web"
+
+  info "install event-bus-web"
+  install -o root -g root -m 0755 "$stage/event-bus-web" "$INSTALL_BIN_DIR/event-bus-web"
+  stat -c '%A %U:%G %s %y %n' "$INSTALL_BIN_DIR/event-bus-web"
   rm -rf "$stage"
 }
 
@@ -386,6 +418,13 @@ install_host_assets() {
   rm -rf "$stage"
 }
 
+restart_shell() {
+  require_root_for_mutation restart-shell
+  info "restart shell server"
+  systemctl restart event-bus-web.service
+  systemctl is-active event-bus-web.service
+}
+
 restart_services() {
   require_root_for_mutation restart
   info "restart compositor support services"
@@ -510,12 +549,14 @@ main() {
   shift || true
   case "$action" in
     build-go) [[ $# -eq 0 ]] || die "build-go takes no args"; build_go ;;
+    build-shell) [[ $# -eq 0 ]] || die "build-shell takes no args"; build_shell ;;
     build-plugin) [[ $# -eq 0 ]] || die "build-plugin takes no args"; build_plugin ;;
     install-host-assets) [[ $# -eq 0 ]] || die "install-host-assets takes no args"; install_host_assets ;;
     restart) [[ $# -eq 0 ]] || die "restart takes no args"; restart_services ;;
+    restart-shell) [[ $# -eq 0 ]] || die "restart-shell takes no args"; restart_shell ;;
     status) [[ $# -eq 0 ]] || die "status takes no args"; status ;;
     log) [[ $# -le 1 ]] || die "log takes optional line count only"; show_logs "${1:-$LOG_LINES_DEFAULT}" ;;
-    all) [[ $# -eq 0 ]] || die "all takes no args"; build_go; build_plugin; install_host_assets; status ;;
+    all) [[ $# -eq 0 ]] || die "all takes no args"; build_shell; build_go; build_plugin; install_host_assets; restart_shell; status ;;
     help|-h|--help) usage ;;
     *) usage >&2; die "unknown action: $action" ;;
   esac
