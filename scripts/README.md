@@ -26,6 +26,31 @@ ready” and catches visible-but-wrong captures. It does not define ASHA camera
 semantics; it only launches, drives, captures, and classifies the public ASHA
 demo surface.
 
+## asha_voxel_interaction_proof.py — ASHA voxel interaction compositor proof
+
+Drives the cross-project ASHA basic voxel interaction scene through the deployed
+Agora compositor stack. It runs `npm run voxel:interaction` in `asha-demo`,
+creates a named compositor session, launches the generated page with
+`webview-launcher`, injects the page-declared `Enter` keyboard route for
+`window.ashaVoxelInteraction.applySelectionEdit()`, captures before/after
+surface PNGs, destroys the temporary compositor session by default, and writes
+`harness/out/voxel-interaction/latest/agora-voxel-interaction-proof.json`
+in the ASHA demo output directory.
+
+```sh
+python3 scripts/asha_voxel_interaction_proof.py --self-test
+python3 scripts/asha_voxel_interaction_proof.py
+```
+
+The proof keeps ASHA voxel semantics in ASHA/`asha-demo`: Agora only launches,
+drives, captures, and validates declared page markers. The webview helper's
+loopback app-command readiness endpoint reports the page title, scenario id,
+selection hash, before/after mesh/render hashes, and before/after
+`editApplied`/`postInputRenderChanged` markers. The proof fails closed unless
+input delivery has zero rejected events, pre-input markers show the edit has not
+run, post-input markers show the declared route applied the edit, captures are
+visible/nonblank, and before/after pixels differ.
+
 ## vm.sh — dev VM wrapper
 
 Disposable Arch VM driven by raw `qemu-system-x86_64`. No libvirt, no

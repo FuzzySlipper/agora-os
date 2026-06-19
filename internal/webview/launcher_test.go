@@ -197,3 +197,23 @@ func TestHelperEnvAddsWaylandDefaults(t *testing.T) {
 		t.Fatal("expected AGORA_APP_COMMAND_PORT in helper env")
 	}
 }
+
+func TestHelperReadinessScriptCollectsVoxelMarkers(t *testing.T) {
+	t.Parallel()
+
+	for _, needle := range []string{
+		"window.ashaVoxelInteraction?.scenarioId",
+		"bodyEditApplied",
+		"bodyPostInputRenderChanged",
+		"selectionHash",
+		"renderBeforeHash",
+		"renderAfterHash",
+		"meshBeforeHash",
+		"meshAfterHash",
+		"proofSummaryText",
+	} {
+		if !strings.Contains(helperScript, needle) {
+			t.Fatalf("readiness script missing %q", needle)
+		}
+	}
+}

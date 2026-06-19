@@ -45,19 +45,39 @@ def emit(event, window, role, layer_shell_info=None):
 
 READINESS_POLL_SCRIPT = r"""
 (function () {
+  function parseJSONText(id) {
+    const text = document.getElementById(id)?.textContent || '';
+    if (!text) return { text, parsed: null };
+    try { return { text, parsed: JSON.parse(text) }; } catch (_err) { return { text, parsed: null }; }
+  }
   function collectAgoraReadiness() {
-    const stateText = document.getElementById('state')?.textContent || '';
-    let parsedState = null;
-    try { parsedState = stateText ? JSON.parse(stateText) : null; } catch (_err) { parsedState = null; }
+    const state = parseJSONText('state');
+    const proofSummary = parseJSONText('proofSummary');
+    const main = document.querySelector('main[data-scenario]');
+    const bodyDataset = document.body?.dataset || {};
     const markers = {
       title: document.title || '',
-      bodyReady: document.body?.dataset?.ready || '',
-      bodyStep: document.body?.dataset?.step || '',
-      bodyProjectionHash: document.body?.dataset?.projectionHash || '',
-      scenarioId: document.querySelector('main[data-scenario]')?.dataset?.scenario || window.ashaAgoraControl?.scenarioId || parsedState?.scenarioId || '',
-      step: parsedState?.step ?? (document.body?.dataset?.step ? Number(document.body.dataset.step) : null),
-      projectionHash: parsedState?.projectionHash || document.body?.dataset?.projectionHash || '',
-      stateText,
+      bodyReady: bodyDataset.ready || '',
+      bodyStep: bodyDataset.step || '',
+      bodyProjectionHash: bodyDataset.projectionHash || '',
+      bodyEditApplied: bodyDataset.editApplied || '',
+      bodyRenderChanged: bodyDataset.renderChanged || '',
+      bodyPostInputRenderChanged: bodyDataset.postInputRenderChanged || '',
+      bodySelectionHash: bodyDataset.selectionHash || '',
+      scenarioId: main?.dataset?.scenario || window.ashaAgoraControl?.scenarioId || window.ashaVoxelInteraction?.scenarioId || state.parsed?.scenarioId || '',
+      step: state.parsed?.step ?? (bodyDataset.step ? Number(bodyDataset.step) : null),
+      projectionHash: state.parsed?.projectionHash || bodyDataset.projectionHash || '',
+      selectionHash: state.parsed?.selectionHash || bodyDataset.selectionHash || '',
+      editApplied: state.parsed?.editApplied ?? proofSummary.parsed?.editApplied ?? (bodyDataset.editApplied === '' ? null : bodyDataset.editApplied === 'true'),
+      renderChanged: proofSummary.parsed?.renderChanged ?? (bodyDataset.renderChanged === '' ? null : bodyDataset.renderChanged === 'true'),
+      meshChanged: proofSummary.parsed?.meshChanged ?? null,
+      phase: proofSummary.parsed?.phase || '',
+      renderBeforeHash: state.parsed?.renderBeforeHash || main?.dataset?.beforeRenderHash || '',
+      renderAfterHash: state.parsed?.renderAfterHash || main?.dataset?.afterRenderHash || '',
+      meshBeforeHash: state.parsed?.meshBeforeHash || '',
+      meshAfterHash: state.parsed?.meshAfterHash || '',
+      stateText: state.text,
+      proofSummaryText: proofSummary.text,
     };
     window.webkit.messageHandlers.agoraReadiness.postMessage(JSON.stringify(markers));
   }
