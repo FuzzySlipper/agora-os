@@ -66,8 +66,24 @@ compositorctl shell list-widgets
 By default the CLI uses `/etc/agora-shell` when that shared config directory is
 present; pass `--config-dir /path/to/agora-shell` for development or tests. The
 packaged `hello-world` widget is listed in the default `layout.json`, loads via
-`/api/shell/widget-proxy/hello-world/`, and publishes a `loaded` postMessage that
-the shell prefixes onto the event bus as `widget.hello-world.loaded`.
+`/api/shell/widget-proxy/hello-world/`, and publishes a `hello-world.loaded`
+postMessage that the shell prefixes onto the event bus as
+`widget.hello-world.loaded`.
+
+## Shell dev-mode static assets
+
+For frontend iteration, `event-bus-web` can serve shell assets from the local
+filesystem instead of the embedded `shell/dist` assets compiled into the Go
+binary:
+
+```sh
+event-bus-web --shell-dev-dir /home/dev/agora-os/shell/dist
+```
+
+With this flag, changes written to `shell/dist/` are picked up on the next HTTP
+request, so the edit loop is `npm run --prefix shell build` plus browser refresh
+or shell-panel restart. Leave the flag unset in production to use embedded
+assets with no dependency on a checkout path.
 
 ## Desktop shell launch smoke
 

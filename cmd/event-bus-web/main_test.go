@@ -41,3 +41,23 @@ func TestParseServeConfigFlagOverridesShellConfigDirEnv(t *testing.T) {
 		t.Fatalf("got shell config dir %q", cfg.shellConfigDir)
 	}
 }
+
+func TestParseServeConfigShellDevDirDefaultAndFlag(t *testing.T) {
+	t.Setenv(shellConfigDirEnv, "")
+
+	cfg, err := parseServeConfig(nil)
+	if err != nil {
+		t.Fatalf("parseServeConfig: %v", err)
+	}
+	if cfg.shellDevDir != "" {
+		t.Fatalf("default shellDevDir = %q, want empty", cfg.shellDevDir)
+	}
+
+	cfg, err = parseServeConfig([]string{"--shell-dev-dir", "/home/dev/agora-os/shell/dist"})
+	if err != nil {
+		t.Fatalf("parseServeConfig: %v", err)
+	}
+	if cfg.shellDevDir != "/home/dev/agora-os/shell/dist" {
+		t.Fatalf("got shellDevDir %q", cfg.shellDevDir)
+	}
+}

@@ -133,6 +133,15 @@ want to refresh packaged widgets without touching an operator-customized layout.
 The shell loads visible non-built-in widgets from `layout.json` on boot, so a
 panel restart after this install shows the `hello-world` iframe at `top-left`.
 
+## Shell dev-mode static assets
+
+For frontend iteration on den-k8plus, run a non-production `event-bus-web` with
+`--shell-dev-dir /home/dev/agora-os/shell/dist` to serve the built shell files
+directly from the checkout. In this mode, edits rebuilt into `shell/dist/` are
+visible on the next request without rebuilding the Go binary. Keep the flag
+unset for production/systemd service installs so `event-bus-web` uses embedded
+assets and does not depend on a mutable checkout path.
+
 ## Desktop shell token/session smoke
 
 `event-bus-web.service` serves the desktop shell and the browser WebSocket bridge

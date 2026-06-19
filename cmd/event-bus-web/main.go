@@ -29,6 +29,7 @@ type serveConfig struct {
 	busSocket      string
 	secretFile     string
 	shellConfigDir string
+	shellDevDir    string
 }
 
 func main() {
@@ -69,6 +70,7 @@ func serve(args []string) {
 		Secret:           secret,
 		AllowedOrigins:   gateway.AllowedOrigins,
 		Assets:           shellFS,
+		DevDir:           cfg.shellDevDir,
 		BusSocket:        cfg.busSocket,
 		IsolationSocket:  schema.IsolationSocket,
 		CompositorSocket: schema.CompositorControlSocket,
@@ -94,6 +96,9 @@ func serve(args []string) {
 		log.Printf("event-bus-web origin policy: allow-list from %s", allowedOriginsEnv)
 	}
 	log.Printf("event-bus-web shell config dir: %s", cfg.shellConfigDir)
+	if cfg.shellDevDir != "" {
+		log.Printf("event-bus-web shell dev dir: %s", cfg.shellDevDir)
+	}
 	log.Printf("event-bus-web listening on http://%s/ws", cfg.listen)
 	log.Printf("event-bus-web shell UI on http://%s/shell/", cfg.listen)
 	log.Fatal(http.ListenAndServe(cfg.listen, mux))
@@ -112,6 +117,7 @@ func parseServeConfig(args []string) (serveConfig, error) {
 	fs.StringVar(&cfg.busSocket, "bus-socket", cfg.busSocket, "Unix socket path for the local event bus")
 	fs.StringVar(&cfg.secretFile, "secret-file", cfg.secretFile, "path to the HMAC signing secret")
 	fs.StringVar(&cfg.shellConfigDir, "shell-config-dir", cfg.shellConfigDir, "shell config directory (default /etc/agora-shell, overridden by SHELL_CONFIG_DIR)")
+	fs.StringVar(&cfg.shellDevDir, "shell-dev-dir", cfg.shellDevDir, "serve shell static assets from a local filesystem directory instead of embedded assets (disabled when empty)")
 	if err := fs.Parse(args); err != nil {
 		return serveConfig{}, err
 	}

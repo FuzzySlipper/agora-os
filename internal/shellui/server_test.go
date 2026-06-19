@@ -209,6 +209,72 @@ func TestStaticHandlerServesShellDistAliasAndDesktop(t *testing.T) {
 	}
 }
 
+func TestStaticHandlerDevDirServesFilesystemAndPicksUpChanges(t *testing.T) {
+	t.Parallel()
+
+	devDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(devDir, "index.html"), []byte("dev console v1"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(devDir, "desktop"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(devDir, "desktop", "index.html"), []byte("dev desktop v1"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	server := New(Config{
+		Assets: fstest.MapFS{
+			"index.html": {Data: []byte("embedded console")},
+		},
+		DevDir: devDir,
+	})
+	handler := server.StaticHandler()
+
+	assertStaticBody(t, handler, "/", "dev console v1")
+	assertStaticBody(t, handler, "/dist/desktop/", "dev desktop v1")
+	assertStaticBody(t, handler, "dist/desktop/", "dev desktop v1")
+
+	if err := os.WriteFile(filepath.Join(devDir, "desktop", "index.html"), []byte("dev desktop v2"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	assertStaticBody(t, handler, "/dist/desktop/", "dev desktop v2")
+}
+
+func TestStaticHandlerWithoutDevDirUsesEmbeddedAssets(t *testing.T) {
+	t.Parallel()
+
+	devDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(devDir, "index.html"), []byte("dev console"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	server := New(Config{
+		Assets: fstest.MapFS{
+			"index.html": {Data: []byte("embedded console")},
+		},
+	})
+	handler := server.StaticHandler()
+
+	assertStaticBody(t, handler, "/", "embedded console")
+}
+
+func assertStaticBody(t *testing.T, handler http.Handler, requestPath string, want string) {
+	t.Helper()
+	target := requestPath
+	if target[0] != '/' {
+		target = "/"
+	}
+	req := httptest.NewRequest(http.MethodGet, target, nil)
+	req.URL.Path = requestPath
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("%s: got status %d, want 200; body %q", requestPath, resp.Code, resp.Body.String())
+	}
+	if body := resp.Body.String(); body != want {
+		t.Fatalf("%s: got body %q, want %q", requestPath, body, want)
+	}
+}
+
 func TestThemeCSSFiltersUnsafeSelectorsAndProperties(t *testing.T) {
 	t.Parallel()
 

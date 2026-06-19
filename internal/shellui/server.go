@@ -38,6 +38,7 @@ type Config struct {
 	Now              func() time.Time
 	AllowedOrigins   map[string]struct{}
 	Assets           fs.FS
+	DevDir           string
 	BusSocket        string
 	IsolationSocket  string
 	CompositorSocket string
@@ -106,7 +107,10 @@ func New(cfg Config) *Server {
 	}
 
 	var assets http.Handler = http.NotFoundHandler()
-	if cfg.Assets != nil {
+	devDir := strings.TrimSpace(cfg.DevDir)
+	if devDir != "" {
+		assets = http.FileServer(http.Dir(devDir))
+	} else if cfg.Assets != nil {
 		assets = http.FileServerFS(cfg.Assets)
 	}
 
