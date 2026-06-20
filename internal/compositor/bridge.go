@@ -1121,14 +1121,14 @@ func (b *Bridge) surfaceActionActor(actorUID uint32) (string, *uint32) {
 	return fmt.Sprintf("uid:%d", actorUID), &uid
 }
 
-func (b *Bridge) publishSurfaceActionDenied(actorUID uint32, surfaceID string, err error) {
+func (b *Bridge) publishSurfaceActionDenied(actorUID uint32, action, surfaceID string, err error) {
 	if b.bus == nil {
 		return
 	}
 	actor, uid := b.surfaceActionActor(actorUID)
 	_, message := classifyError(err)
 	result := schema.SurfaceActionResponse{
-		Action: "surface.focus", SurfaceID: surfaceID, Decision: schema.SurfaceActionDenied,
+		Action: action, SurfaceID: surfaceID, Decision: schema.SurfaceActionDenied,
 		Reason: message, Error: message, Actor: actor, ActorUID: uid,
 	}
 	if err := b.bus.Publish(schema.TopicShellActionDenied, result); err != nil {
@@ -1139,7 +1139,7 @@ func (b *Bridge) publishSurfaceActionDenied(actorUID uint32, surfaceID string, e
 func (b *Bridge) FocusSurface(actorUID uint32, req schema.FocusSurfaceRequest) (schema.SurfaceActionResponse, error) {
 	if req.SurfaceID == "" {
 		err := fmt.Errorf("surface_id is required")
-		b.publishSurfaceActionDenied(actorUID, req.SurfaceID, err)
+		b.publishSurfaceActionDenied(actorUID, "surface.focus", req.SurfaceID, err)
 		return schema.SurfaceActionResponse{}, err
 	}
 	b.mu.RLock()
@@ -1151,21 +1151,21 @@ func (b *Bridge) FocusSurface(actorUID uint32, req schema.FocusSurfaceRequest) (
 		b.mu.RUnlock()
 		if stale {
 			err := compositorError(schema.ErrorSurfaceStale, "surface %s is unmapped/stale", req.SurfaceID)
-			b.publishSurfaceActionDenied(actorUID, req.SurfaceID, err)
+			b.publishSurfaceActionDenied(actorUID, "surface.focus", req.SurfaceID, err)
 			return schema.SurfaceActionResponse{}, err
 		}
 		err := compositorError(schema.ErrorSurfaceNotFound, "surface %s not found", req.SurfaceID)
-		b.publishSurfaceActionDenied(actorUID, req.SurfaceID, err)
+		b.publishSurfaceActionDenied(actorUID, "surface.focus", req.SurfaceID, err)
 		return schema.SurfaceActionResponse{}, err
 	}
 	if tracked.Surface.SurfaceKind == schema.SurfaceKindLayerShell {
 		err := compositorError(schema.ErrorBackendUnsupported, "surface %s is a layer-shell surface and cannot be focused as a work surface", req.SurfaceID)
-		b.publishSurfaceActionDenied(actorUID, req.SurfaceID, err)
+		b.publishSurfaceActionDenied(actorUID, "surface.focus", req.SurfaceID, err)
 		return schema.SurfaceActionResponse{}, err
 	}
 	if !tracked.Visible {
 		err := compositorError(schema.ErrorSurfaceStale, "surface %s is not visible", req.SurfaceID)
-		b.publishSurfaceActionDenied(actorUID, req.SurfaceID, err)
+		b.publishSurfaceActionDenied(actorUID, "surface.focus", req.SurfaceID, err)
 		return schema.SurfaceActionResponse{}, err
 	}
 
@@ -1182,7 +1182,7 @@ func (b *Bridge) FocusSurface(actorUID uint32, req schema.FocusSurfaceRequest) (
 	}()
 
 	if err := b.sendToPlugin(schema.CompositorFocusSurface{Type: schema.PluginMessageFocusSurface, RequestID: requestID, SurfaceID: req.SurfaceID}); err != nil {
-		b.publishSurfaceActionDenied(actorUID, req.SurfaceID, err)
+		b.publishSurfaceActionDenied(actorUID, "surface.focus", req.SurfaceID, err)
 		return schema.SurfaceActionResponse{}, err
 	}
 
@@ -1201,12 +1201,12 @@ func (b *Bridge) FocusSurface(actorUID uint32, req schema.FocusSurfaceRequest) (
 			if strings.Contains(strings.ToLower(msg), "surface not found") {
 				err = compositorError(schema.ErrorSurfaceStale, "surface %s is unmapped/stale", req.SurfaceID)
 			}
-			b.publishSurfaceActionDenied(actorUID, req.SurfaceID, err)
+			b.publishSurfaceActionDenied(actorUID, "surface.focus", req.SurfaceID, err)
 			return schema.SurfaceActionResponse{}, err
 		}
 	case <-time.After(timeout):
 		err := compositorError(schema.ErrorFrameTimeout, "focus request timed out")
-		b.publishSurfaceActionDenied(actorUID, req.SurfaceID, err)
+		b.publishSurfaceActionDenied(actorUID, "surface.focus", req.SurfaceID, err)
 		return schema.SurfaceActionResponse{}, err
 	}
 
@@ -1218,7 +1218,7 @@ func (b *Bridge) FocusSurface(actorUID uint32, req schema.FocusSurfaceRequest) (
 	b.mu.RUnlock()
 	if !ok {
 		err := compositorError(schema.ErrorSurfaceStale, "surface %s disappeared after focus", req.SurfaceID)
-		b.publishSurfaceActionDenied(actorUID, req.SurfaceID, err)
+		b.publishSurfaceActionDenied(actorUID, "surface.focus", req.SurfaceID, err)
 		return schema.SurfaceActionResponse{}, err
 	}
 
@@ -1271,6 +1271,68 @@ func (b *Bridge) CloseSurface(surfaceID string) error {
 		Type:      schema.PluginMessageCloseSurface,
 		SurfaceID: surfaceID,
 	})
+}
+
+func (b *Bridge) CloseSurfaceAction(actorUID uint32, req schema.CloseSurfaceRequest) (schema.SurfaceActionResponse, error) {
+	if req.SurfaceID == "" {
+		err := fmt.Errorf("surface_id is required")
+		b.publishSurfaceActionDenied(actorUID, "surface.close", req.SurfaceID, err)
+		return schema.SurfaceActionResponse{}, err
+	}
+	b.mu.RLock()
+	tracked, ok := b.surfaces[req.SurfaceID]
+	b.mu.RUnlock()
+	if !ok {
+		b.mu.RLock()
+		_, stale := b.staleSurfaces[req.SurfaceID]
+		b.mu.RUnlock()
+		if stale {
+			err := compositorError(schema.ErrorSurfaceStale, "surface %s is unmapped/stale", req.SurfaceID)
+			b.publishSurfaceActionDenied(actorUID, "surface.close", req.SurfaceID, err)
+			return schema.SurfaceActionResponse{}, err
+		}
+		err := compositorError(schema.ErrorSurfaceNotFound, "surface %s not found", req.SurfaceID)
+		b.publishSurfaceActionDenied(actorUID, "surface.close", req.SurfaceID, err)
+		return schema.SurfaceActionResponse{}, err
+	}
+	if tracked.Surface.SurfaceKind == schema.SurfaceKindLayerShell {
+		err := compositorError(schema.ErrorBackendUnsupported, "surface %s is a layer-shell surface and cannot be closed as a work surface", req.SurfaceID)
+		b.publishSurfaceActionDenied(actorUID, "surface.close", req.SurfaceID, err)
+		return schema.SurfaceActionResponse{}, err
+	}
+	if !tracked.Visible {
+		err := compositorError(schema.ErrorSurfaceStale, "surface %s is not visible", req.SurfaceID)
+		b.publishSurfaceActionDenied(actorUID, "surface.close", req.SurfaceID, err)
+		return schema.SurfaceActionResponse{}, err
+	}
+
+	if err := b.CloseSurface(req.SurfaceID); err != nil {
+		b.publishSurfaceActionDenied(actorUID, "surface.close", req.SurfaceID, err)
+		return schema.SurfaceActionResponse{}, err
+	}
+	actor, uid := b.surfaceActionActor(actorUID)
+	readback := b.decorateSurfaceLockedCopy(req.SurfaceID)
+	result := schema.SurfaceActionResponse{
+		Action: "surface.close", SurfaceID: req.SurfaceID, ClosedSurfaceID: req.SurfaceID, Decision: schema.SurfaceActionAccepted,
+		Reason: "close queued via compositor plugin", Queued: true, Actor: actor, ActorUID: uid, Surface: readback,
+	}
+	if b.bus != nil {
+		if err := b.bus.Publish(schema.TopicShellActionCompleted, result); err != nil {
+			log.Printf("publish shell action completed: %v", err)
+		}
+	}
+	return result, nil
+}
+
+func (b *Bridge) decorateSurfaceLockedCopy(surfaceID string) *schema.CompositorTrackedSurface {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	tracked, ok := b.surfaces[surfaceID]
+	if !ok {
+		return nil
+	}
+	decorated := b.decorateSurfaceLocked(tracked)
+	return &decorated
 }
 
 func (b *Bridge) CloseSurfacesByUID(ownerUID uint32) (int, error) {
@@ -2439,13 +2501,11 @@ func (b *Bridge) dispatch(peerUID uint32, req schema.Request) (schema.Response, 
 		if err := json.Unmarshal(req.Body, &body); err != nil {
 			return schema.Response{}, fmt.Errorf("bad body: %w", err)
 		}
-		if body.SurfaceID == "" {
-			return schema.Response{}, fmt.Errorf("surface_id is required")
-		}
-		if err := b.CloseSurface(body.SurfaceID); err != nil {
+		resp, err := b.CloseSurfaceAction(peerUID, body)
+		if err != nil {
 			return schema.Response{}, err
 		}
-		return okResponse(schema.CloseSurfacesResponse{Queued: 1}), nil
+		return okResponse(resp), nil
 	case schema.MethodCloseSurfacesByUID:
 		var body schema.CloseSurfacesByUIDRequest
 		if err := json.Unmarshal(req.Body, &body); err != nil {

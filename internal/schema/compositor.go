@@ -436,6 +436,8 @@ type SurfaceActionResponse struct {
 	Reason           string                    `json:"reason,omitempty"`
 	Error            string                    `json:"error,omitempty"`
 	FocusedSurfaceID string                    `json:"focused_surface_id,omitempty"`
+	ClosedSurfaceID  string                    `json:"closed_surface_id,omitempty"`
+	Queued           bool                      `json:"queued,omitempty"`
 	Actor            string                    `json:"actor,omitempty"`
 	ActorUID         *uint32                   `json:"actor_uid,omitempty"`
 	Surface          *CompositorTrackedSurface `json:"surface,omitempty"`
@@ -789,7 +791,8 @@ type SetInputContextRequest struct {
 }
 
 type CloseSurfaceRequest struct {
-	SurfaceID string `json:"surface_id"`
+	SurfaceID     string `json:"surface_id"`
+	WaitTimeoutMs int    `json:"timeout_ms,omitempty"`
 }
 
 type CloseSurfacesByUIDRequest struct {

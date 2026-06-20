@@ -139,6 +139,44 @@ func TestSurfaceFocusEndpointCallsCanonicalCompositorAction(t *testing.T) {
 	}
 }
 
+func TestSurfaceCloseEndpointForwardsCanonicalAction(t *testing.T) {
+	t.Parallel()
+
+	authNow := time.Now().UTC().Truncate(time.Second)
+	compSock := startSchemaServer(t, func(req schema.Request) schema.Response {
+		if req.Method != schema.MethodCloseSurface {
+			t.Fatalf("unexpected method %q", req.Method)
+		}
+		var body schema.CloseSurfaceRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		if body.SurfaceID != "view-42" {
+			t.Fatalf("unexpected surface %q", body.SurfaceID)
+		}
+		payload, _ := json.Marshal(schema.SurfaceActionResponse{Action: "surface.close", SurfaceID: body.SurfaceID, ClosedSurfaceID: body.SurfaceID, Decision: schema.SurfaceActionAccepted, Queued: true})
+		return schema.Response{OK: true, Body: payload}
+	})
+	secret := []byte("01234567890123456789012345678901")
+	server := New(Config{Secret: secret, Now: func() time.Time { return authNow }, CompositorSocket: compSock})
+	body := bytes.NewReader([]byte(`{"surface_id":"view-42"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/shell/surface/close", body)
+	req.Header.Set("Authorization", "Bearer "+mustMintHumanToken(t, secret))
+	resp := httptest.NewRecorder()
+
+	server.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("got status %d body %q, want 200", resp.Code, resp.Body.String())
+	}
+	var result schema.SurfaceActionResponse
+	if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Action != "surface.close" || result.ClosedSurfaceID != "view-42" || result.Decision != schema.SurfaceActionAccepted || !result.Queued {
+		t.Fatalf("unexpected result %+v", result)
+	}
+}
+
 func TestSurfaceFocusEndpointReturnsStructuredDeniedResult(t *testing.T) {
 	t.Parallel()
 
@@ -161,7 +199,7 @@ func TestSurfaceFocusEndpointReturnsStructuredDeniedResult(t *testing.T) {
 	if resp.Code != http.StatusConflict {
 		t.Fatalf("got status %d body %q, want 409", resp.Code, resp.Body.String())
 	}
-	var result focusSurfaceHTTPError
+	var result surfaceActionHTTPError
 	if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}

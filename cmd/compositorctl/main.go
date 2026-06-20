@@ -108,7 +108,7 @@ Commands:
   set-input-context  Mark the current compositor input stream as driven by an agent uid
   clear-input-context  Return the compositor input stream to human mode
   set-view-property  Set a tracked surface view property such as always_on_top
-  surface            Run semantic surface actions such as focus
+  surface            Run semantic surface actions such as focus and close
   shell              Manage desktop shell themes, wallpaper, and widgets
   list-surfaces      List tracked compositor surfaces
 
@@ -550,9 +550,20 @@ func buildFocusSurfaceRequest(args []string) (schema.FocusSurfaceRequest, error)
 	return schema.FocusSurfaceRequest{SurfaceID: *surfaceID, WaitTimeoutMs: *timeout}, nil
 }
 
+func buildCloseSurfaceRequest(args []string) (schema.CloseSurfaceRequest, error) {
+	fs := flag.NewFlagSet("surface close", flag.ExitOnError)
+	surfaceID := fs.String("surface", "", "surface id to close")
+	timeout := fs.Int("timeout-ms", 2000, "reserved close acknowledgement timeout in milliseconds")
+	fs.Parse(args)
+	if *surfaceID == "" {
+		return schema.CloseSurfaceRequest{}, fmt.Errorf("--surface is required")
+	}
+	return schema.CloseSurfaceRequest{SurfaceID: *surfaceID, WaitTimeoutMs: *timeout}, nil
+}
+
 func cmdSurface(args []string, pretty bool) error {
 	if len(args) == 0 {
-		return fmt.Errorf("surface subcommand is required: focus (raise is deferred until compositor support is explicit)")
+		return fmt.Errorf("surface subcommand is required: focus, close (raise/minimize/maximize are deferred until compositor support is explicit)")
 	}
 	switch args[0] {
 	case "focus":
@@ -561,6 +572,12 @@ func cmdSurface(args []string, pretty bool) error {
 			return err
 		}
 		return callAndPrint(schema.MethodFocusSurface, req, pretty)
+	case "close":
+		req, err := buildCloseSurfaceRequest(args[1:])
+		if err != nil {
+			return err
+		}
+		return callAndPrint(schema.MethodCloseSurface, req, pretty)
 	default:
 		return fmt.Errorf("unknown surface subcommand: %s", args[0])
 	}

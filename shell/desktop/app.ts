@@ -4,6 +4,7 @@ import { AgentHealthWidget } from "./widgets/agent-health.js";
 import { ClockWidget } from "./widgets/clock.js";
 import { NotificationCenter } from "./widgets/notification-center.js";
 import { TaskbarWidget } from "./widgets/taskbar.js";
+import { WindowChromeWidget } from "./widgets/window-chrome.js";
 import { createLayoutController, type LayoutController } from "./layout.js";
 import { createThemeController, type ThemeController } from "./theme.js";
 import { createWidgetController, type WidgetController } from "./widgets.js";
@@ -104,17 +105,19 @@ export class ShellApp {
         this.registerWidget(new AgentHealthWidget());
         this.registerWidget(new ClockWidget());
         this.registerWidget(new NotificationCenter());
+        const applyLocalActionResult = (result: SurfaceActionResponse): void => {
+            const next = cloneState(this.state);
+            applySurfaceActionEvent(next, {
+                topic: result.decision === "denied" ? "shell.action.denied" : "shell.action.completed",
+                body: result,
+                timestamp: new Date().toISOString(),
+            });
+            this.update(next);
+        };
+        this.registerWidget(new WindowChromeWidget({ onActionResult: applyLocalActionResult }));
         this.registerWidget(new TaskbarWidget({
             publish: (topic, body) => this.bus.publish(topic, body),
-            onFocusResult: (result) => {
-                const next = cloneState(this.state);
-                applySurfaceActionEvent(next, {
-                    topic: result.decision === "denied" ? "shell.action.denied" : "shell.action.completed",
-                    body: result,
-                    timestamp: new Date().toISOString(),
-                });
-                this.update(next);
-            },
+            onFocusResult: applyLocalActionResult,
         }));
     }
 
@@ -182,7 +185,7 @@ function shellLayout(): string {
         <section class="shell-grid" aria-label="Agora desktop shell">
             <div class="shell-widget-container shell-zone pos-top-left" data-widget-slot="agent-health"></div>
             <div class="shell-widget-container shell-zone pos-top-right" data-widget-slot="clock"></div>
-            <div class="shell-widget-container shell-zone pos-center" data-widget-slot="center"></div>
+            <div class="shell-widget-container shell-zone pos-center" data-widget-slot="window-chrome"></div>
             <div class="shell-widget-container shell-zone pos-bottom-right" data-widget-slot="notifications"></div>
             <nav class="shell-widget-container shell-taskbar pos-bottom" data-widget-slot="taskbar" aria-label="Desktop taskbar"></nav>
         </section>`;
@@ -217,30 +220,45 @@ function applySurfaceEvent(state: DesktopShellState, event: BusEnvelope): void {
 
 export function applySurfaceActionEvent(state: DesktopShellState, event: BusEnvelope): void {
     const body = event.body as SurfaceActionResponse | undefined;
-    if (!body || body.action !== "surface.focus" || !body.surface_id) {
+    if (!body || !body.surface_id) {
         return;
     }
     if (event.topic === "shell.action.completed" && body.decision !== "denied") {
-        const focusedID = body.focused_surface_id || body.surface_id;
-        state.surfaces = state.surfaces.map((entry) => ({ ...entry, focused: entry.id === focusedID, action_error: undefined, disabled: false }));
-        const readback = body.surface?.surface;
-        if (readback?.id) {
-            const existing = state.surfaces.findIndex((entry) => entry.id === readback.id);
-            const merged: SurfaceEvent = { ...(existing >= 0 ? state.surfaces[existing] : {}), ...readback, focused: body.surface?.focused ?? (readback.id === focusedID) };
-            if (existing >= 0) {
-                state.surfaces[existing] = merged;
-            } else {
-                state.surfaces.push(merged);
-            }
+        if (body.action === "surface.focus") {
+            const focusedID = body.focused_surface_id || body.surface_id;
+            state.surfaces = state.surfaces.map((entry) => ({ ...entry, focused: entry.id === focusedID, action_error: undefined, disabled: false }));
+            mergeActionReadback(state, body, focusedID);
+            return;
         }
+        if (body.action === "surface.close") {
+            state.surfaces = state.surfaces.map((entry) => entry.id === body.surface_id ? { ...entry, status: "closing", action_error: undefined } : entry);
+            mergeActionReadback(state, body);
+            return;
+        }
+    }
+    if (body.action !== "surface.focus" && body.action !== "surface.close") {
         return;
     }
-    const message = body.error || body.reason || "focus denied";
+    const message = body.error || body.reason || `${body.action} denied`;
     if (message.toLowerCase().includes("stale") || message.toLowerCase().includes("not found") || message.toLowerCase().includes("unmapped")) {
         state.surfaces = state.surfaces.filter((entry) => entry.id !== body.surface_id);
         return;
     }
     state.surfaces = state.surfaces.map((entry) => entry.id === body.surface_id ? { ...entry, action_error: message, disabled: true } : entry);
+}
+
+function mergeActionReadback(state: DesktopShellState, body: SurfaceActionResponse, focusedID?: string): void {
+    const readback = body.surface?.surface;
+    if (!readback?.id) {
+        return;
+    }
+    const existing = state.surfaces.findIndex((entry) => entry.id === readback.id);
+    const merged: SurfaceEvent = { ...(existing >= 0 ? state.surfaces[existing] : {}), ...readback, focused: body.surface?.focused ?? (readback.id === focusedID) };
+    if (existing >= 0) {
+        state.surfaces[existing] = merged;
+    } else {
+        state.surfaces.push(merged);
+    }
 }
 
 function applyAgentEvent(state: DesktopShellState, event: BusEnvelope): void {

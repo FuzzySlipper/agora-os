@@ -26,6 +26,8 @@ export interface SurfaceActionResponse {
     reason?: string;
     error?: string;
     focused_surface_id?: string;
+    closed_surface_id?: string;
+    queued?: boolean;
     actor?: string;
     actor_uid?: number;
     surface?: {

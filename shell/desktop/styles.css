@@ -219,6 +219,135 @@ agora-agent-health {
     box-shadow: 0 0 14px rgba(248, 113, 113, 0.75);
 }
 
+agora-window-chrome {
+    display: block;
+    width: min(42rem, 100%);
+    max-height: min(58vh, 32rem);
+    overflow: auto;
+    pointer-events: auto;
+}
+
+.window-chrome-widget__frame {
+    border: 1px solid var(--shell-border);
+    border-radius: 1.1rem;
+    background: rgba(10, 14, 24, 0.74);
+    box-shadow: 0 24px 70px rgba(0, 0, 0, 0.42);
+    backdrop-filter: blur(22px);
+    overflow: hidden;
+}
+
+.window-chrome-widget__header,
+.window-chrome-widget__titlebar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+}
+
+.window-chrome-widget__header {
+    padding: 0.75rem 0.9rem;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+    color: var(--shell-text);
+    font-size: 0.86rem;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.window-chrome-widget__subtitle {
+    color: var(--shell-muted);
+    font-size: 0.72rem;
+    font-weight: 650;
+    text-transform: none;
+    letter-spacing: 0;
+}
+
+.window-chrome-widget__list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    padding: 0.8rem;
+}
+
+.window-chrome-widget__surface {
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    border-radius: 0.9rem;
+    background: rgba(15, 23, 42, 0.72);
+    color: var(--shell-text);
+    overflow: hidden;
+}
+
+.window-chrome-widget__surface--focused {
+    border-color: var(--shell-accent);
+    box-shadow: 0 0 0 2px rgba(118, 228, 247, 0.18);
+}
+
+.window-chrome-widget__surface--error {
+    border-color: #f87171;
+}
+
+.window-chrome-widget__titlebar {
+    min-height: 2.7rem;
+    padding: 0.55rem 0.6rem 0.55rem 0.8rem;
+    cursor: pointer;
+}
+
+.window-chrome-widget__titles {
+    min-width: 0;
+}
+
+.window-chrome-widget__title,
+.window-chrome-widget__meta {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.window-chrome-widget__title {
+    font-size: 0.9rem;
+    font-weight: 800;
+}
+
+.window-chrome-widget__meta,
+.window-chrome-widget__status {
+    color: var(--shell-muted);
+    font-size: 0.72rem;
+}
+
+.window-chrome-widget__controls {
+    display: inline-flex;
+    gap: 0.35rem;
+    flex: 0 0 auto;
+}
+
+.window-chrome-widget__button {
+    min-width: 2rem;
+    height: 1.85rem;
+    padding: 0 0.55rem;
+    border: 1px solid rgba(148, 163, 184, 0.28);
+    border-radius: 0.55rem;
+    background: rgba(148, 163, 184, 0.14);
+    color: var(--shell-text);
+    font: inherit;
+    font-size: 0.74rem;
+    font-weight: 800;
+    cursor: pointer;
+}
+
+.window-chrome-widget__button--close {
+    background: rgba(248, 113, 113, 0.18);
+    color: #fecaca;
+}
+
+.window-chrome-widget__button:disabled {
+    cursor: progress;
+    opacity: 0.6;
+}
+
+.window-chrome-widget__status {
+    padding: 0 0.8rem 0.55rem;
+}
+
 agora-taskbar {
     display: contents;
 }

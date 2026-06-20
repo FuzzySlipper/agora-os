@@ -781,6 +781,59 @@ func TestDispatchFocusSurfaceRoutesToPluginAndPublishesAction(t *testing.T) {
 	}
 }
 
+
+func TestDispatchCloseSurfaceRoutesToPluginAndPublishesAction(t *testing.T) {
+	pub := &fakePublisher{}
+	bridge, err := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	server, client, cleanup := unixSocketPair(t)
+	defer cleanup()
+
+	go bridge.HandlePluginConn(server)
+	dec := json.NewDecoder(client)
+	readInitialSync(t, dec)
+
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{
+		Type:    schema.PluginMessageSurfaceEvent,
+		Event:   schema.SurfaceEventMapped,
+		Surface: schema.CompositorSurface{ID: "view-close", WayfireViewID: 44, Visible: boolPtr(true)},
+		Client:  schema.CompositorClientIdentity{UID: 60001},
+	})
+	var discard schema.CompositorPolicyUpsert
+	_ = dec.Decode(&discard)
+
+	body, err := json.Marshal(schema.CloseSurfaceRequest{SurfaceID: "view-close"})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	resp, err := bridge.dispatch(60002, schema.Request{Method: schema.MethodCloseSurface, Body: body})
+	if err != nil {
+		t.Fatalf("dispatch close surface: %v", err)
+	}
+	if !resp.OK {
+		t.Fatalf("dispatch response not OK: %+v", resp)
+	}
+	var msg schema.CompositorCloseSurface
+	if err := dec.Decode(&msg); err != nil {
+		t.Fatalf("decode close_surface: %v", err)
+	}
+	if msg.Type != schema.PluginMessageCloseSurface || msg.SurfaceID != "view-close" {
+		t.Fatalf("unexpected close_surface message: %+v", msg)
+	}
+	var action schema.SurfaceActionResponse
+	if err := json.Unmarshal(resp.Body, &action); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if action.Action != "surface.close" || action.Decision != schema.SurfaceActionAccepted || action.ClosedSurfaceID != "view-close" || !action.Queued {
+		t.Fatalf("unexpected action response: %+v", action)
+	}
+	if len(pub.events) == 0 || pub.events[len(pub.events)-1].topic != schema.TopicShellActionCompleted {
+		t.Fatalf("shell action completion was not published: %+v", pub.events)
+	}
+}
+
 func TestDispatchFocusSurfaceRejectsStaleSurface(t *testing.T) {
 	bridge, err := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
 	if err != nil {

@@ -51,4 +51,13 @@ const disabled = state.surfaces.find((surface) => surface.id === "view-1");
 assert.equal(disabled.disabled, true, "non-stale denial disables entry");
 assert.equal(disabled.action_error, "focus not confirmed");
 
+state.surfaces.push({ id: "view-3", title: "Throwaway", focused: false });
+applySurfaceActionEvent(state, {
+  topic: "shell.action.completed",
+  body: { action: "surface.close", surface_id: "view-3", decision: "accepted", closed_surface_id: "view-3", queued: true },
+});
+const closing = state.surfaces.find((surface) => surface.id === "view-3");
+assert.equal(closing.status, "closing", "queued close marks surface closing");
+assert.equal(state.surfaces.some((surface) => surface.id === "view-3"), true, "queued close keeps surface until compositor unmap/readback");
+
 console.log("surface action state tests passed");
