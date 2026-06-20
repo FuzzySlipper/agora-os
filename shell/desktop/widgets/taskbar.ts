@@ -14,13 +14,20 @@ interface SurfaceActionStatus {
     error?: string;
 }
 
+interface SurfaceTaskbarItem {
+    surface: SurfaceEvent;
+    label: string;
+    title: string;
+    icon: string;
+}
+
 export class TaskbarWidget extends HTMLElement implements ShellWidget {
     readonly id = "taskbar";
     readonly layer = 30;
     private publish: ShellPublisher;
     private focusSurface: SurfaceFocusAction;
     private onFocusResult: (result: SurfaceActionResponse) => void;
-    private surfaces: SurfaceEvent[] = [];
+    private surfaces: SurfaceTaskbarItem[] = [];
     private actionStatus = new Map<string, SurfaceActionStatus>();
 
     constructor(options: TaskbarWidgetOptions | ShellPublisher = {}) {
@@ -50,9 +57,9 @@ export class TaskbarWidget extends HTMLElement implements ShellWidget {
     }
 
     update(state: DesktopShellState): void {
-        this.surfaces = [...state.surfaces].sort((a, b) => surfaceLabel(a).localeCompare(surfaceLabel(b)));
+        this.surfaces = surfaceTaskbarItems(state.surfaces);
         for (const id of this.actionStatus.keys()) {
-            if (!this.surfaces.some((surface) => surface.id === id)) {
+            if (!this.surfaces.some((item) => item.surface.id === id)) {
                 this.actionStatus.delete(id);
             }
         }
@@ -90,11 +97,15 @@ export class TaskbarWidget extends HTMLElement implements ShellWidget {
         launch.addEventListener("click", () => this.publish("conversation.turn.requested", { prompt: "Open launcher" }));
         const surfaceList = document.createElement("div");
         surfaceList.className = "taskbar-widget__surfaces";
-        for (const surface of this.surfaces) {
+        for (const item of this.surfaces) {
+            const surface = item.surface;
             const status = this.actionStatus.get(surface.id);
             const classes = ["taskbar-widget__surface"];
             if (surface.focused) {
                 classes.push("taskbar-widget__surface--focused");
+            }
+            if (surface.status === "closing") {
+                classes.push("taskbar-widget__surface--closing");
             }
             if (status?.pending) {
                 classes.push("taskbar-widget__surface--pending");
@@ -105,16 +116,15 @@ export class TaskbarWidget extends HTMLElement implements ShellWidget {
             if (surface.disabled) {
                 classes.push("taskbar-widget__surface--disabled");
             }
-            const label = surfaceLabel(surface);
-            const icon = button(classes.join(" "), surfaceIcon(surface), `Focus ${label}`);
-            icon.title = status?.error || surface.action_error || `${label} · ${surface.id}`;
+            const icon = button(classes.join(" "), item.icon, `Focus ${item.label}`);
+            icon.title = status?.error || surface.action_error || item.title;
             icon.dataset.surfaceId = surface.id;
             icon.dataset.action = "surface.focus";
             icon.disabled = Boolean(surface.disabled || status?.pending);
             icon.addEventListener("click", () => { void this.requestFocus(surface); });
             const text = document.createElement("span");
             text.className = "taskbar-widget__surface-label";
-            text.textContent = label;
+            text.textContent = item.label;
             icon.append(text);
             surfaceList.append(icon);
         }
@@ -134,13 +144,58 @@ function button(className: string, text: string, label: string): HTMLButtonEleme
     return node;
 }
 
-function surfaceLabel(surface: SurfaceEvent): string {
+function surfaceTaskbarItems(surfaces: SurfaceEvent[]): SurfaceTaskbarItem[] {
+    const grouped = new Map<string, SurfaceEvent[]>();
+    for (const surface of surfaces) {
+        const key = baseSurfaceLabel(surface);
+        grouped.set(key, [...(grouped.get(key) ?? []), surface]);
+    }
+    return [...surfaces]
+        .sort((a, b) => surfaceSortKey(a).localeCompare(surfaceSortKey(b)))
+        .map((surface) => {
+            const base = baseSurfaceLabel(surface);
+            const duplicateGroup = grouped.get(base) ?? [];
+            const label = duplicateGroup.length > 1 ? disambiguatedSurfaceLabel(surface, duplicateGroup) : base;
+            return {
+                surface,
+                label,
+                title: surfaceTitle(surface, label),
+                icon: surfaceIcon(label),
+            };
+        });
+}
+
+function baseSurfaceLabel(surface: SurfaceEvent): string {
     return surface.title || surface.app_id || surface.id;
 }
 
-function surfaceIcon(surface: SurfaceEvent): string {
-    const label = surfaceLabel(surface).trim();
-    return (label[0] ?? "•").toUpperCase();
+function disambiguatedSurfaceLabel(surface: SurfaceEvent, group: SurfaceEvent[]): string {
+    if (surface.app_id && group.some((entry) => entry.app_id !== surface.app_id)) {
+        return `${baseSurfaceLabel(surface)} · ${surface.app_id}`;
+    }
+    return `${baseSurfaceLabel(surface)} · ${surface.id}`;
+}
+
+function surfaceTitle(surface: SurfaceEvent, label: string): string {
+    const bits = [label, surface.id];
+    if (surface.app_id && !label.includes(surface.app_id)) {
+        bits.push(surface.app_id);
+    }
+    if (surface.geometry) {
+        bits.push(`${surface.geometry.width}×${surface.geometry.height}+${surface.geometry.x}+${surface.geometry.y}`);
+    }
+    if (surface.status === "closing") {
+        bits.push("closing");
+    }
+    return bits.join(" · ");
+}
+
+function surfaceSortKey(surface: SurfaceEvent): string {
+    return `${baseSurfaceLabel(surface)}\u0000${surface.app_id ?? ""}\u0000${surface.id}`;
+}
+
+function surfaceIcon(label: string): string {
+    return (label.trim()[0] ?? "•").toUpperCase();
 }
 
 export class SurfaceFocusError extends Error {

@@ -87,10 +87,14 @@ widget.update({
 
 const buttons = widget.querySelectorAll("button");
 assert.equal(buttons.length, 3, "launcher plus two surface buttons");
-assert.equal(buttons[1].dataset.action, "surface.focus");
-assert.equal(buttons[1].getAttribute("aria-label"), "Focus ASHA Studio");
-assert.ok(buttons[1].title.includes("view-1"), "full title includes surface id for disambiguation");
-buttons[1].click();
+const view1Button = widget.querySelectorAll('[data-surface-id="view-1"]')[0];
+const view2Button = widget.querySelectorAll('[data-surface-id="view-2"]')[0];
+assert.equal(view1Button.dataset.action, "surface.focus");
+assert.equal(view1Button.getAttribute("aria-label"), "Focus ASHA Studio · asha");
+assert.ok(view1Button.textContent.includes("ASHA Studio · asha"), "duplicate taskbar labels include app id");
+assert.ok(view2Button.textContent.includes("ASHA Studio · asha-copy"), "second duplicate taskbar label is also disambiguated");
+assert.ok(view1Button.title.includes("view-1"), "full title includes surface id for disambiguation");
+view1Button.click();
 await Promise.resolve();
 assert.deepEqual(focusCalls, ["view-1"]);
 assert.equal(focusResults.at(-1).action, "surface.focus");

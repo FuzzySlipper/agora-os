@@ -387,8 +387,13 @@ agora-taskbar {
     box-shadow: 0 0 0 2px rgba(118, 228, 247, 0.20);
 }
 
-.taskbar-widget__surface--pending {
+.taskbar-widget__surface--pending,
+.taskbar-widget__surface--closing {
     opacity: 0.72;
+}
+
+.taskbar-widget__surface--closing {
+    border-color: #fbbf24;
 }
 
 .taskbar-widget__surface--error,

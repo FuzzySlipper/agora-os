@@ -36,6 +36,12 @@ const emptyState = (): DesktopShellState => ({
     },
 });
 
+export interface ShellStateSnapshot {
+    agents?: AgentInfo[];
+    surfaces?: Array<{ surface?: SurfaceEvent; focused?: boolean; visible?: boolean; updated_at?: string } | SurfaceEvent>;
+}
+
+
 export class ShellApp {
     private readonly bus: BusConnection;
     private readonly widgets = new Map<string, ShellWidget>();
@@ -43,6 +49,7 @@ export class ShellApp {
     private root: HTMLElement | null = null;
     private mounted = false;
     private subscribed = false;
+    private stateRefreshTimer: ReturnType<typeof setInterval> | undefined;
     private readonly theme: ThemeController;
     private readonly layout: LayoutController;
     private readonly injectedWidgets: WidgetController;
@@ -68,11 +75,17 @@ export class ShellApp {
         }
         this.connectBus();
         this.update(this.state);
+        void this.refreshShellStateSnapshot();
+        this.stateRefreshTimer = setInterval(() => { void this.refreshShellStateSnapshot(); }, 15_000);
         void this.layout.loadFromServer();
         void this.injectedWidgets.loadFromServerLayout();
     }
 
     unmount(): void {
+        if (this.stateRefreshTimer) {
+            clearInterval(this.stateRefreshTimer);
+            this.stateRefreshTimer = undefined;
+        }
         this.bus.disconnect();
         for (const widget of this.widgets.values()) {
             widget.unmount();
@@ -126,6 +139,29 @@ export class ShellApp {
         this.renderShellState();
         for (const widget of this.widgets.values()) {
             widget.update(state);
+        }
+    }
+
+    private async refreshShellStateSnapshot(): Promise<void> {
+        if (typeof fetch !== "function") {
+            return;
+        }
+        const headers: Record<string, string> = {};
+        const token = tokenFromLocationOrStorage();
+        if (token) {
+            headers.Authorization = `Bearer ${token}`;
+        }
+        try {
+            const response = await fetch("/api/shell/state", { cache: "no-store", headers });
+            if (!response.ok) {
+                return;
+            }
+            const snapshot = await response.json() as ShellStateSnapshot;
+            const next = cloneState(this.state);
+            applyShellStateSnapshot(next, snapshot);
+            this.update(next);
+        } catch {
+            // Event-bus updates remain the primary path; snapshots are best-effort stale cleanup/readback.
         }
     }
 
@@ -200,7 +236,26 @@ function cloneState(state: DesktopShellState): DesktopShellState {
     };
 }
 
-function applySurfaceEvent(state: DesktopShellState, event: BusEnvelope): void {
+export function applyShellStateSnapshot(state: DesktopShellState, snapshot: ShellStateSnapshot): void {
+    const live = new Map<string, SurfaceEvent>();
+    for (const entry of snapshot.surfaces ?? []) {
+        const candidate = "surface" in entry && entry.surface ? entry.surface : entry as SurfaceEvent;
+        if (!candidate?.id) {
+            continue;
+        }
+        live.set(candidate.id, { ...candidate, focused: ("focused" in entry && typeof entry.focused === "boolean") ? entry.focused : candidate.focused });
+    }
+    state.surfaces = [...live.values()].sort((a, b) => stableSurfaceSort(a).localeCompare(stableSurfaceSort(b)));
+    if (snapshot.agents) {
+        state.agents = snapshot.agents;
+    }
+}
+
+function stableSurfaceSort(surface: SurfaceEvent): string {
+    return `${surface.title ?? ""}\u0000${surface.app_id ?? ""}\u0000${surface.id}`;
+}
+
+export function applySurfaceEvent(state: DesktopShellState, event: BusEnvelope): void {
     const body = event.body as { surface?: SurfaceEvent; id?: string; event?: string } | undefined;
     const surface = body?.surface ?? (body?.id ? { id: body.id } : undefined);
     if (!surface?.id) {

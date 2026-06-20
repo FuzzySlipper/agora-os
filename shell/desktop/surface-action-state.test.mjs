@@ -11,7 +11,7 @@ globalThis.location = { hash: "" };
 globalThis.sessionStorage = { getItem: () => null, setItem() {} };
 globalThis.localStorage = { getItem: () => null };
 
-const { applySurfaceActionEvent } = await import("../dist/desktop/app.js");
+const { applyShellStateSnapshot, applySurfaceActionEvent } = await import("../dist/desktop/app.js");
 
 const state = {
   surfaces: [
@@ -59,5 +59,25 @@ applySurfaceActionEvent(state, {
 const closing = state.surfaces.find((surface) => surface.id === "view-3");
 assert.equal(closing.status, "closing", "queued close marks surface closing");
 assert.equal(state.surfaces.some((surface) => surface.id === "view-3"), true, "queued close keeps surface until compositor unmap/readback");
+
+const snapshotState = {
+  surfaces: [
+    { id: "view-old", title: "Stale" },
+    { id: "view-keep", title: "Old Title" },
+  ],
+  agents: [],
+  notifications: [],
+  config: {},
+};
+applyShellStateSnapshot(snapshotState, {
+  surfaces: [
+    { surface: { id: "view-keep", title: "Updated", app_id: "demo" }, focused: true },
+    { surface: { id: "view-new", title: "New Surface" }, focused: false },
+  ],
+  agents: [{ identity: "agent-a", status: "available" }],
+});
+assert.deepEqual(snapshotState.surfaces.map((surface) => surface.id).sort(), ["view-keep", "view-new"], "shell state snapshot replaces stale taskbar surfaces with live readback");
+assert.equal(snapshotState.surfaces.find((surface) => surface.id === "view-keep").focused, true, "snapshot preserves focused readback");
+assert.equal(snapshotState.agents[0].identity, "agent-a", "snapshot updates agent readback");
 
 console.log("surface action state tests passed");
