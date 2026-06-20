@@ -2,7 +2,7 @@
 
 An agent-native desktop environment. The thesis: current agent frameworks are bolted onto desktops designed for human users, then given workarounds to fight Wayland's refusal to let them spy on and puppet the display. Invert the model — build a Wayland compositor where agents are first-class citizens at the OS level, with isolation, permission, and audit primitives surfaced from the Linux kernel rather than reinvented in application-layer permission schemes.
 
-This repo is the system-services and bridge layer of that idea. The compositor work comes later, but the Phase 2 direction is now Wayfire plus a thin plugin bridge rather than Pinnacle.
+This repo is the system-services and bridge layer of that idea.
 
 ## The pieces
 
