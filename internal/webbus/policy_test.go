@@ -82,4 +82,10 @@ func TestCanPublish(t *testing.T) {
 	if !CanPublish(Identity{Role: RoleHuman, UID: 0}, "agent.work.result") {
 		t.Fatal("human should be able to publish arbitrary topics")
 	}
+	if CanPublish(Identity{Role: RoleHuman, UID: 0}, "shell.action.completed") {
+		t.Fatal("human websocket clients should not be able to publish authoritative shell action topics")
+	}
+	if CanPublish(agent, "shell.action.completed") {
+		t.Fatal("agent websocket clients should not be able to publish authoritative shell action topics")
+	}
 }

@@ -237,8 +237,13 @@ agora-taskbar {
 }
 
 .taskbar-widget__surface {
-    width: 2rem;
-    height: 2rem;
+    min-width: 2.4rem;
+    max-width: 14rem;
+    height: 2.2rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    overflow: hidden;
     border: 1px solid transparent;
     border-radius: 0.7rem;
     background: rgba(148, 163, 184, 0.16);
@@ -251,6 +256,29 @@ agora-taskbar {
 .taskbar-widget__surface--focused {
     border-color: var(--shell-accent);
     box-shadow: 0 0 0 2px rgba(118, 228, 247, 0.20);
+}
+
+.taskbar-widget__surface--pending {
+    opacity: 0.72;
+}
+
+.taskbar-widget__surface--error,
+.taskbar-widget__surface--disabled {
+    border-color: #f87171;
+    color: #fecaca;
+}
+
+.taskbar-widget__surface:disabled {
+    cursor: not-allowed;
+}
+
+.taskbar-widget__surface-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.78rem;
+    font-weight: 650;
 }
 
 .taskbar-widget__surfaces {

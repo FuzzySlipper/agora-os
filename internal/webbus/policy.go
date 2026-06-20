@@ -36,6 +36,9 @@ func CanSubscribe(identity Identity, pattern string) bool {
 }
 
 func CanPublish(identity Identity, topic string) bool {
+	if strings.HasPrefix(topic, "shell.action.") {
+		return false
+	}
 	if identity.Role == RoleHuman {
 		return true
 	}

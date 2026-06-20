@@ -82,6 +82,11 @@ type grantRequest struct {
 	Actions   []schema.CompositorAccessAction `json:"actions,omitempty"`
 }
 
+type focusSurfaceHTTPError struct {
+	ErrorClass string                       `json:"error_class,omitempty"`
+	Result     schema.SurfaceActionResponse `json:"result"`
+}
+
 type escalationDecisionRequest struct {
 	ID          string                    `json:"id"`
 	Decision    schema.EscalationDecision `json:"decision"`
@@ -164,6 +169,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleSessionToken(w, r)
 	case "/grants":
 		s.handleGrant(w, r)
+	case "/surface/focus":
+		s.handleSurfaceFocus(w, r)
 	case "/escalations/decide":
 		s.handleEscalationDecision(w, r)
 	case "/audit/ws":
@@ -271,6 +278,60 @@ func (s *Server) handleGrant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(body)
+}
+
+func (s *Server) handleSurfaceFocus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	identity, _, err := s.authenticateHuman(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	var req schema.FocusSurfaceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("decode focus request: %v", err), http.StatusBadRequest)
+		return
+	}
+	if req.SurfaceID == "" {
+		http.Error(w, "surface_id is required", http.StatusBadRequest)
+		return
+	}
+	body, resp, err := callResponse(s.compositorSocket, schema.MethodFocusSurface, req)
+	if err != nil {
+		result := schema.SurfaceActionResponse{
+			Action: "surface.focus", SurfaceID: req.SurfaceID, Decision: schema.SurfaceActionDenied,
+			Reason: err.Error(), Error: err.Error(), Actor: "human-shell",
+		}
+		uid := uint32(identity.UID)
+		result.ActorUID = &uid
+		if resp != nil {
+			result.Reason = resp.ErrorMessage
+			result.Error = resp.ErrorMessage
+			var decoded schema.SurfaceActionResponse
+			if decodeErr := json.Unmarshal(resp.Body, &decoded); decodeErr == nil && decoded.Action != "" {
+				result = decoded
+				if result.Actor == "" {
+					result.Actor = "human-shell"
+				}
+				if result.ActorUID == nil {
+					result.ActorUID = &uid
+				}
+			}
+		}
+		status := http.StatusBadGateway
+		if resp != nil && (resp.ErrorClass == schema.ErrorSurfaceNotFound || resp.ErrorClass == schema.ErrorSurfaceStale) {
+			status = http.StatusConflict
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_ = json.NewEncoder(w).Encode(focusSurfaceHTTPError{ErrorClass: respErrorClass(resp), Result: result})
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write(body)
 }
@@ -687,33 +748,45 @@ func appendJSONL(path string, value any) error {
 }
 
 func call(sock, method string, body any) (json.RawMessage, error) {
+	responseBody, _, err := callResponse(sock, method, body)
+	return responseBody, err
+}
+
+func callResponse(sock, method string, body any) (json.RawMessage, *schema.Response, error) {
 	conn, err := net.Dial("unix", sock)
 	if err != nil {
-		return nil, fmt.Errorf("connect %s: %w", sock, err)
+		return nil, nil, fmt.Errorf("connect %s: %w", sock, err)
 	}
 	defer conn.Close()
 
 	payload, err := json.Marshal(body)
 	if err != nil {
-		return nil, fmt.Errorf("encode request body: %w", err)
+		return nil, nil, fmt.Errorf("encode request body: %w", err)
 	}
 	req := schema.Request{Method: method, Body: payload}
 	if err := json.NewEncoder(conn).Encode(req); err != nil {
-		return nil, fmt.Errorf("send request: %w", err)
+		return nil, nil, fmt.Errorf("send request: %w", err)
 	}
 
 	var resp schema.Response
 	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
-		return nil, fmt.Errorf("decode response: %w", err)
+		return nil, nil, fmt.Errorf("decode response: %w", err)
 	}
 	if !resp.OK {
 		var msg string
 		if err := json.Unmarshal(resp.Body, &msg); err == nil && msg != "" {
-			return nil, errors.New(msg)
+			return nil, &resp, errors.New(msg)
 		}
-		return nil, fmt.Errorf("request %s failed", method)
+		return nil, &resp, fmt.Errorf("request %s failed", method)
 	}
-	return resp.Body, nil
+	return resp.Body, &resp, nil
+}
+
+func respErrorClass(resp *schema.Response) string {
+	if resp == nil {
+		return ""
+	}
+	return resp.ErrorClass
 }
 
 func lineHashID(line []byte) string {

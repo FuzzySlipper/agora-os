@@ -12,6 +12,28 @@ export interface SurfaceEvent {
     role?: string;
     geometry?: SurfaceGeometry;
     focused?: boolean;
+    disabled?: boolean;
+    status?: string;
+    action_error?: string;
+}
+
+export type SurfaceActionDecision = "accepted" | "denied" | string;
+
+export interface SurfaceActionResponse {
+    action: string;
+    surface_id: string;
+    decision: SurfaceActionDecision;
+    reason?: string;
+    error?: string;
+    focused_surface_id?: string;
+    actor?: string;
+    actor_uid?: number;
+    surface?: {
+        surface?: SurfaceEvent;
+        focused?: boolean;
+        visible?: boolean;
+        [key: string]: unknown;
+    };
 }
 
 export type AgentStatus = "running" | "exited" | "stopped" | "available" | "busy" | "offline" | string;

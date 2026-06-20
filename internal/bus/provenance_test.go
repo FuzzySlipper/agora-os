@@ -9,6 +9,7 @@ func TestValidateTopicPublish_RootAllowed(t *testing.T) {
 		"agent.lifecycle.spawned",
 		"agent.work.assigned",
 		"compositor.surface.created",
+		"shell.action.completed",
 		"audit.file.open",
 		"admin.escalation.decided",
 	}
@@ -32,6 +33,7 @@ func TestValidateTopicPublish_AgentDenied(t *testing.T) {
 		"agent.lifecycle.spawned",
 		"agent.work.assigned",
 		"compositor.surface.created",
+		"shell.action.completed",
 		"audit.file.open",
 		"admin.escalation.decided",
 	}

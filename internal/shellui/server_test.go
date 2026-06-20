@@ -99,6 +99,77 @@ func TestStateReturnsAgentsSurfacesAndPendingEscalations(t *testing.T) {
 	}
 }
 
+func TestSurfaceFocusEndpointCallsCanonicalCompositorAction(t *testing.T) {
+	t.Parallel()
+
+	authNow := time.Now().UTC().Truncate(time.Second)
+	compSock := startSchemaServer(t, func(req schema.Request) schema.Response {
+		if req.Method != schema.MethodFocusSurface {
+			t.Fatalf("unexpected method %q", req.Method)
+		}
+		var focusReq schema.FocusSurfaceRequest
+		if err := json.Unmarshal(req.Body, &focusReq); err != nil {
+			t.Fatal(err)
+		}
+		if focusReq.SurfaceID != "view-42" {
+			t.Fatalf("surface_id = %q, want view-42", focusReq.SurfaceID)
+		}
+		return okSchemaResponse(schema.SurfaceActionResponse{
+			Action: "surface.focus", SurfaceID: "view-42", Decision: schema.SurfaceActionAccepted,
+			FocusedSurfaceID: "view-42",
+		})
+	})
+	secret := []byte("01234567890123456789012345678901")
+	server := New(Config{Secret: secret, Now: func() time.Time { return authNow }, CompositorSocket: compSock})
+	body := bytes.NewReader([]byte(`{"surface_id":"view-42"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/shell/surface/focus", body)
+	req.Header.Set("Authorization", "Bearer "+mustMintHumanToken(t, secret))
+	resp := httptest.NewRecorder()
+
+	server.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("got status %d body %q, want 200", resp.Code, resp.Body.String())
+	}
+	var result schema.SurfaceActionResponse
+	if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Action != "surface.focus" || result.FocusedSurfaceID != "view-42" || result.Decision != schema.SurfaceActionAccepted {
+		t.Fatalf("unexpected result %+v", result)
+	}
+}
+
+func TestSurfaceFocusEndpointReturnsStructuredDeniedResult(t *testing.T) {
+	t.Parallel()
+
+	authNow := time.Now().UTC().Truncate(time.Second)
+	compSock := startSchemaServer(t, func(req schema.Request) schema.Response {
+		if req.Method != schema.MethodFocusSurface {
+			t.Fatalf("unexpected method %q", req.Method)
+		}
+		payload, _ := json.Marshal("surface view-stale is unmapped/stale")
+		return schema.Response{OK: false, Body: payload, ErrorClass: schema.ErrorSurfaceStale, ErrorMessage: "surface view-stale is unmapped/stale"}
+	})
+	secret := []byte("01234567890123456789012345678901")
+	server := New(Config{Secret: secret, Now: func() time.Time { return authNow }, CompositorSocket: compSock})
+	body := bytes.NewReader([]byte(`{"surface_id":"view-stale"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/shell/surface/focus", body)
+	req.Header.Set("Authorization", "Bearer "+mustMintHumanToken(t, secret))
+	resp := httptest.NewRecorder()
+
+	server.ServeHTTP(resp, req)
+	if resp.Code != http.StatusConflict {
+		t.Fatalf("got status %d body %q, want 409", resp.Code, resp.Body.String())
+	}
+	var result focusSurfaceHTTPError
+	if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.ErrorClass != schema.ErrorSurfaceStale || result.Result.Decision != schema.SurfaceActionDenied || result.Result.SurfaceID != "view-stale" {
+		t.Fatalf("unexpected result %+v", result)
+	}
+}
+
 func TestEscalationDecisionAppendsDecisionLog(t *testing.T) {
 	t.Parallel()
 

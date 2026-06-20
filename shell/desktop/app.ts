@@ -1,5 +1,5 @@
 import { createBusConnection, type BusConnection } from "../shared/bus.js";
-import type { AgentInfo, BusEnvelope, DesktopShellState, ShellNotification, ShellWidget, SurfaceEvent } from "../shared/types.js";
+import type { AgentInfo, BusEnvelope, DesktopShellState, ShellNotification, ShellWidget, SurfaceActionResponse, SurfaceEvent } from "../shared/types.js";
 import { AgentHealthWidget } from "./widgets/agent-health.js";
 import { ClockWidget } from "./widgets/clock.js";
 import { NotificationCenter } from "./widgets/notification-center.js";
@@ -17,6 +17,7 @@ const DEFAULT_SUBSCRIPTIONS = [
     "shell.theme",
     "shell.apply_theme",
     "shell.reset_theme",
+    "shell.action.*",
     "shell.layout_updated",
     "shell.widget.inject",
     "shell.widget.remove",
@@ -103,7 +104,18 @@ export class ShellApp {
         this.registerWidget(new AgentHealthWidget());
         this.registerWidget(new ClockWidget());
         this.registerWidget(new NotificationCenter());
-        this.registerWidget(new TaskbarWidget((topic, body) => this.bus.publish(topic, body)));
+        this.registerWidget(new TaskbarWidget({
+            publish: (topic, body) => this.bus.publish(topic, body),
+            onFocusResult: (result) => {
+                const next = cloneState(this.state);
+                applySurfaceActionEvent(next, {
+                    topic: result.decision === "denied" ? "shell.action.denied" : "shell.action.completed",
+                    body: result,
+                    timestamp: new Date().toISOString(),
+                });
+                this.update(next);
+            },
+        }));
     }
 
     update(state: DesktopShellState): void {
@@ -128,6 +140,8 @@ export class ShellApp {
         const next = cloneState(this.state);
         if (event.topic.startsWith("compositor.surface.") || event.topic.startsWith("compositor.advisory.surface.")) {
             applySurfaceEvent(next, event);
+        } else if (event.topic.startsWith("shell.action.")) {
+            applySurfaceActionEvent(next, event);
         } else if (event.topic.startsWith("agent.lifecycle.")) {
             applyAgentEvent(next, event);
         } else if (event.topic === "shell.theme") {
@@ -199,6 +213,34 @@ function applySurfaceEvent(state: DesktopShellState, event: BusEnvelope): void {
     } else {
         state.surfaces.push(surface);
     }
+}
+
+export function applySurfaceActionEvent(state: DesktopShellState, event: BusEnvelope): void {
+    const body = event.body as SurfaceActionResponse | undefined;
+    if (!body || body.action !== "surface.focus" || !body.surface_id) {
+        return;
+    }
+    if (event.topic === "shell.action.completed" && body.decision !== "denied") {
+        const focusedID = body.focused_surface_id || body.surface_id;
+        state.surfaces = state.surfaces.map((entry) => ({ ...entry, focused: entry.id === focusedID, action_error: undefined, disabled: false }));
+        const readback = body.surface?.surface;
+        if (readback?.id) {
+            const existing = state.surfaces.findIndex((entry) => entry.id === readback.id);
+            const merged: SurfaceEvent = { ...(existing >= 0 ? state.surfaces[existing] : {}), ...readback, focused: body.surface?.focused ?? (readback.id === focusedID) };
+            if (existing >= 0) {
+                state.surfaces[existing] = merged;
+            } else {
+                state.surfaces.push(merged);
+            }
+        }
+        return;
+    }
+    const message = body.error || body.reason || "focus denied";
+    if (message.toLowerCase().includes("stale") || message.toLowerCase().includes("not found") || message.toLowerCase().includes("unmapped")) {
+        state.surfaces = state.surfaces.filter((entry) => entry.id !== body.surface_id);
+        return;
+    }
+    state.surfaces = state.surfaces.map((entry) => entry.id === body.surface_id ? { ...entry, action_error: message, disabled: true } : entry);
 }
 
 function applyAgentEvent(state: DesktopShellState, event: BusEnvelope): void {
