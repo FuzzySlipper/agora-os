@@ -128,6 +128,7 @@ type Bridge struct {
 	mu                sync.RWMutex
 	plugin            *pluginSession
 	surfaces          map[string]schema.CompositorTrackedSurface
+	staleSurfaces     map[string]time.Time
 	policies          map[string]schema.CompositorSurfacePolicy
 	grants            map[string]map[uint32]schema.SurfaceAccessGrant
 	actorUID          *uint32
@@ -137,6 +138,8 @@ type Bridge struct {
 	inputWaiters      map[string]chan schema.CompositorInputPluginResponse
 	placeSeq          uint64
 	placeWaiters      map[string]chan schema.CompositorPlacePluginResponse
+	focusSeq          uint64
+	focusWaiters      map[string]chan schema.CompositorFocusPluginResponse
 	sessionSeq        uint64
 	launchSeq         uint64
 	sessions          map[string]schema.CompositorSession
@@ -159,11 +162,13 @@ func New(bus publisher, cfg Config) (*Bridge, error) {
 		allowedPluginUID:  cfg.AllowedPluginUID,
 		grantStore:        store,
 		surfaces:          make(map[string]schema.CompositorTrackedSurface),
+		staleSurfaces:     make(map[string]time.Time),
 		policies:          make(map[string]schema.CompositorSurfacePolicy),
 		grants:            make(map[string]map[uint32]schema.SurfaceAccessGrant),
 		captureWaiters:    make(map[string]chan schema.CompositorCapturePluginResponse),
 		inputWaiters:      make(map[string]chan schema.CompositorInputPluginResponse),
 		placeWaiters:      make(map[string]chan schema.CompositorPlacePluginResponse),
+		focusWaiters:      make(map[string]chan schema.CompositorFocusPluginResponse),
 		sessions:          make(map[string]schema.CompositorSession),
 		launches:          make(map[string]*launchRecord),
 		surfaceLaunch:     make(map[string]string),
@@ -222,6 +227,8 @@ func (b *Bridge) HandlePluginConn(conn net.Conn) {
 			})
 		case schema.PluginMessagePlaceResponse:
 			b.handlePlaceResponse(schema.CompositorPlacePluginResponse{Type: string(msg.Type), RequestID: msg.RequestID, SurfaceID: msg.SurfaceID, OK: msg.OK, Error: msg.Error})
+		case schema.PluginMessageFocusResponse:
+			b.handleFocusResponse(schema.CompositorFocusPluginResponse{Type: msg.Type, RequestID: msg.RequestID, SurfaceID: msg.SurfaceID, OK: msg.OK, Error: msg.Error})
 		case schema.PluginMessageInputResponse:
 			b.handleInputResponse(schema.CompositorInputPluginResponse{
 				Type:      msg.Type,
@@ -1104,6 +1111,128 @@ func (b *Bridge) SetInputContext(actorUID *uint32) error {
 		return nil
 	}
 	return b.plugin.Send(msg)
+}
+
+func (b *Bridge) surfaceActionActor(actorUID uint32) (string, *uint32) {
+	if actorUID == 0 {
+		return "root", nil
+	}
+	uid := actorUID
+	return fmt.Sprintf("uid:%d", actorUID), &uid
+}
+
+func (b *Bridge) publishSurfaceActionDenied(actorUID uint32, surfaceID string, err error) {
+	if b.bus == nil {
+		return
+	}
+	actor, uid := b.surfaceActionActor(actorUID)
+	_, message := classifyError(err)
+	result := schema.SurfaceActionResponse{
+		Action: "surface.focus", SurfaceID: surfaceID, Decision: schema.SurfaceActionDenied,
+		Reason: message, Error: message, Actor: actor, ActorUID: uid,
+	}
+	if err := b.bus.Publish(schema.TopicShellActionDenied, result); err != nil {
+		log.Printf("publish shell action denied: %v", err)
+	}
+}
+
+func (b *Bridge) FocusSurface(actorUID uint32, req schema.FocusSurfaceRequest) (schema.SurfaceActionResponse, error) {
+	if req.SurfaceID == "" {
+		err := fmt.Errorf("surface_id is required")
+		b.publishSurfaceActionDenied(actorUID, req.SurfaceID, err)
+		return schema.SurfaceActionResponse{}, err
+	}
+	b.mu.RLock()
+	tracked, ok := b.surfaces[req.SurfaceID]
+	b.mu.RUnlock()
+	if !ok {
+		b.mu.RLock()
+		_, stale := b.staleSurfaces[req.SurfaceID]
+		b.mu.RUnlock()
+		if stale {
+			err := compositorError(schema.ErrorSurfaceStale, "surface %s is unmapped/stale", req.SurfaceID)
+			b.publishSurfaceActionDenied(actorUID, req.SurfaceID, err)
+			return schema.SurfaceActionResponse{}, err
+		}
+		err := compositorError(schema.ErrorSurfaceNotFound, "surface %s not found", req.SurfaceID)
+		b.publishSurfaceActionDenied(actorUID, req.SurfaceID, err)
+		return schema.SurfaceActionResponse{}, err
+	}
+	if tracked.Surface.SurfaceKind == schema.SurfaceKindLayerShell {
+		err := compositorError(schema.ErrorBackendUnsupported, "surface %s is a layer-shell surface and cannot be focused as a work surface", req.SurfaceID)
+		b.publishSurfaceActionDenied(actorUID, req.SurfaceID, err)
+		return schema.SurfaceActionResponse{}, err
+	}
+	if !tracked.Visible {
+		err := compositorError(schema.ErrorSurfaceStale, "surface %s is not visible", req.SurfaceID)
+		b.publishSurfaceActionDenied(actorUID, req.SurfaceID, err)
+		return schema.SurfaceActionResponse{}, err
+	}
+
+	b.mu.Lock()
+	b.focusSeq++
+	requestID := fmt.Sprintf("focus-%d-%d", time.Now().UnixNano(), b.focusSeq)
+	waiter := make(chan schema.CompositorFocusPluginResponse, 1)
+	b.focusWaiters[requestID] = waiter
+	b.mu.Unlock()
+	defer func() {
+		b.mu.Lock()
+		delete(b.focusWaiters, requestID)
+		b.mu.Unlock()
+	}()
+
+	if err := b.sendToPlugin(schema.CompositorFocusSurface{Type: schema.PluginMessageFocusSurface, RequestID: requestID, SurfaceID: req.SurfaceID}); err != nil {
+		b.publishSurfaceActionDenied(actorUID, req.SurfaceID, err)
+		return schema.SurfaceActionResponse{}, err
+	}
+
+	timeout := time.Duration(req.WaitTimeoutMs) * time.Millisecond
+	if timeout <= 0 {
+		timeout = 2 * time.Second
+	}
+	select {
+	case resp := <-waiter:
+		if !resp.OK {
+			msg := resp.Error
+			if msg == "" {
+				msg = "focus rejected by compositor plugin"
+			}
+			err := classifyInputPluginError(msg)
+			if strings.Contains(strings.ToLower(msg), "surface not found") {
+				err = compositorError(schema.ErrorSurfaceStale, "surface %s is unmapped/stale", req.SurfaceID)
+			}
+			b.publishSurfaceActionDenied(actorUID, req.SurfaceID, err)
+			return schema.SurfaceActionResponse{}, err
+		}
+	case <-time.After(timeout):
+		err := compositorError(schema.ErrorFrameTimeout, "focus request timed out")
+		b.publishSurfaceActionDenied(actorUID, req.SurfaceID, err)
+		return schema.SurfaceActionResponse{}, err
+	}
+
+	b.mu.RLock()
+	readback, ok := b.surfaces[req.SurfaceID]
+	if ok {
+		readback = b.decorateSurfaceLocked(readback)
+	}
+	b.mu.RUnlock()
+	if !ok {
+		err := compositorError(schema.ErrorSurfaceStale, "surface %s disappeared after focus", req.SurfaceID)
+		b.publishSurfaceActionDenied(actorUID, req.SurfaceID, err)
+		return schema.SurfaceActionResponse{}, err
+	}
+
+	actor, uid := b.surfaceActionActor(actorUID)
+	result := schema.SurfaceActionResponse{
+		Action: "surface.focus", SurfaceID: req.SurfaceID, Decision: schema.SurfaceActionAccepted,
+		Reason: "focused via compositor plugin", FocusedSurfaceID: req.SurfaceID, Actor: actor, ActorUID: uid, Surface: &readback,
+	}
+	if b.bus != nil {
+		if err := b.bus.Publish(schema.TopicShellActionCompleted, result); err != nil {
+			log.Printf("publish shell action completed: %v", err)
+		}
+	}
+	return result, nil
 }
 
 func (b *Bridge) SetViewProperty(req schema.SetViewPropertyRequest) error {
@@ -2286,6 +2415,16 @@ func (b *Bridge) dispatch(peerUID uint32, req schema.Request) (schema.Response, 
 			return schema.Response{}, err
 		}
 		return okResponse("updated"), nil
+	case schema.MethodFocusSurface:
+		var body schema.FocusSurfaceRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			return schema.Response{}, fmt.Errorf("bad body: %w", err)
+		}
+		resp, err := b.FocusSurface(peerUID, body)
+		if err != nil {
+			return schema.Response{}, err
+		}
+		return okResponse(resp), nil
 	case schema.MethodSetViewProperty:
 		var body schema.SetViewPropertyRequest
 		if err := json.Unmarshal(req.Body, &body); err != nil {
@@ -2398,6 +2537,19 @@ func (b *Bridge) handlePlaceResponse(resp schema.CompositorPlacePluginResponse) 
 	}
 }
 
+func (b *Bridge) handleFocusResponse(resp schema.CompositorFocusPluginResponse) {
+	b.mu.RLock()
+	waiter := b.focusWaiters[resp.RequestID]
+	b.mu.RUnlock()
+	if waiter == nil {
+		return
+	}
+	select {
+	case waiter <- resp:
+	default:
+	}
+}
+
 func (b *Bridge) handleSurfaceEvent(msg schema.CompositorPluginEvent) {
 	now := time.Now()
 	visible := true
@@ -2443,6 +2595,7 @@ func (b *Bridge) handleSurfaceEvent(msg schema.CompositorPluginEvent) {
 	b.mu.Lock()
 	switch msg.Event {
 	case schema.SurfaceEventMapped:
+		delete(b.staleSurfaces, msg.Surface.ID)
 		if previous, ok := b.surfaces[msg.Surface.ID]; ok {
 			tracked.FrameCount = previous.FrameCount
 			tracked.LastPresentTimestamp = previous.LastPresentTimestamp
@@ -2455,6 +2608,14 @@ func (b *Bridge) handleSurfaceEvent(msg schema.CompositorPluginEvent) {
 			}
 		}
 	case schema.SurfaceEventFocused, schema.SurfaceEventInputDenied, schema.SurfaceEventFrameDone:
+		if msg.Event == schema.SurfaceEventFocused {
+			for id, other := range b.surfaces {
+				if id != msg.Surface.ID {
+					other.Focused = false
+					b.surfaces[id] = other
+				}
+			}
+		}
 		if previous, ok := b.surfaces[msg.Surface.ID]; ok {
 			if tracked.Geometry == nil {
 				tracked.Geometry = previous.Geometry
@@ -2485,6 +2646,7 @@ func (b *Bridge) handleSurfaceEvent(msg schema.CompositorPluginEvent) {
 			}
 		}
 	case schema.SurfaceEventUnmapped:
+		b.staleSurfaces[msg.Surface.ID] = now
 		delete(b.surfaces, msg.Surface.ID)
 		delete(b.surfaceLaunch, msg.Surface.ID)
 		delete(b.surfaceOutput, msg.Surface.ID)

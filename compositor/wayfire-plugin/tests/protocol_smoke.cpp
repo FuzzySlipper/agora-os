@@ -57,6 +57,19 @@ int main()
     assert(property_msg.surface_id == "view-10");
     assert(property_msg.always_on_top.has_value() && (*property_msg.always_on_top == true));
 
+    auto focus_msg = parse_bridge_message(
+        "{\"type\":\"focus_surface\",\"request_id\":\"focus-1\",\"surface_id\":\"view-10\"}");
+    assert(focus_msg.kind == bridge_message_kind::focus_surface);
+    assert(focus_msg.request_id == "focus-1");
+    assert(focus_msg.surface_id == "view-10");
+
+    auto focus_response = encode_focus_response("focus-1", "view-10", true, "");
+    assert(focus_response.find("\"type\":\"focus_response\"") != std::string::npos);
+    assert(focus_response.find("\"ok\":true") != std::string::npos);
+
+    auto focus_error = encode_focus_response("focus-2", "view-missing", false, "surface not found");
+    assert(focus_error.find("surface not found") != std::string::npos);
+
     auto inject_msg = parse_bridge_message(
         "{\"type\":\"inject_input\",\"request_id\":\"input-1\",\"surface_id\":\"view-11\","
         "\"coordinate_space\":\"surface-local\",\"events\":["

@@ -67,6 +67,7 @@ const (
 	MethodUpsertSurfacePolicy = "upsert_surface_policy"
 	MethodRemoveSurfacePolicy = "remove_surface_policy"
 	MethodSetInputContext     = "set_input_context"
+	MethodFocusSurface        = "focus_surface"
 	MethodSetViewProperty     = "set_view_property"
 	MethodCloseSurface        = "close_surface"
 	MethodCloseSurfacesByUID  = "close_surfaces_by_uid"
@@ -87,6 +88,9 @@ const (
 	TopicCompositorAdvisorySurfaceCreated   = "compositor.advisory.surface.created"
 	TopicCompositorAdvisorySurfaceDestroyed = "compositor.advisory.surface.destroyed"
 	TopicCompositorAdvisorySurfaceFocused   = "compositor.advisory.surface.focused"
+
+	TopicShellActionCompleted = "shell.action.completed"
+	TopicShellActionDenied    = "shell.action.denied"
 )
 
 type CompositorPluginMessageType string
@@ -103,6 +107,8 @@ const (
 	PluginMessagePolicyUpsert       CompositorPluginMessageType = "policy_upsert"
 	PluginMessagePolicyRemove       CompositorPluginMessageType = "policy_remove"
 	PluginMessageInputContext       CompositorPluginMessageType = "input_context"
+	PluginMessageFocusSurface       CompositorPluginMessageType = "focus_surface"
+	PluginMessageFocusResponse      CompositorPluginMessageType = "focus_response"
 	PluginMessageSetViewProperty    CompositorPluginMessageType = "set_view_property"
 	PluginMessageCloseSurface       CompositorPluginMessageType = "close_surface"
 	PluginMessageCloseSurfacesByUID CompositorPluginMessageType = "close_surfaces_by_uid"
@@ -254,6 +260,20 @@ type CompositorInputContextUpdate struct {
 	ActorUID *uint32                     `json:"actor_uid,omitempty"`
 }
 
+type CompositorFocusSurface struct {
+	Type      CompositorPluginMessageType `json:"type"`
+	RequestID string                      `json:"request_id"`
+	SurfaceID string                      `json:"surface_id"`
+}
+
+type CompositorFocusPluginResponse struct {
+	Type      CompositorPluginMessageType `json:"type"`
+	RequestID string                      `json:"request_id"`
+	SurfaceID string                      `json:"surface_id"`
+	OK        bool                        `json:"ok"`
+	Error     string                      `json:"error,omitempty"`
+}
+
 type CompositorSetViewProperty struct {
 	Type       CompositorPluginMessageType `json:"type"`
 	SurfaceID  string                      `json:"surface_id"`
@@ -395,6 +415,30 @@ type ExportArtifactsResponse struct {
 	SessionID string   `json:"session_id"`
 	To        string   `json:"to"`
 	Copied    []string `json:"copied,omitempty"`
+}
+
+type SurfaceActionDecision string
+
+const (
+	SurfaceActionAccepted SurfaceActionDecision = "accepted"
+	SurfaceActionDenied   SurfaceActionDecision = "denied"
+)
+
+type FocusSurfaceRequest struct {
+	SurfaceID     string `json:"surface_id"`
+	WaitTimeoutMs int    `json:"wait_timeout_ms,omitempty"`
+}
+
+type SurfaceActionResponse struct {
+	Action           string                    `json:"action"`
+	SurfaceID        string                    `json:"surface_id"`
+	Decision         SurfaceActionDecision     `json:"decision"`
+	Reason           string                    `json:"reason,omitempty"`
+	Error            string                    `json:"error,omitempty"`
+	FocusedSurfaceID string                    `json:"focused_surface_id,omitempty"`
+	Actor            string                    `json:"actor,omitempty"`
+	ActorUID         *uint32                   `json:"actor_uid,omitempty"`
+	Surface          *CompositorTrackedSurface `json:"surface,omitempty"`
 }
 
 type SetViewPropertyRequest struct {

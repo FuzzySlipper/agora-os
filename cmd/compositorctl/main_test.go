@@ -104,6 +104,30 @@ func TestBuildSetViewPropertyRequestRequiresProperty(t *testing.T) {
 	}
 }
 
+func TestBuildFocusSurfaceRequestParsesSurface(t *testing.T) {
+	t.Parallel()
+
+	req, err := buildFocusSurfaceRequest([]string{"--surface", "view-42", "--timeout-ms", "1500"})
+	if err != nil {
+		t.Fatalf("buildFocusSurfaceRequest returned error: %v", err)
+	}
+	if req.SurfaceID != "view-42" || req.WaitTimeoutMs != 1500 {
+		t.Fatalf("request = %+v, want surface view-42 timeout 1500", req)
+	}
+}
+
+func TestBuildFocusSurfaceRequestRequiresSurface(t *testing.T) {
+	t.Parallel()
+
+	_, err := buildFocusSurfaceRequest([]string{})
+	if err == nil {
+		t.Fatal("expected missing surface error")
+	}
+	if !strings.Contains(err.Error(), "--surface is required") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestDefaultShellConfigDirUsesSharedDirWhenPresent(t *testing.T) {
 	sharedDir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "xdg"))

@@ -620,6 +620,12 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         std::optional<bool> always_on_top;
     };
 
+    struct pending_focus_request_t
+    {
+        std::string request_id;
+        std::string surface_id;
+    };
+
     struct layer_surface_record_t
     {
         agora_bridge_plugin_t *owner = nullptr;
@@ -768,6 +774,7 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         pending_input_requests_.clear();
         pending_place_requests_.clear();
         pending_property_requests_.clear();
+        pending_focus_requests_.clear();
         pending_surface_resync_ = false;
     }
 
@@ -910,6 +917,7 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         std::vector<pending_input_request_t> input_requests;
         std::vector<pending_place_request_t> place_requests;
         std::vector<pending_property_request_t> property_requests;
+        std::vector<pending_focus_request_t> focus_requests;
         bool should_resync = false;
         std::unordered_map<std::string, wayfire_view> views;
         {
@@ -920,6 +928,7 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
             input_requests.swap(pending_input_requests_);
             place_requests.swap(pending_place_requests_);
             property_requests.swap(pending_property_requests_);
+            focus_requests.swap(pending_focus_requests_);
             should_resync = pending_surface_resync_;
             pending_surface_resync_ = false;
             views = views_by_surface_;
@@ -933,6 +942,10 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         for (const auto& request : property_requests)
         {
             process_property_request(request, views);
+        }
+        for (const auto& request : focus_requests)
+        {
+            process_focus_request(request, views);
         }
 
         for (const auto& request : capture_requests)
@@ -1064,6 +1077,25 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         {
             std::lock_guard lock(state_mutex_);
             pending_place_requests_.push_back({std::move(request_id), std::move(surface_id), geometry});
+        }
+
+        notify_close_wake();
+    }
+
+    void queue_focus_surface(std::string request_id, std::string surface_id)
+    {
+        if (request_id.empty())
+        {
+            request_id = surface_id;
+        }
+        if (surface_id.empty())
+        {
+            return;
+        }
+
+        {
+            std::lock_guard lock(state_mutex_);
+            pending_focus_requests_.push_back({std::move(request_id), std::move(surface_id)});
         }
 
         notify_close_wake();
@@ -1320,6 +1352,41 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         output->emit(&signal);
     }
 
+    void send_focus_response(const pending_focus_request_t& request, bool ok, std::string_view error)
+    {
+        if (!bridge_)
+        {
+            return;
+        }
+        bridge_->send_line(agora::protocol::encode_focus_response(request.request_id, request.surface_id, ok, error));
+    }
+
+    void process_focus_request(const pending_focus_request_t& request,
+        const std::unordered_map<std::string, wayfire_view>& views)
+    {
+        auto it = views.find(request.surface_id);
+        if ((it == views.end()) || !it->second)
+        {
+            LOGW("agora-bridge: focus target not found: ", request.surface_id);
+            send_focus_response(request, false, "surface not found");
+            return;
+        }
+        auto view = it->second;
+        if (!view->is_focusable() || !view->get_keyboard_focus_surface())
+        {
+            send_focus_response(request, false, "surface is not focusable");
+            return;
+        }
+        wf::get_core().seat->focus_view(view);
+        if (keyboard_focus_view_ != view)
+        {
+            send_focus_response(request, false, "focus not confirmed");
+            return;
+        }
+        track_view(view);
+        send_focus_response(request, true, "");
+    }
+
     void process_property_request(const pending_property_request_t& request,
         const std::unordered_map<std::string, wayfire_view>& views)
     {
@@ -1518,6 +1585,9 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
           case agora::protocol::bridge_message_kind::place_surface:
             queue_place_surface(message.request_id, message.surface_id, wf::geometry_t{message.x, message.y, message.width, message.height});
             break;
+          case agora::protocol::bridge_message_kind::focus_surface:
+            queue_focus_surface(message.request_id, message.surface_id);
+            break;
           case agora::protocol::bridge_message_kind::set_view_property:
             queue_property_request(message.surface_id, message.always_on_top);
             break;
@@ -1571,6 +1641,7 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
     std::vector<pending_input_request_t> pending_input_requests_;
     std::vector<pending_place_request_t> pending_place_requests_;
     std::vector<pending_property_request_t> pending_property_requests_;
+    std::vector<pending_focus_request_t> pending_focus_requests_;
     bool pending_surface_resync_ = false;
     int close_wake_fd_ = -1;
     wl_event_source *close_wake_source_ = nullptr;

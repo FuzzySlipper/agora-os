@@ -66,6 +66,8 @@ func main() {
 		err = cmdClearInputContext(*pretty)
 	case "set-view-property":
 		err = cmdSetViewProperty(args[1:], *pretty)
+	case "surface":
+		err = cmdSurface(args[1:], *pretty)
 	case "shell":
 		err = cmdShell(args[1:], *pretty)
 	case "list-surfaces":
@@ -106,6 +108,7 @@ Commands:
   set-input-context  Mark the current compositor input stream as driven by an agent uid
   clear-input-context  Return the compositor input stream to human mode
   set-view-property  Set a tracked surface view property such as always_on_top
+  surface            Run semantic surface actions such as focus
   shell              Manage desktop shell themes, wallpaper, and widgets
   list-surfaces      List tracked compositor surfaces
 
@@ -534,6 +537,33 @@ func cmdTerminate(args []string, pretty bool) error {
 		return fmt.Errorf("--launch-id is required")
 	}
 	return callAndPrint(schema.MethodTerminateLaunch, schema.TerminateLaunchRequest{LaunchID: *launchID, SessionToken: *sessionToken}, pretty)
+}
+
+func buildFocusSurfaceRequest(args []string) (schema.FocusSurfaceRequest, error) {
+	fs := flag.NewFlagSet("surface focus", flag.ExitOnError)
+	surfaceID := fs.String("surface", "", "surface id to focus")
+	timeout := fs.Int("timeout-ms", 2000, "focus acknowledgement timeout in milliseconds")
+	fs.Parse(args)
+	if *surfaceID == "" {
+		return schema.FocusSurfaceRequest{}, fmt.Errorf("--surface is required")
+	}
+	return schema.FocusSurfaceRequest{SurfaceID: *surfaceID, WaitTimeoutMs: *timeout}, nil
+}
+
+func cmdSurface(args []string, pretty bool) error {
+	if len(args) == 0 {
+		return fmt.Errorf("surface subcommand is required: focus (raise is deferred until compositor support is explicit)")
+	}
+	switch args[0] {
+	case "focus":
+		req, err := buildFocusSurfaceRequest(args[1:])
+		if err != nil {
+			return err
+		}
+		return callAndPrint(schema.MethodFocusSurface, req, pretty)
+	default:
+		return fmt.Errorf("unknown surface subcommand: %s", args[0])
+	}
 }
 
 func callAndPrint(method string, body any, pretty bool) error {

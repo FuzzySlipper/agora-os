@@ -56,6 +56,7 @@ enum class bridge_message_kind
     capture_surface,
     inject_input,
     place_surface,
+    focus_surface,
     set_view_property,
 };
 
@@ -297,6 +298,22 @@ inline std::string encode_place_response(std::string_view request_id, std::strin
 {
     std::ostringstream out;
     out << "{\"type\":\"place_response\","
+        << "\"request_id\":\"" << json_escape(request_id) << "\","
+        << "\"surface_id\":\"" << json_escape(surface_id) << "\","
+        << "\"ok\":" << (ok ? "true" : "false");
+    if (!ok || !error.empty())
+    {
+        out << ",\"error\":\"" << json_escape(error) << "\"";
+    }
+    out << "}";
+    return out.str();
+}
+
+inline std::string encode_focus_response(std::string_view request_id, std::string_view surface_id,
+    bool ok, std::string_view error = "")
+{
+    std::ostringstream out;
+    out << "{\"type\":\"focus_response\","
         << "\"request_id\":\"" << json_escape(request_id) << "\","
         << "\"surface_id\":\"" << json_escape(surface_id) << "\","
         << "\"ok\":" << (ok ? "true" : "false");
@@ -690,6 +707,14 @@ inline bridge_message_t parse_bridge_message(const std::string& line)
             message.width = find_int_field(*geom, "width").value_or(0);
             message.height = find_int_field(*geom, "height").value_or(0);
         }
+        return message;
+    }
+
+    if (*type == "focus_surface")
+    {
+        message.kind = bridge_message_kind::focus_surface;
+        message.request_id = find_string_field(line, "request_id").value_or("");
+        message.surface_id = find_string_field(line, "surface_id").value_or("");
         return message;
     }
 
