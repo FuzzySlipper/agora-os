@@ -20,25 +20,7 @@ The longer literature review is in [`research/research.md`](research/research.md
 
 ## Status
 
-This repo is past the "just sketches" stage, but it is still infrastructure-first rather than a usable desktop.
-
-Phase 1 is implemented and VM-validated:
-- the isolation, admin-agent, audit, and event-bus services all build on `main`
-- the disposable Arch VM flow can prove agent spawn, per-uid network deny, audit attribution, and append-only admin logging end-to-end
-
-Phase 2 is now a real Wayfire-based vertical slice on `main`:
-- the compositor direction has settled on a thin Wayfire plugin plus a root-owned Go bridge, not Pinnacle
-- the repo now has the Wayfire plugin, compositor bridge, root-only `compositorctl`, explicit viewport grants with append-only logging, and `test/phase2.sh` for end-to-end validation
-- recent VM work added guest provisioning and a graphical VM mode so Phase 2 validation can run in the disposable guest instead of assuming a preconfigured host
-
-Phase 3 now has a real shell-facing vertical slice on `main`:
-- `webview-launcher` starts WebKitGTK Wayland clients as real surfaces in the guest session
-- `event-bus-web` exposes the local event bus and serves the human shell UI
-- the shell UI can see agents, compositor-tracked surfaces, pending escalations, and live audit activity
-- the structured `agent.message.*` protocol now works through both the raw bus and the web bridge
-- `test/phase3.sh` proves the full flow with two agent-owned webviews, the shell, and recent audit activity
-
-The architecture is still evolving around those foundations. There is still no supervisor-mediated desktop loop, polished operator UX, or final compositor architecture, but the repo now has end-to-end Phase 3 proof rather than only isolated pieces.
+This repo is past the "just sketches" stage, but it is still infrastructure-first rather than a ready to launch desktop.
 
 ## Repo layout
 
