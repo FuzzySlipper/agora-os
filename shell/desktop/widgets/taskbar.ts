@@ -7,6 +7,7 @@ export interface TaskbarWidgetOptions {
     publish?: ShellPublisher;
     focusSurface?: SurfaceFocusAction;
     onFocusResult?: (result: SurfaceActionResponse) => void;
+    onOpenCommandCenter?: () => void;
 }
 
 interface SurfaceActionStatus {
@@ -27,6 +28,7 @@ export class TaskbarWidget extends HTMLElement implements ShellWidget {
     private publish: ShellPublisher;
     private focusSurface: SurfaceFocusAction;
     private onFocusResult: (result: SurfaceActionResponse) => void;
+    private onOpenCommandCenter: () => void;
     private surfaces: SurfaceTaskbarItem[] = [];
     private actionStatus = new Map<string, SurfaceActionStatus>();
 
@@ -36,11 +38,13 @@ export class TaskbarWidget extends HTMLElement implements ShellWidget {
             this.publish = options;
             this.focusSurface = createSurfaceFocusAction();
             this.onFocusResult = () => undefined;
+            this.onOpenCommandCenter = () => undefined;
             return;
         }
         this.publish = options.publish ?? (() => undefined);
         this.focusSurface = options.focusSurface ?? createSurfaceFocusAction();
         this.onFocusResult = options.onFocusResult ?? (() => undefined);
+        this.onOpenCommandCenter = options.onOpenCommandCenter ?? (() => undefined);
     }
 
     connectedCallback(): void {
@@ -93,8 +97,10 @@ export class TaskbarWidget extends HTMLElement implements ShellWidget {
 
     private render(): void {
         this.replaceChildren();
-        const launch = button("taskbar-widget__launch", "⌘", "Open launcher");
-        launch.addEventListener("click", () => this.publish("conversation.turn.requested", { prompt: "Open launcher" }));
+        const launch = button("taskbar-widget__launch", "⌘", "Open Command Center");
+        launch.title = "Command Center: ask Agora, launch apps, run shell actions";
+        launch.dataset.action = "shell.command_center.toggle";
+        launch.addEventListener("click", () => this.onOpenCommandCenter());
         const surfaceList = document.createElement("div");
         surfaceList.className = "taskbar-widget__surfaces";
         for (const item of this.surfaces) {

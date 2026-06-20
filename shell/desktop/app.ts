@@ -1,7 +1,8 @@
 import { createBusConnection, type BusConnection } from "../shared/bus.js";
-import type { AgentInfo, BusEnvelope, DesktopShellState, ShellNotification, ShellWidget, SurfaceActionResponse, SurfaceEvent } from "../shared/types.js";
+import type { AgentInfo, BusEnvelope, CommandCenterState, ConversationTurnRequest, DesktopShellState, ShellNotification, ShellWidget, SurfaceActionResponse, SurfaceEvent } from "../shared/types.js";
 import { AgentHealthWidget } from "./widgets/agent-health.js";
 import { ClockWidget } from "./widgets/clock.js";
+import { CommandCenterWidget } from "./widgets/command-center.js";
 import { NotificationCenter } from "./widgets/notification-center.js";
 import { TaskbarWidget } from "./widgets/taskbar.js";
 import { WindowChromeWidget } from "./widgets/window-chrome.js";
@@ -33,6 +34,10 @@ const emptyState = (): DesktopShellState => ({
             background: "var(--shell-bg)",
             accent: "var(--shell-accent)",
         },
+    },
+    commandCenter: {
+        open: false,
+        transcript: [],
     },
 });
 
@@ -128,9 +133,16 @@ export class ShellApp {
             this.update(next);
         };
         this.registerWidget(new WindowChromeWidget({ onActionResult: applyLocalActionResult }));
+        this.registerWidget(new CommandCenterWidget({
+            publish: (topic, body) => this.bus.publish(topic, body),
+            onFocusResult: applyLocalActionResult,
+            onClose: () => this.setCommandCenterOpen(false),
+            onPromptSubmit: (request) => this.submitCommandCenterPrompt(request),
+        }));
         this.registerWidget(new TaskbarWidget({
             publish: (topic, body) => this.bus.publish(topic, body),
             onFocusResult: applyLocalActionResult,
+            onOpenCommandCenter: () => this.setCommandCenterOpen(!this.state.commandCenter.open),
         }));
     }
 
@@ -140,6 +152,24 @@ export class ShellApp {
         for (const widget of this.widgets.values()) {
             widget.update(state);
         }
+    }
+
+    private setCommandCenterOpen(open: boolean): void {
+        this.update({ ...cloneState(this.state), commandCenter: { ...this.state.commandCenter, open, error: undefined } });
+    }
+
+    private submitCommandCenterPrompt(request: ConversationTurnRequest): void {
+        const next = cloneState(this.state);
+        next.commandCenter = {
+            ...next.commandCenter,
+            open: true,
+            query: "",
+            pendingTurnID: request.turn_id,
+            error: undefined,
+            transcript: [{ turn_id: request.turn_id, prompt: request.prompt, status: "pending", timestamp: new Date().toISOString() }, ...next.commandCenter.transcript],
+        };
+        this.update(next);
+        this.bus.publish("conversation.turn.requested", request);
     }
 
     private async refreshShellStateSnapshot(): Promise<void> {
@@ -187,6 +217,9 @@ export class ShellApp {
             next.config.theme = { ...next.config.theme, ...(event.body as Record<string, unknown>) };
             applyTheme(next.config.theme ?? {});
         } else if (event.topic === "agent.work.progress" || event.topic === "conversation.turn.responded") {
+            if (event.topic === "conversation.turn.responded") {
+                applyConversationResponse(next, event);
+            }
             next.notifications = [notificationFromEvent(event), ...next.notifications].slice(0, 8);
         }
         this.update(next);
@@ -221,7 +254,10 @@ function shellLayout(): string {
         <section class="shell-grid" aria-label="Agora desktop shell">
             <div class="shell-widget-container shell-zone pos-top-left" data-widget-slot="agent-health"></div>
             <div class="shell-widget-container shell-zone pos-top-right" data-widget-slot="clock"></div>
-            <div class="shell-widget-container shell-zone pos-center" data-widget-slot="window-chrome"></div>
+            <div class="shell-widget-container shell-zone pos-center">
+                <div data-widget-slot="window-chrome"></div>
+                <div data-widget-slot="command-center"></div>
+            </div>
             <div class="shell-widget-container shell-zone pos-bottom-right" data-widget-slot="notifications"></div>
             <nav class="shell-widget-container shell-taskbar pos-bottom" data-widget-slot="taskbar" aria-label="Desktop taskbar"></nav>
         </section>`;
@@ -233,6 +269,14 @@ function cloneState(state: DesktopShellState): DesktopShellState {
         agents: [...state.agents],
         notifications: [...state.notifications],
         config: { ...state.config, theme: { ...state.config.theme } },
+        commandCenter: cloneCommandCenterState(state.commandCenter),
+    };
+}
+
+function cloneCommandCenterState(state: CommandCenterState): CommandCenterState {
+    return {
+        ...state,
+        transcript: [...state.transcript],
     };
 }
 
@@ -332,6 +376,28 @@ function applyAgentEvent(state: DesktopShellState, event: BusEnvelope): void {
         state.agents[existing] = { ...state.agents[existing], ...agent };
     } else {
         state.agents.push(agent);
+    }
+}
+
+function applyConversationResponse(state: DesktopShellState, event: BusEnvelope): void {
+    const body = event.body as Record<string, unknown> | undefined;
+    const turnID = typeof body?.turn_id === "string" ? body.turn_id : state.commandCenter.pendingTurnID;
+    const response = String(body?.response ?? body?.message ?? body?.content ?? body?.summary ?? "responded");
+    if (!turnID) {
+        state.commandCenter = {
+            ...state.commandCenter,
+            transcript: [{ turn_id: `response:${Date.now().toString(36)}`, response, status: "responded", timestamp: event.timestamp }, ...state.commandCenter.transcript],
+        };
+        return;
+    }
+    const existing = state.commandCenter.transcript.findIndex((entry) => entry.turn_id === turnID);
+    if (existing >= 0) {
+        state.commandCenter.transcript[existing] = { ...state.commandCenter.transcript[existing], response, status: "responded", timestamp: event.timestamp };
+    } else {
+        state.commandCenter.transcript = [{ turn_id: turnID, response, status: "responded", timestamp: event.timestamp }, ...state.commandCenter.transcript];
+    }
+    if (state.commandCenter.pendingTurnID === turnID) {
+        state.commandCenter.pendingTurnID = undefined;
     }
 }
 

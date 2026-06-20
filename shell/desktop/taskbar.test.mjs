@@ -65,8 +65,10 @@ const { TaskbarWidget } = await import("../dist/desktop/widgets/taskbar.js");
 const published = [];
 const focusResults = [];
 const focusCalls = [];
+let commandCenterOpenCount = 0;
 const widget = new TaskbarWidget({
   publish: (topic, body) => published.push({ topic, body }),
+  onOpenCommandCenter: () => { commandCenterOpenCount += 1; },
   onFocusResult: (result) => focusResults.push(result),
   focusSurface: async (surfaceId) => {
     focusCalls.push(surfaceId);
@@ -87,6 +89,10 @@ widget.update({
 
 const buttons = widget.querySelectorAll("button");
 assert.equal(buttons.length, 3, "launcher plus two surface buttons");
+assert.equal(buttons[0].getAttribute("aria-label"), "Open Command Center");
+buttons[0].click();
+assert.equal(commandCenterOpenCount, 1, "launcher opens local Command Center state");
+assert.equal(published.some((entry) => entry.topic === "conversation.turn.requested" && entry.body?.prompt === "Open launcher"), false, "launcher no longer publishes silent Open launcher placeholder");
 const view1Button = widget.querySelectorAll('[data-surface-id="view-1"]')[0];
 const view2Button = widget.querySelectorAll('[data-surface-id="view-2"]')[0];
 assert.equal(view1Button.dataset.action, "surface.focus");

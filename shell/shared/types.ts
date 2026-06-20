@@ -79,11 +79,43 @@ export interface DesktopShellConfig {
     [key: string]: unknown;
 }
 
+export type CommandCenterActionState = "ready" | "pending" | "disabled" | "error";
+
+export interface CommandCenterContext {
+    source: "desktop-command-center";
+    focused_surface_id?: string;
+    visible_surface_ids: string[];
+}
+
+export interface ConversationTurnRequest {
+    session_id: string;
+    turn_id: string;
+    prompt: string;
+    context: CommandCenterContext;
+}
+
+export interface ConversationTranscriptEntry {
+    turn_id: string;
+    prompt?: string;
+    response?: string;
+    status: "pending" | "responded" | "error";
+    timestamp?: string;
+}
+
+export interface CommandCenterState {
+    open: boolean;
+    query?: string;
+    pendingTurnID?: string;
+    error?: string;
+    transcript: ConversationTranscriptEntry[];
+}
+
 export interface DesktopShellState {
     surfaces: SurfaceEvent[];
     agents: AgentInfo[];
     notifications: ShellNotification[];
     config: DesktopShellConfig;
+    commandCenter: CommandCenterState;
 }
 
 export interface ShellWidget {
