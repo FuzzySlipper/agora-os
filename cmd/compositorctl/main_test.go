@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -30,6 +31,52 @@ func TestBuildCatalogAppLaunchRequest(t *testing.T) {
 	_, err = buildCatalogAppLaunchRequest([]string{"--catalog-id", "browser", "--catalog-file", catalogFile})
 	if err == nil || !strings.Contains(err.Error(), "app_disabled") {
 		t.Fatalf("expected app_disabled error, got %v", err)
+	}
+}
+
+func TestBuildDesktopImportRequest(t *testing.T) {
+	t.Parallel()
+
+	req, err := buildDesktopImportRequest([]string{"--dir", "/tmp/a", "--dir", "/tmp/b", "--include-hidden", "--include-nodisplay", "--format", "catalog-overlay", "--output", "/tmp/out.json"})
+	if err != nil {
+		t.Fatalf("buildDesktopImportRequest returned error: %v", err)
+	}
+	if !reflect.DeepEqual(req.opts.Dirs, []string{"/tmp/a", "/tmp/b"}) || !req.opts.IncludeHidden || !req.opts.IncludeNoDisplay || req.format != "catalog-overlay" || req.output != "/tmp/out.json" {
+		t.Fatalf("unexpected request: %+v", req)
+	}
+	_, err = buildDesktopImportRequest([]string{"--format", "bad"})
+	if err == nil || !strings.Contains(err.Error(), "--format must be") {
+		t.Fatalf("expected format error, got %v", err)
+	}
+}
+
+func TestRunDesktopImportWritesDeterministicJSON(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "zeta.desktop"), []byte("[Desktop Entry]\nType=Application\nName=Zeta\nExec=/usr/bin/zeta %u\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "alpha.desktop"), []byte("[Desktop Entry]\nType=Application\nName=Alpha\nExec=/usr/bin/alpha\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(t.TempDir(), "candidates.json")
+	req, err := buildDesktopImportRequest([]string{"--dir", dir, "--output", out})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runDesktopImport(req, false); err != nil {
+		t.Fatalf("runDesktopImport: %v", err)
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if strings.Index(text, "desktop-alpha") < 0 || strings.Index(text, "desktop-zeta") < 0 || strings.Index(text, "desktop-alpha") > strings.Index(text, "desktop-zeta") {
+		t.Fatalf("output not deterministic or missing candidates:\n%s", text)
+	}
+	if !strings.Contains(text, "\"enabled\": false") || !strings.Contains(text, "requires_argument_policy") {
+		t.Fatalf("output missing disabled entry or risk flag:\n%s", text)
 	}
 }
 

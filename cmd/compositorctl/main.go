@@ -272,7 +272,7 @@ func cmdSession(args []string, pretty bool) error {
 
 func cmdApp(args []string, pretty bool) error {
 	if len(args) == 0 {
-		return fmt.Errorf("app subcommand is required: list, launch, command, result")
+		return fmt.Errorf("app subcommand is required: list, launch, import-desktop, command, result")
 	}
 	switch args[0] {
 	case "list":
@@ -298,6 +298,12 @@ func cmdApp(args []string, pretty bool) error {
 			return err
 		}
 		return launchCatalogApp(req, pretty)
+	case "import-desktop":
+		req, err := buildDesktopImportRequest(args[1:])
+		if err != nil {
+			return err
+		}
+		return runDesktopImport(req, pretty)
 	case "command":
 		fs := flag.NewFlagSet("app command", flag.ExitOnError)
 		surfaceID := fs.String("surface", "", "surface id")
@@ -324,6 +330,57 @@ func cmdApp(args []string, pretty bool) error {
 	default:
 		return fmt.Errorf("unknown app subcommand %q", args[0])
 	}
+}
+
+type stringListFlag []string
+
+func (s *stringListFlag) String() string { return strings.Join(*s, ",") }
+func (s *stringListFlag) Set(value string) error {
+	*s = append(*s, value)
+	return nil
+}
+
+type desktopImportRequest struct {
+	opts   appcatalog.DesktopImportOptions
+	format string
+	output string
+}
+
+func buildDesktopImportRequest(args []string) (desktopImportRequest, error) {
+	fs := flag.NewFlagSet("app import-desktop", flag.ExitOnError)
+	var dirs stringListFlag
+	fs.Var(&dirs, "dir", "desktop file source directory (repeatable; defaults to XDG application dirs)")
+	output := fs.String("output", "", "output JSON path (default stdout)")
+	format := fs.String("format", "candidates", "output format: candidates or catalog-overlay")
+	includeHidden := fs.Bool("include-hidden", false, "include Hidden=true entries")
+	includeNoDisplay := fs.Bool("include-nodisplay", false, "include NoDisplay=true entries")
+	fs.Parse(args)
+	if *format != "candidates" && *format != "catalog-overlay" {
+		return desktopImportRequest{}, fmt.Errorf("--format must be candidates or catalog-overlay")
+	}
+	return desktopImportRequest{opts: appcatalog.DesktopImportOptions{Dirs: []string(dirs), IncludeHidden: *includeHidden, IncludeNoDisplay: *includeNoDisplay}, format: *format, output: *output}, nil
+}
+
+func runDesktopImport(req desktopImportRequest, pretty bool) error {
+	artifact, err := appcatalog.ImportDesktopCandidates(req.opts)
+	if err != nil {
+		return err
+	}
+	payload, err := appcatalog.MarshalDesktopImport(artifact, req.format)
+	if err != nil {
+		return err
+	}
+	payload = append(payload, '\n')
+	if req.output != "" {
+		return os.WriteFile(req.output, payload, 0o644)
+	}
+	if pretty {
+		_, err = os.Stdout.Write(payload)
+		return err
+	}
+	// MarshalDesktopImport is already indented for reviewability; keep stdout deterministic.
+	_, err = os.Stdout.Write(payload)
+	return err
 }
 
 type catalogLaunchRequest struct {
