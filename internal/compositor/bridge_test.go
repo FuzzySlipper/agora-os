@@ -805,6 +805,191 @@ func TestDispatchFocusSurfaceRoutesToPluginAndPublishesAction(t *testing.T) {
 	}
 }
 
+func TestDispatchAlwaysOnTopRoutesToPluginAndPublishesAction(t *testing.T) {
+	pub := &fakePublisher{}
+	bridge, err := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	server, client, cleanup := unixSocketPair(t)
+	defer cleanup()
+
+	go bridge.HandlePluginConn(server)
+	dec := json.NewDecoder(client)
+	readInitialSync(t, dec)
+
+	visible := true
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventMapped, Surface: schema.CompositorSurface{ID: "view-pin", WayfireViewID: 52, Visible: &visible}, Client: schema.CompositorClientIdentity{UID: 60001}})
+	var discard schema.CompositorPolicyUpsert
+	_ = dec.Decode(&discard)
+
+	body, err := json.Marshal(schema.AlwaysOnTopRequest{SurfaceID: "view-pin", Enabled: true, WaitTimeoutMs: 500})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	respCh := make(chan schema.Response, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		resp, err := bridge.dispatch(60002, schema.Request{Method: schema.MethodAlwaysOnTop, Body: body})
+		if err != nil {
+			errCh <- err
+			return
+		}
+		respCh <- resp
+	}()
+
+	var msg schema.CompositorSetViewProperty
+	if err := dec.Decode(&msg); err != nil {
+		t.Fatalf("decode set_view_property: %v", err)
+	}
+	if msg.Type != schema.PluginMessageSetViewProperty || msg.SurfaceID != "view-pin" || msg.RequestID == "" || msg.Properties["always_on_top"] != true {
+		t.Fatalf("unexpected set_view_property message: %+v", msg)
+	}
+	if err := json.NewEncoder(client).Encode(schema.CompositorPluginEvent{Type: schema.PluginMessagePropertyResponse, RequestID: msg.RequestID, SurfaceID: "view-pin", OK: true}); err != nil {
+		t.Fatalf("encode property response: %v", err)
+	}
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventFocused, Surface: schema.CompositorSurface{ID: "view-pin", WayfireViewID: 52, Visible: &visible, AlwaysOnTop: &visible}, Client: schema.CompositorClientIdentity{UID: 60001}})
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("dispatch returned error: %v", err)
+	case resp := <-respCh:
+		if !resp.OK {
+			t.Fatalf("dispatch response not OK: %+v", resp)
+		}
+		var action schema.SurfaceActionResponse
+		if err := json.Unmarshal(resp.Body, &action); err != nil {
+			t.Fatalf("unmarshal response: %v", err)
+		}
+		if action.Action != "surface.always_on_top" || action.Decision != schema.SurfaceActionAccepted || action.TargetState == nil || action.TargetState.AlwaysOnTop == nil || !*action.TargetState.AlwaysOnTop || action.ResultState == nil || action.ResultState.AlwaysOnTop == nil || !*action.ResultState.AlwaysOnTop || action.AlwaysOnTop == nil || !*action.AlwaysOnTop || action.Surface == nil || action.Surface.Surface.AlwaysOnTop == nil || !*action.Surface.Surface.AlwaysOnTop {
+			t.Fatalf("unexpected action response: %+v", action)
+		}
+	case <-time.After(700 * time.Millisecond):
+		t.Fatal("timed out waiting for dispatch response")
+	}
+	if len(pub.events) == 0 || pub.events[len(pub.events)-1].topic != schema.TopicShellActionCompleted {
+		t.Fatalf("shell action completion was not published: %+v", pub.events)
+	}
+}
+
+func TestDispatchAlwaysOnTopDeniesMissingAndStaleSurfaces(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		stale bool
+		class string
+	}{
+		{name: "missing", class: schema.ErrorSurfaceNotFound},
+		{name: "stale", stale: true, class: schema.ErrorSurfaceStale},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			pub := &fakePublisher{}
+			bridge, err := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			if tc.stale {
+				bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventMapped, Surface: schema.CompositorSurface{ID: "view-pin", WayfireViewID: 52, Visible: boolPtr(true)}, Client: schema.CompositorClientIdentity{UID: 60001}})
+				bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventUnmapped, Surface: schema.CompositorSurface{ID: "view-pin", WayfireViewID: 52}, Client: schema.CompositorClientIdentity{UID: 60001}})
+			}
+			body, err := json.Marshal(schema.AlwaysOnTopRequest{SurfaceID: "view-pin", Enabled: true, WaitTimeoutMs: 20})
+			if err != nil {
+				t.Fatalf("marshal request: %v", err)
+			}
+			if _, err := bridge.dispatch(60002, schema.Request{Method: schema.MethodAlwaysOnTop, Body: body}); err == nil {
+				t.Fatal("expected always_on_top denial")
+			} else if class, _ := classifyError(err); class != tc.class {
+				t.Fatalf("got error class %q (%v), want %q", class, err, tc.class)
+			}
+			if len(pub.events) == 0 || pub.events[len(pub.events)-1].topic != schema.TopicShellActionDenied {
+				t.Fatalf("shell action denial was not published: %+v", pub.events)
+			}
+			action, ok := pub.events[len(pub.events)-1].body.(schema.SurfaceActionResponse)
+			if !ok {
+				t.Fatalf("denied event body type %T", pub.events[len(pub.events)-1].body)
+			}
+			if action.Action != "surface.always_on_top" || action.Decision != schema.SurfaceActionDenied || action.TargetState == nil || action.TargetState.AlwaysOnTop == nil || !*action.TargetState.AlwaysOnTop {
+				t.Fatalf("unexpected denied action %+v", action)
+			}
+		})
+	}
+}
+
+func TestDispatchAlwaysOnTopRejectsLayerShell(t *testing.T) {
+	pub := &fakePublisher{}
+	bridge, err := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventMapped, Surface: schema.CompositorSurface{ID: "layer-pin", SurfaceKind: schema.SurfaceKindLayerShell, Visible: boolPtr(true)}, Client: schema.CompositorClientIdentity{UID: 60001}})
+	body, err := json.Marshal(schema.AlwaysOnTopRequest{SurfaceID: "layer-pin", Enabled: true, WaitTimeoutMs: 20})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	if _, err := bridge.dispatch(60002, schema.Request{Method: schema.MethodAlwaysOnTop, Body: body}); err == nil {
+		t.Fatal("expected layer-shell always_on_top denial")
+	} else if class, _ := classifyError(err); class != schema.ErrorBackendUnsupported {
+		t.Fatalf("got error class %q (%v), want %q", class, err, schema.ErrorBackendUnsupported)
+	}
+	if len(pub.events) == 0 || pub.events[len(pub.events)-1].topic != schema.TopicShellActionDenied {
+		t.Fatalf("shell action denial was not published: %+v", pub.events)
+	}
+	action, ok := pub.events[len(pub.events)-1].body.(schema.SurfaceActionResponse)
+	if !ok || action.Action != "surface.always_on_top" || action.Decision != schema.SurfaceActionDenied || action.Surface == nil || action.Surface.Surface.SurfaceKind != schema.SurfaceKindLayerShell {
+		t.Fatalf("unexpected denied action %+v", pub.events[len(pub.events)-1].body)
+	}
+}
+
+func TestDispatchAlwaysOnTopPublishesDeniedOnPluginAckTimeout(t *testing.T) {
+	pub := &fakePublisher{}
+	bridge, err := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	server, client, cleanup := unixSocketPair(t)
+	defer cleanup()
+	go bridge.HandlePluginConn(server)
+	dec := json.NewDecoder(client)
+	readInitialSync(t, dec)
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventMapped, Surface: schema.CompositorSurface{ID: "view-timeout", WayfireViewID: 55, Visible: boolPtr(true)}, Client: schema.CompositorClientIdentity{UID: 60001}})
+	var discard schema.CompositorPolicyUpsert
+	_ = dec.Decode(&discard)
+	body, err := json.Marshal(schema.AlwaysOnTopRequest{SurfaceID: "view-timeout", Enabled: true, WaitTimeoutMs: 30})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := bridge.dispatch(60002, schema.Request{Method: schema.MethodAlwaysOnTop, Body: body})
+		errCh <- err
+	}()
+	var msg schema.CompositorSetViewProperty
+	if err := dec.Decode(&msg); err != nil {
+		t.Fatalf("decode set_view_property: %v", err)
+	}
+	if msg.Type != schema.PluginMessageSetViewProperty || msg.SurfaceID != "view-timeout" || msg.RequestID == "" {
+		t.Fatalf("unexpected set_view_property message: %+v", msg)
+	}
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatal("expected timeout error")
+		}
+		if class, _ := classifyError(err); class != schema.ErrorFrameTimeout {
+			t.Fatalf("got error class %q (%v), want %q", class, err, schema.ErrorFrameTimeout)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timed out waiting for always_on_top dispatch timeout")
+	}
+	if len(pub.events) == 0 || pub.events[len(pub.events)-1].topic != schema.TopicShellActionDenied {
+		t.Fatalf("shell action denial was not published: %+v", pub.events)
+	}
+	action, ok := pub.events[len(pub.events)-1].body.(schema.SurfaceActionResponse)
+	if !ok || action.Action != "surface.always_on_top" || action.Decision != schema.SurfaceActionDenied || action.TargetState == nil || action.TargetState.AlwaysOnTop == nil || !*action.TargetState.AlwaysOnTop || action.Surface == nil || action.Surface.Surface.ID != "view-timeout" {
+		t.Fatalf("unexpected denied action %+v", pub.events[len(pub.events)-1].body)
+	}
+}
+
 func TestDispatchMoveSurfaceRoutesToPluginAndPublishesAction(t *testing.T) {
 	pub := &fakePublisher{}
 	bridge, err := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/patch/agora-os/internal/appcatalog"
@@ -687,6 +688,27 @@ func buildTileSurfaceRequest(args []string) (schema.TileSurfaceRequest, error) {
 	return schema.TileSurfaceRequest{SurfaceID: *surfaceID, Rows: *rows, Cols: *cols, Row: *row, Col: *col, RowSpan: *rowSpan, ColSpan: *colSpan, WaitTimeoutMs: *timeout}, nil
 }
 
+func buildAlwaysOnTopRequest(args []string) (schema.AlwaysOnTopRequest, error) {
+	fs := flag.NewFlagSet("surface always-on-top", flag.ExitOnError)
+	surfaceID := fs.String("surface", "", "surface id")
+	enabled := fs.Bool("enabled", true, "set always_on_top enabled")
+	state := fs.String("state", "", "set always_on_top state: true or false")
+	timeout := fs.Int("timeout-ms", 4000, "always_on_top acknowledgement/readback timeout in milliseconds")
+	fs.Parse(args)
+	if *surfaceID == "" {
+		return schema.AlwaysOnTopRequest{}, fmt.Errorf("--surface is required")
+	}
+	value := *enabled
+	if *state != "" {
+		parsed, err := strconv.ParseBool(*state)
+		if err != nil {
+			return schema.AlwaysOnTopRequest{}, fmt.Errorf("--state must be true or false")
+		}
+		value = parsed
+	}
+	return schema.AlwaysOnTopRequest{SurfaceID: *surfaceID, Enabled: value, WaitTimeoutMs: *timeout}, nil
+}
+
 func buildCloseSurfaceRequest(args []string) (schema.CloseSurfaceRequest, error) {
 	fs := flag.NewFlagSet("surface close", flag.ExitOnError)
 	surfaceID := fs.String("surface", "", "surface id to close")
@@ -700,7 +722,7 @@ func buildCloseSurfaceRequest(args []string) (schema.CloseSurfaceRequest, error)
 
 func cmdSurface(args []string, pretty bool) error {
 	if len(args) == 0 {
-		return fmt.Errorf("surface subcommand is required: focus, move, tile, resize, close (raise/minimize/maximize are deferred until compositor support is explicit)")
+		return fmt.Errorf("surface subcommand is required: focus, move, tile, resize, always-on-top, close (raise/minimize/maximize are deferred until compositor support is explicit)")
 	}
 	switch args[0] {
 	case "focus":
@@ -727,6 +749,12 @@ func cmdSurface(args []string, pretty bool) error {
 			return err
 		}
 		return callAndPrint(schema.MethodTileSurface, req, pretty)
+	case "always-on-top", "pin":
+		req, err := buildAlwaysOnTopRequest(args[1:])
+		if err != nil {
+			return err
+		}
+		return callAndPrint(schema.MethodAlwaysOnTop, req, pretty)
 	case "close":
 		req, err := buildCloseSurfaceRequest(args[1:])
 		if err != nil {

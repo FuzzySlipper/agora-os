@@ -5,12 +5,14 @@ export type SurfaceCloseAction = (surfaceId: string) => Promise<SurfaceActionRes
 export type SurfaceMoveAction = (surfaceId: string, geometry: { x: number; y: number; width?: number; height?: number }) => Promise<SurfaceActionResponse>;
 export type SurfaceResizeAction = (surfaceId: string, size: { width: number; height: number }) => Promise<SurfaceActionResponse>;
 export type SurfaceTileAction = (surfaceId: string, region: { rows: number; cols: number; row: number; col: number; row_span?: number; col_span?: number }) => Promise<SurfaceActionResponse>;
+export type SurfaceAlwaysOnTopAction = (surfaceId: string, enabled: boolean) => Promise<SurfaceActionResponse>;
 
 export interface WindowChromeWidgetOptions {
     focusSurface?: SurfaceFocusAction;
     closeSurface?: SurfaceCloseAction;
     moveSurface?: SurfaceMoveAction;
     tileSurface?: SurfaceTileAction;
+    alwaysOnTopSurface?: SurfaceAlwaysOnTopAction;
     onActionResult?: (result: SurfaceActionResponse) => void;
 }
 
@@ -26,6 +28,7 @@ export class WindowChromeWidget extends HTMLElement implements ShellWidget {
     private closeSurface: SurfaceCloseAction;
     private moveSurface: SurfaceMoveAction;
     private tileSurface: SurfaceTileAction;
+    private alwaysOnTopSurface: SurfaceAlwaysOnTopAction;
     private onActionResult: (result: SurfaceActionResponse) => void;
     private surfaces: SurfaceEvent[] = [];
     private actionStatus = new Map<string, ChromeActionStatus>();
@@ -36,6 +39,7 @@ export class WindowChromeWidget extends HTMLElement implements ShellWidget {
         this.closeSurface = options.closeSurface ?? createSurfaceCloseAction();
         this.moveSurface = options.moveSurface ?? createSurfaceMoveAction();
         this.tileSurface = options.tileSurface ?? createSurfaceTileAction();
+        this.alwaysOnTopSurface = options.alwaysOnTopSurface ?? createSurfaceAlwaysOnTopAction();
         this.onActionResult = options.onActionResult ?? (() => undefined);
     }
 
@@ -94,6 +98,10 @@ export class WindowChromeWidget extends HTMLElement implements ShellWidget {
             row,
             col,
         }));
+    }
+
+    private async requestAlwaysOnTop(surface: SurfaceEvent): Promise<void> {
+        await this.runAction(surface, "surface.always_on_top", () => this.alwaysOnTopSurface(surface.id, !surface.always_on_top));
     }
 
     private async runAction(surface: SurfaceEvent, action: string, invoke: () => Promise<SurfaceActionResponse>): Promise<void> {
@@ -216,6 +224,13 @@ export class WindowChromeWidget extends HTMLElement implements ShellWidget {
             event.stopPropagation();
             void this.requestFocus(surface);
         });
+        const pin = button("window-chrome-widget__button", surface.always_on_top ? "Unpin" : "Pin", `${surface.always_on_top ? "Disable" : "Enable"} always on top for ${surfaceLabel(surface)}`);
+        pin.dataset.action = "surface.always_on_top";
+        pin.disabled = status?.pending === "surface.always_on_top";
+        pin.addEventListener("click", (event) => {
+            event.stopPropagation();
+            void this.requestAlwaysOnTop(surface);
+        });
         const close = button("window-chrome-widget__button window-chrome-widget__button--close", "×", `Close ${surfaceLabel(surface)}`);
         close.dataset.action = "surface.close";
         close.disabled = status?.pending === "surface.close";
@@ -223,7 +238,7 @@ export class WindowChromeWidget extends HTMLElement implements ShellWidget {
             event.stopPropagation();
             void this.requestClose(surface);
         });
-        controls.append(focus, close);
+        controls.append(focus, pin, close);
         titlebar.append(titles, controls);
         row.append(titlebar);
 
@@ -252,7 +267,11 @@ function surfaceStatusLabel(surface: SurfaceEvent): string {
     if (surface.status === "closing") {
         return "Close requested — waiting for compositor unmap";
     }
-    return surface.focused ? "Focused" : "Ready";
+    const flags = [surface.focused ? "Focused" : "Ready"];
+    if (surface.always_on_top) {
+        flags.push("Always on top");
+    }
+    return flags.join(" · ");
 }
 
 export function createSurfaceMoveAction(fetcher: typeof fetch = fetch, tokenProvider: () => string | null = shellToken): SurfaceMoveAction {
@@ -321,6 +340,27 @@ export function createSurfaceResizeAction(fetcher: typeof fetch = fetch, tokenPr
 function isShellSurface(surface: SurfaceEvent): boolean {
     const text = `${surface.title ?? ""} ${surface.app_id ?? ""} ${surface.role ?? ""}`.toLowerCase();
     return text.includes("agora desktop shell") || text.includes("agora-shell") || surface.role === "panel" || surface.role === "dock" || surface.role === "background";
+}
+
+export function createSurfaceAlwaysOnTopAction(fetcher: typeof fetch = fetch, tokenProvider: () => string | null = shellToken): SurfaceAlwaysOnTopAction {
+    return async (surfaceId: string, enabled: boolean): Promise<SurfaceActionResponse> => {
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        const token = tokenProvider();
+        if (token) {
+            headers.Authorization = `Bearer ${token}`;
+        }
+        const response = await fetcher("/api/shell/surface/always-on-top", {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ surface_id: surfaceId, enabled }),
+        });
+        const body = await response.json().catch(() => undefined) as SurfaceActionResponse | { result?: SurfaceActionResponse; error_class?: string } | undefined;
+        if (!response.ok) {
+            const result = body && "result" in body ? body.result : undefined;
+            throw new SurfaceFocusError(result, result?.error || result?.reason || `surface.always_on_top failed (${response.status})`);
+        }
+        return body as SurfaceActionResponse;
+    };
 }
 
 export function createSurfaceCloseAction(fetcher: typeof fetch = fetch, tokenProvider: () => string | null = shellToken): SurfaceCloseAction {

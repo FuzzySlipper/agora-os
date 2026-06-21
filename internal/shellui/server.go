@@ -182,6 +182,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleSurfaceResize(w, r)
 	case "/surface/tile":
 		s.handleSurfaceTile(w, r)
+	case "/surface/always-on-top":
+		s.handleSurfaceAlwaysOnTop(w, r)
 	case "/surface/close":
 		s.handleSurfaceClose(w, r)
 	case "/escalations/decide":
@@ -622,6 +624,59 @@ func (s *Server) handleSurfaceTile(w http.ResponseWriter, r *http.Request) {
 		}
 		status := http.StatusBadGateway
 		if resp != nil && (resp.ErrorClass == schema.ErrorSurfaceNotFound || resp.ErrorClass == schema.ErrorSurfaceStale || resp.ErrorClass == schema.ErrorBackendUnsupported || resp.ErrorClass == schema.ErrorInvalidCoordinates) {
+			status = http.StatusConflict
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_ = json.NewEncoder(w).Encode(surfaceActionHTTPError{ErrorClass: respErrorClass(resp), Result: result})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(body)
+}
+
+func (s *Server) handleSurfaceAlwaysOnTop(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	identity, _, err := s.authenticateHuman(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	var req schema.AlwaysOnTopRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("decode always_on_top request: %v", err), http.StatusBadRequest)
+		return
+	}
+	if req.SurfaceID == "" {
+		http.Error(w, "surface_id is required", http.StatusBadRequest)
+		return
+	}
+	body, resp, err := callResponse(s.compositorSocket, schema.MethodAlwaysOnTop, req)
+	if err != nil {
+		value := req.Enabled
+		state := schema.SurfaceState{AlwaysOnTop: &value}
+		result := schema.SurfaceActionResponse{Action: "surface.always_on_top", SurfaceID: req.SurfaceID, Decision: schema.SurfaceActionDenied, Reason: err.Error(), Error: err.Error(), Actor: "human-shell", TargetState: &state, AlwaysOnTop: &value}
+		uid := uint32(identity.UID)
+		result.ActorUID = &uid
+		if resp != nil {
+			result.Reason = resp.ErrorMessage
+			result.Error = resp.ErrorMessage
+			var decoded schema.SurfaceActionResponse
+			if decodeErr := json.Unmarshal(resp.Body, &decoded); decodeErr == nil && decoded.Action != "" {
+				result = decoded
+				if result.Actor == "" {
+					result.Actor = "human-shell"
+				}
+				if result.ActorUID == nil {
+					result.ActorUID = &uid
+				}
+			}
+		}
+		status := http.StatusBadGateway
+		if resp != nil && (resp.ErrorClass == schema.ErrorSurfaceNotFound || resp.ErrorClass == schema.ErrorSurfaceStale || resp.ErrorClass == schema.ErrorBackendUnsupported) {
 			status = http.StatusConflict
 		}
 		w.Header().Set("Content-Type", "application/json")

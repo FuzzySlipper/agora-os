@@ -140,6 +140,8 @@ type Bridge struct {
 	placeWaiters      map[string]chan schema.CompositorPlacePluginResponse
 	focusSeq          uint64
 	focusWaiters      map[string]chan schema.CompositorFocusPluginResponse
+	propertySeq       uint64
+	propertyWaiters   map[string]chan schema.CompositorPropertyPluginResponse
 	sessionSeq        uint64
 	launchSeq         uint64
 	sessions          map[string]schema.CompositorSession
@@ -169,6 +171,7 @@ func New(bus publisher, cfg Config) (*Bridge, error) {
 		inputWaiters:      make(map[string]chan schema.CompositorInputPluginResponse),
 		placeWaiters:      make(map[string]chan schema.CompositorPlacePluginResponse),
 		focusWaiters:      make(map[string]chan schema.CompositorFocusPluginResponse),
+		propertyWaiters:   make(map[string]chan schema.CompositorPropertyPluginResponse),
 		sessions:          make(map[string]schema.CompositorSession),
 		launches:          make(map[string]*launchRecord),
 		surfaceLaunch:     make(map[string]string),
@@ -229,6 +232,8 @@ func (b *Bridge) HandlePluginConn(conn net.Conn) {
 			b.handlePlaceResponse(schema.CompositorPlacePluginResponse{Type: string(msg.Type), RequestID: msg.RequestID, SurfaceID: msg.SurfaceID, OK: msg.OK, Error: msg.Error})
 		case schema.PluginMessageFocusResponse:
 			b.handleFocusResponse(schema.CompositorFocusPluginResponse{Type: msg.Type, RequestID: msg.RequestID, SurfaceID: msg.SurfaceID, OK: msg.OK, Error: msg.Error})
+		case schema.PluginMessagePropertyResponse:
+			b.handlePropertyResponse(schema.CompositorPropertyPluginResponse{Type: msg.Type, RequestID: msg.RequestID, SurfaceID: msg.SurfaceID, OK: msg.OK, Error: msg.Error})
 		case schema.PluginMessageInputResponse:
 			b.handleInputResponse(schema.CompositorInputPluginResponse{
 				Type:      msg.Type,
@@ -1649,6 +1654,142 @@ func (b *Bridge) SetViewProperty(req schema.SetViewPropertyRequest) error {
 	})
 }
 
+func (b *Bridge) AlwaysOnTopAction(actorUID uint32, req schema.AlwaysOnTopRequest) (schema.SurfaceActionResponse, error) {
+	if req.SurfaceID == "" {
+		err := fmt.Errorf("surface_id is required")
+		b.publishAlwaysOnTopDenied(actorUID, req, err, nil)
+		return schema.SurfaceActionResponse{}, err
+	}
+	b.mu.RLock()
+	tracked, ok := b.surfaces[req.SurfaceID]
+	b.mu.RUnlock()
+	if !ok {
+		b.mu.RLock()
+		_, stale := b.staleSurfaces[req.SurfaceID]
+		b.mu.RUnlock()
+		var err error
+		if stale {
+			err = compositorError(schema.ErrorSurfaceStale, "surface %s is unmapped/stale", req.SurfaceID)
+		} else {
+			err = compositorError(schema.ErrorSurfaceNotFound, "surface %s not found", req.SurfaceID)
+		}
+		b.publishAlwaysOnTopDenied(actorUID, req, err, nil)
+		return schema.SurfaceActionResponse{}, err
+	}
+	if tracked.Surface.SurfaceKind == schema.SurfaceKindLayerShell {
+		err := compositorError(schema.ErrorBackendUnsupported, "surface %s is a layer-shell surface and cannot be raised as a work surface", req.SurfaceID)
+		b.publishAlwaysOnTopDenied(actorUID, req, err, &tracked)
+		return schema.SurfaceActionResponse{}, err
+	}
+	if !tracked.Visible {
+		err := compositorError(schema.ErrorSurfaceStale, "surface %s is not visible", req.SurfaceID)
+		b.publishAlwaysOnTopDenied(actorUID, req, err, &tracked)
+		return schema.SurfaceActionResponse{}, err
+	}
+	if err := b.setViewAlwaysOnTop(req.SurfaceID, req.Enabled, time.Duration(req.WaitTimeoutMs)*time.Millisecond); err != nil {
+		b.publishAlwaysOnTopDenied(actorUID, req, err, &tracked)
+		return schema.SurfaceActionResponse{}, err
+	}
+	b.mu.RLock()
+	updated, ok := b.surfaces[req.SurfaceID]
+	if ok {
+		updated = b.decorateSurfaceLocked(updated)
+	}
+	b.mu.RUnlock()
+	if !ok {
+		err := compositorError(schema.ErrorSurfaceStale, "surface %s disappeared after always_on_top", req.SurfaceID)
+		b.publishAlwaysOnTopDenied(actorUID, req, err, &tracked)
+		return schema.SurfaceActionResponse{}, err
+	}
+	if updated.Surface.AlwaysOnTop == nil || *updated.Surface.AlwaysOnTop != req.Enabled {
+		err := compositorError(schema.ErrorFrameTimeout, "surface %s always_on_top readback did not converge", req.SurfaceID)
+		b.publishAlwaysOnTopDenied(actorUID, req, err, &updated)
+		return schema.SurfaceActionResponse{}, err
+	}
+	actor, uid := b.surfaceActionActor(actorUID)
+	value := req.Enabled
+	state := schema.SurfaceState{AlwaysOnTop: &value}
+	result := schema.SurfaceActionResponse{Action: "surface.always_on_top", SurfaceID: req.SurfaceID, Decision: schema.SurfaceActionAccepted, Reason: "always_on_top updated via compositor plugin", Actor: actor, ActorUID: uid, TargetState: &state, ResultState: &state, AlwaysOnTop: &value, Surface: &updated}
+	if b.bus != nil {
+		if err := b.bus.Publish(schema.TopicShellActionCompleted, result); err != nil {
+			log.Printf("publish shell action completed: %v", err)
+		}
+	}
+	return result, nil
+}
+
+func (b *Bridge) publishAlwaysOnTopDenied(actorUID uint32, req schema.AlwaysOnTopRequest, err error, surface *schema.CompositorTrackedSurface) {
+	actor, uid := b.surfaceActionActor(actorUID)
+	value := req.Enabled
+	state := schema.SurfaceState{AlwaysOnTop: &value}
+	result := schema.SurfaceActionResponse{Action: "surface.always_on_top", SurfaceID: req.SurfaceID, Decision: schema.SurfaceActionDenied, Reason: err.Error(), Error: err.Error(), Actor: actor, ActorUID: uid, TargetState: &state, AlwaysOnTop: &value, Surface: surface}
+	if b.bus != nil {
+		if publishErr := b.bus.Publish(schema.TopicShellActionDenied, result); publishErr != nil {
+			log.Printf("publish shell action denied: %v", publishErr)
+		}
+	}
+}
+
+func (b *Bridge) setViewAlwaysOnTop(surfaceID string, enabled bool, timeout time.Duration) error {
+	b.mu.Lock()
+	if b.plugin == nil {
+		b.mu.Unlock()
+		return compositorError(schema.ErrorCompositorUnavailable, "no plugin connected")
+	}
+	b.propertySeq++
+	requestID := fmt.Sprintf("property-%d-%d", time.Now().UnixNano(), b.propertySeq)
+	ch := make(chan schema.CompositorPropertyPluginResponse, 1)
+	b.propertyWaiters[requestID] = ch
+	session := b.plugin
+	b.mu.Unlock()
+	defer func() {
+		b.mu.Lock()
+		delete(b.propertyWaiters, requestID)
+		b.mu.Unlock()
+	}()
+	if err := session.Send(schema.CompositorSetViewProperty{Type: schema.PluginMessageSetViewProperty, RequestID: requestID, SurfaceID: surfaceID, Properties: map[string]any{"always_on_top": enabled}}); err != nil {
+		return err
+	}
+	if timeout <= 0 {
+		timeout = 4 * time.Second
+	}
+	deadline := time.After(timeout)
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	pluginAcked := false
+	for {
+		select {
+		case resp := <-ch:
+			if !resp.OK {
+				if resp.Error == "" {
+					resp.Error = "property update failed"
+				}
+				return compositorError(schema.ErrorProtocolError, "set always_on_top failed: %s", resp.Error)
+			}
+			pluginAcked = true
+			if b.surfaceAlwaysOnTopMatches(surfaceID, enabled) {
+				return nil
+			}
+		case <-ticker.C:
+			if b.surfaceAlwaysOnTopMatches(surfaceID, enabled) {
+				return nil
+			}
+		case <-deadline:
+			if pluginAcked {
+				return compositorError(schema.ErrorFrameTimeout, "always_on_top readback timed out after plugin ack")
+			}
+			return compositorError(schema.ErrorFrameTimeout, "always_on_top plugin acknowledgement timed out")
+		}
+	}
+}
+
+func (b *Bridge) surfaceAlwaysOnTopMatches(surfaceID string, want bool) bool {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	tracked, ok := b.surfaces[surfaceID]
+	return ok && tracked.Surface.AlwaysOnTop != nil && *tracked.Surface.AlwaysOnTop == want
+}
+
 func (b *Bridge) CloseSurface(surfaceID string) error {
 	return b.sendToPlugin(schema.CompositorCloseSurface{
 		Type:      schema.PluginMessageCloseSurface,
@@ -2919,6 +3060,16 @@ func (b *Bridge) dispatch(peerUID uint32, req schema.Request) (schema.Response, 
 			return schema.Response{}, err
 		}
 		return okResponse("updated"), nil
+	case schema.MethodAlwaysOnTop:
+		var body schema.AlwaysOnTopRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			return schema.Response{}, fmt.Errorf("bad body: %w", err)
+		}
+		resp, err := b.AlwaysOnTopAction(peerUID, body)
+		if err != nil {
+			return schema.Response{}, err
+		}
+		return okResponse(resp), nil
 	case schema.MethodCloseSurface:
 		var body schema.CloseSurfaceRequest
 		if err := json.Unmarshal(req.Body, &body); err != nil {
@@ -2997,6 +3148,19 @@ func (b *Bridge) handleCaptureResponse(resp schema.CompositorCapturePluginRespon
 func (b *Bridge) handleInputResponse(resp schema.CompositorInputPluginResponse) {
 	b.mu.RLock()
 	waiter := b.inputWaiters[resp.RequestID]
+	b.mu.RUnlock()
+	if waiter == nil {
+		return
+	}
+	select {
+	case waiter <- resp:
+	default:
+	}
+}
+
+func (b *Bridge) handlePropertyResponse(resp schema.CompositorPropertyPluginResponse) {
+	b.mu.RLock()
+	waiter := b.propertyWaiters[resp.RequestID]
 	b.mu.RUnlock()
 	if waiter == nil {
 		return

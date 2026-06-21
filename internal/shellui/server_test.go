@@ -480,6 +480,133 @@ func TestSurfaceFocusEndpointReturnsStructuredDeniedResult(t *testing.T) {
 	}
 }
 
+func TestSurfaceAlwaysOnTopEndpointCallsCanonicalCompositorAction(t *testing.T) {
+	t.Parallel()
+	authNow := time.Now().UTC().Truncate(time.Second)
+	compSock := startSchemaServer(t, func(req schema.Request) schema.Response {
+		if req.Method != schema.MethodAlwaysOnTop {
+			t.Fatalf("unexpected method %q", req.Method)
+		}
+		var body schema.AlwaysOnTopRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		if body.SurfaceID != "view-pin" || !body.Enabled || body.WaitTimeoutMs != 0 {
+			t.Fatalf("unexpected always_on_top body %+v", body)
+		}
+		value := true
+		payload, _ := json.Marshal(schema.SurfaceActionResponse{
+			Action:      "surface.always_on_top",
+			SurfaceID:   "view-pin",
+			Decision:    schema.SurfaceActionAccepted,
+			TargetState: &schema.SurfaceState{AlwaysOnTop: &value},
+			ResultState: &schema.SurfaceState{AlwaysOnTop: &value},
+			AlwaysOnTop: &value,
+			Surface:     &schema.CompositorTrackedSurface{Surface: schema.CompositorSurface{ID: "view-pin", AlwaysOnTop: &value}},
+		})
+		return schema.Response{OK: true, Body: payload}
+	})
+	secret := []byte("01234567890123456789012345678901")
+	server := New(Config{Secret: secret, Now: func() time.Time { return authNow }, CompositorSocket: compSock})
+	req := httptest.NewRequest(http.MethodPost, "/api/shell/surface/always-on-top", strings.NewReader(`{"surface_id":"view-pin","enabled":true}`))
+	req.Header.Set("Authorization", "Bearer "+mustMintHumanToken(t, secret))
+	resp := httptest.NewRecorder()
+	server.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("got status %d body %q, want 200", resp.Code, resp.Body.String())
+	}
+	var result schema.SurfaceActionResponse
+	if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Action != "surface.always_on_top" || result.Decision != schema.SurfaceActionAccepted || result.ResultState == nil || result.ResultState.AlwaysOnTop == nil || !*result.ResultState.AlwaysOnTop || result.Surface == nil || result.Surface.Surface.AlwaysOnTop == nil || !*result.Surface.Surface.AlwaysOnTop {
+		t.Fatalf("unexpected result %+v", result)
+	}
+}
+
+func TestSurfaceAlwaysOnTopEndpointReturnsStructuredDeniedResults(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name       string
+		class      string
+		status     int
+		message    string
+		withResult bool
+	}{
+		{name: "stale", class: schema.ErrorSurfaceStale, status: http.StatusConflict, message: "surface view-pin is unmapped/stale", withResult: true},
+		{name: "unsupported", class: schema.ErrorBackendUnsupported, status: http.StatusConflict, message: "surface view-pin is a layer-shell surface and cannot be raised", withResult: true},
+		{name: "timeout", class: schema.ErrorFrameTimeout, status: http.StatusBadGateway, message: "always_on_top plugin acknowledgement timed out", withResult: true},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			authNow := time.Now().UTC().Truncate(time.Second)
+			compSock := startSchemaServer(t, func(req schema.Request) schema.Response {
+				if req.Method != schema.MethodAlwaysOnTop {
+					t.Fatalf("unexpected method %q", req.Method)
+				}
+				value := true
+				payload, _ := json.Marshal(schema.SurfaceActionResponse{
+					Action:      "surface.always_on_top",
+					SurfaceID:   "view-pin",
+					Decision:    schema.SurfaceActionDenied,
+					Reason:      tc.message,
+					Error:       tc.message,
+					TargetState: &schema.SurfaceState{AlwaysOnTop: &value},
+					AlwaysOnTop: &value,
+				})
+				return schema.Response{OK: false, Body: payload, ErrorClass: tc.class, ErrorMessage: tc.message}
+			})
+			secret := []byte("01234567890123456789012345678901")
+			server := New(Config{Secret: secret, Now: func() time.Time { return authNow }, CompositorSocket: compSock})
+			req := httptest.NewRequest(http.MethodPost, "/api/shell/surface/always-on-top", strings.NewReader(`{"surface_id":"view-pin","enabled":true}`))
+			req.Header.Set("Authorization", "Bearer "+mustMintHumanToken(t, secret))
+			resp := httptest.NewRecorder()
+			server.ServeHTTP(resp, req)
+			if resp.Code != tc.status {
+				t.Fatalf("got status %d body %q, want %d", resp.Code, resp.Body.String(), tc.status)
+			}
+			var result surfaceActionHTTPError
+			if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil {
+				t.Fatal(err)
+			}
+			if result.ErrorClass != tc.class || result.Result.Action != "surface.always_on_top" || result.Result.Decision != schema.SurfaceActionDenied || result.Result.TargetState == nil || result.Result.TargetState.AlwaysOnTop == nil || !*result.Result.TargetState.AlwaysOnTop {
+				t.Fatalf("unexpected structured denial %+v", result)
+			}
+		})
+	}
+}
+
+func TestSurfaceAlwaysOnTopEndpointRejectsMalformedRequests(t *testing.T) {
+	t.Parallel()
+	authNow := time.Now().UTC().Truncate(time.Second)
+	secret := []byte("01234567890123456789012345678901")
+	server := New(Config{Secret: secret, Now: func() time.Time { return authNow }})
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "bad-enabled-type", body: `{"surface_id":"view-pin","enabled":"yes"}`, want: "decode always_on_top request"},
+		{name: "missing-surface", body: `{"enabled":true}`, want: "surface_id is required"},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			req := httptest.NewRequest(http.MethodPost, "/api/shell/surface/always-on-top", strings.NewReader(tc.body))
+			req.Header.Set("Authorization", "Bearer "+mustMintHumanToken(t, secret))
+			resp := httptest.NewRecorder()
+			server.ServeHTTP(resp, req)
+			if resp.Code != http.StatusBadRequest {
+				t.Fatalf("got status %d body %q, want 400", resp.Code, resp.Body.String())
+			}
+			if !strings.Contains(resp.Body.String(), tc.want) {
+				t.Fatalf("body %q missing %q", resp.Body.String(), tc.want)
+			}
+		})
+	}
+}
+
 func TestEscalationDecisionAppendsDecisionLog(t *testing.T) {
 	t.Parallel()
 

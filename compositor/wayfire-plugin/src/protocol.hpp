@@ -42,6 +42,7 @@ struct surface_snapshot_t
     int32_t height = 0;
     double scale_factor = 1.0;
     std::string output_id;
+    std::optional<bool> always_on_top;
 };
 
 enum class bridge_message_kind
@@ -260,6 +261,10 @@ inline std::string encode_surface_event(std::string_view event_name, const surfa
         << "\"scale_factor\":" << surface.scale_factor << ","
         << "\"visible\":true,"
         << "\"output_id\":\"" << json_escape(surface.output_id) << "\"";
+    if (surface.always_on_top.has_value())
+    {
+        out << ",\"always_on_top\":" << (*surface.always_on_top ? "true" : "false");
+    }
     append_layer_shell_metadata(out, surface);
     out << "},"
         << "\"client\":{" << "\"pid\":" << client.pid << ","
@@ -314,6 +319,22 @@ inline std::string encode_focus_response(std::string_view request_id, std::strin
 {
     std::ostringstream out;
     out << "{\"type\":\"focus_response\","
+        << "\"request_id\":\"" << json_escape(request_id) << "\","
+        << "\"surface_id\":\"" << json_escape(surface_id) << "\","
+        << "\"ok\":" << (ok ? "true" : "false");
+    if (!ok || !error.empty())
+    {
+        out << ",\"error\":\"" << json_escape(error) << "\"";
+    }
+    out << "}";
+    return out.str();
+}
+
+inline std::string encode_property_response(std::string_view request_id, std::string_view surface_id,
+    bool ok, std::string_view error = "")
+{
+    std::ostringstream out;
+    out << "{\"type\":\"property_response\","
         << "\"request_id\":\"" << json_escape(request_id) << "\","
         << "\"surface_id\":\"" << json_escape(surface_id) << "\","
         << "\"ok\":" << (ok ? "true" : "false");
@@ -721,6 +742,7 @@ inline bridge_message_t parse_bridge_message(const std::string& line)
     if (*type == "set_view_property")
     {
         message.kind = bridge_message_kind::set_view_property;
+        message.request_id = find_string_field(line, "request_id").value_or("");
         message.surface_id = find_string_field(line, "surface_id").value_or("");
         auto properties = find_braced_region(line, "properties", '{', '}');
         if (properties.has_value())

@@ -72,6 +72,7 @@ const (
 	MethodResizeSurface       = "resize_surface"
 	MethodTileSurface         = "tile_surface"
 	MethodSetViewProperty     = "set_view_property"
+	MethodAlwaysOnTop         = "always_on_top"
 	MethodCloseSurface        = "close_surface"
 	MethodCloseSurfacesByUID  = "close_surfaces_by_uid"
 	MethodGrantViewport       = "grant_viewport"
@@ -113,6 +114,7 @@ const (
 	PluginMessageFocusSurface       CompositorPluginMessageType = "focus_surface"
 	PluginMessageFocusResponse      CompositorPluginMessageType = "focus_response"
 	PluginMessageSetViewProperty    CompositorPluginMessageType = "set_view_property"
+	PluginMessagePropertyResponse   CompositorPluginMessageType = "property_response"
 	PluginMessageCloseSurface       CompositorPluginMessageType = "close_surface"
 	PluginMessageCloseSurfacesByUID CompositorPluginMessageType = "close_surfaces_by_uid"
 )
@@ -160,6 +162,7 @@ type CompositorSurface struct {
 	ScaleFactor   float64                    `json:"scale_factor,omitempty"`
 	Visible       *bool                      `json:"visible,omitempty"`
 	OutputID      string                     `json:"output_id,omitempty"`
+	AlwaysOnTop   *bool                      `json:"always_on_top,omitempty"`
 }
 
 type CompositorClientIdentity struct {
@@ -279,8 +282,17 @@ type CompositorFocusPluginResponse struct {
 
 type CompositorSetViewProperty struct {
 	Type       CompositorPluginMessageType `json:"type"`
+	RequestID  string                      `json:"request_id,omitempty"`
 	SurfaceID  string                      `json:"surface_id"`
 	Properties map[string]any              `json:"properties"`
+}
+
+type CompositorPropertyPluginResponse struct {
+	Type      CompositorPluginMessageType `json:"type"`
+	RequestID string                      `json:"request_id"`
+	SurfaceID string                      `json:"surface_id"`
+	OK        bool                        `json:"ok"`
+	Error     string                      `json:"error,omitempty"`
 }
 
 type CompositorCloseSurface struct {
@@ -459,6 +471,10 @@ type TileSurfaceRequest struct {
 	WaitTimeoutMs int    `json:"wait_timeout_ms,omitempty"`
 }
 
+type SurfaceState struct {
+	AlwaysOnTop *bool `json:"always_on_top,omitempty"`
+}
+
 type SurfaceActionResponse struct {
 	Action           string                    `json:"action"`
 	SurfaceID        string                    `json:"surface_id"`
@@ -469,6 +485,9 @@ type SurfaceActionResponse struct {
 	ClosedSurfaceID  string                    `json:"closed_surface_id,omitempty"`
 	TargetGeometry   *SurfaceGeometry          `json:"target_geometry,omitempty"`
 	ResultGeometry   *SurfaceGeometry          `json:"result_geometry,omitempty"`
+	TargetState      *SurfaceState             `json:"target_state,omitempty"`
+	ResultState      *SurfaceState             `json:"result_state,omitempty"`
+	AlwaysOnTop      *bool                     `json:"always_on_top,omitempty"`
 	Queued           bool                      `json:"queued,omitempty"`
 	Actor            string                    `json:"actor,omitempty"`
 	ActorUID         *uint32                   `json:"actor_uid,omitempty"`
@@ -476,8 +495,15 @@ type SurfaceActionResponse struct {
 }
 
 type SetViewPropertyRequest struct {
-	SurfaceID  string         `json:"surface_id"`
-	Properties map[string]any `json:"properties"`
+	SurfaceID     string         `json:"surface_id"`
+	Properties    map[string]any `json:"properties"`
+	WaitTimeoutMs int            `json:"wait_timeout_ms,omitempty"`
+}
+
+type AlwaysOnTopRequest struct {
+	SurfaceID     string `json:"surface_id"`
+	Enabled       bool   `json:"enabled"`
+	WaitTimeoutMs int    `json:"wait_timeout_ms,omitempty"`
 }
 
 type InjectInputRequest struct {

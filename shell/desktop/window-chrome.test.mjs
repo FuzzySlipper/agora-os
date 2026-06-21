@@ -71,6 +71,7 @@ const focusCalls = [];
 const closeCalls = [];
 const moveCalls = [];
 const tileCalls = [];
+const alwaysOnTopCalls = [];
 const widget = new WindowChromeWidget({
   onActionResult: (result) => results.push(result),
   focusSurface: async (surfaceId) => {
@@ -89,6 +90,10 @@ const widget = new WindowChromeWidget({
     tileCalls.push({ surfaceId, region });
     const geometry = { x: 960, y: 0, width: 960, height: 540 };
     return { action: "surface.tile", surface_id: surfaceId, decision: "accepted", target_geometry: geometry, result_geometry: geometry, surface: { surface: { id: surfaceId, title: "ASHA Studio", geometry } } };
+  },
+  alwaysOnTopSurface: async (surfaceId, enabled) => {
+    alwaysOnTopCalls.push({ surfaceId, enabled });
+    return { action: "surface.always_on_top", surface_id: surfaceId, decision: "accepted", target_state: { always_on_top: enabled }, result_state: { always_on_top: enabled }, always_on_top: enabled, surface: { surface: { id: surfaceId, title: "ASHA Studio", always_on_top: enabled } } };
   },
 });
 widget.mount(new FakeElement("section"));
@@ -124,6 +129,12 @@ await Promise.resolve();
 assert.deepEqual(tileCalls, [{ surfaceId: "view-1", region: { rows: 2, cols: 2, row: 0, col: 1 } }]);
 assert.equal(results.at(-1).action, "surface.tile");
 assert.equal(results.at(-1).result_geometry.x, 960);
+
+widget.querySelectorAll("[data-action=\"surface.always_on_top\"]")[0].click();
+await Promise.resolve();
+assert.deepEqual(alwaysOnTopCalls, [{ surfaceId: "view-1", enabled: true }]);
+assert.equal(results.at(-1).action, "surface.always_on_top");
+assert.equal(results.at(-1).always_on_top, true);
 
 widget.querySelectorAll("[data-action=\"surface.close\"]")[0].click();
 await Promise.resolve();

@@ -616,6 +616,7 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
 
     struct pending_property_request_t
     {
+        std::string request_id;
         std::string surface_id;
         std::optional<bool> always_on_top;
     };
@@ -1101,8 +1102,12 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         notify_close_wake();
     }
 
-    void queue_property_request(std::string surface_id, std::optional<bool> always_on_top)
+    void queue_property_request(std::string request_id, std::string surface_id, std::optional<bool> always_on_top)
     {
+        if (request_id.empty())
+        {
+            request_id = surface_id;
+        }
         if (surface_id.empty() || !always_on_top.has_value())
         {
             return;
@@ -1110,7 +1115,7 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
 
         {
             std::lock_guard lock(state_mutex_);
-            pending_property_requests_.push_back({std::move(surface_id), always_on_top});
+            pending_property_requests_.push_back({std::move(request_id), std::move(surface_id), always_on_top});
         }
 
         notify_close_wake();
@@ -1337,19 +1342,53 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         send_place_response(request, true, "");
     }
 
-    void set_view_always_on_top(wayfire_view view, bool above)
+    bool set_view_always_on_top(std::string_view surface_id, wayfire_view view, bool above)
     {
         if (!view)
         {
-            return;
+            return false;
         }
         auto *output = view->get_output();
         if (!output)
         {
-            return;
+            return false;
         }
+        {
+            std::lock_guard lock(state_mutex_);
+            auto existing = always_on_top_by_surface_.find(std::string{surface_id});
+            if ((existing != always_on_top_by_surface_.end()) && (existing->second == above))
+            {
+                return true;
+            }
+        }
+        bool observed = false;
+        wf::signal::connection_t<wf::wm_actions_above_changed_signal> on_above_changed =
+            [&] (wf::wm_actions_above_changed_signal *ev)
+        {
+            if (ev && (ev->view == view))
+            {
+                observed = true;
+            }
+        };
+        output->connect(&on_above_changed);
         wf::wm_actions_set_above_state_signal signal{view, above};
         output->emit(&signal);
+        on_above_changed.disconnect();
+        if (observed)
+        {
+            std::lock_guard lock(state_mutex_);
+            always_on_top_by_surface_[std::string{surface_id}] = above;
+        }
+        return observed;
+    }
+
+    void send_property_response(const pending_property_request_t& request, bool ok, std::string_view error)
+    {
+        if (!bridge_)
+        {
+            return;
+        }
+        bridge_->send_line(agora::protocol::encode_property_response(request.request_id, request.surface_id, ok, error));
     }
 
     void send_focus_response(const pending_focus_request_t& request, bool ok, std::string_view error)
@@ -1394,13 +1433,22 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         if ((it == views.end()) || !it->second)
         {
             LOGW("agora-bridge: property target not found: ", request.surface_id);
+            send_property_response(request, false, "surface not found");
             return;
         }
         if (request.always_on_top.has_value())
         {
-            set_view_always_on_top(it->second, *request.always_on_top);
+            if (!set_view_always_on_top(request.surface_id, it->second, *request.always_on_top))
+            {
+                send_property_response(request, false, "always_on_top state change was not observed");
+                return;
+            }
             track_view(it->second);
             emit_surface_event("focused", it->second);
+            send_property_response(request, true, "");
+        } else
+        {
+            send_property_response(request, false, "no supported property requested");
         }
     }
 
@@ -1523,6 +1571,17 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         }
     }
 
+    agora::protocol::surface_snapshot_t snapshot_view_with_state(wayfire_view view)
+    {
+        auto snapshot = snapshot_view(view);
+        auto state_it = always_on_top_by_surface_.find(snapshot.id);
+        if (state_it != always_on_top_by_surface_.end())
+        {
+            snapshot.always_on_top = state_it->second;
+        }
+        return snapshot;
+    }
+
     void track_view(wayfire_view view)
     {
         if (!view)
@@ -1530,8 +1589,8 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
             return;
         }
 
-        auto snapshot = snapshot_view(view);
         std::lock_guard lock(state_mutex_);
+        auto snapshot = snapshot_view_with_state(view);
         views_by_surface_[snapshot.id] = view;
     }
 
@@ -1542,9 +1601,10 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
             return;
         }
 
-        auto snapshot = snapshot_view(view);
         std::lock_guard lock(state_mutex_);
+        auto snapshot = snapshot_view_with_state(view);
         views_by_surface_.erase(snapshot.id);
+        always_on_top_by_surface_.erase(snapshot.id);
     }
 
     void handle_bridge_message(const agora::protocol::bridge_message_t& message)
@@ -1589,7 +1649,7 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
             queue_focus_surface(message.request_id, message.surface_id);
             break;
           case agora::protocol::bridge_message_kind::set_view_property:
-            queue_property_request(message.surface_id, message.always_on_top);
+            queue_property_request(message.request_id, message.surface_id, message.always_on_top);
             break;
           case agora::protocol::bridge_message_kind::invalid:
             break;
@@ -1603,7 +1663,11 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
             return;
         }
 
-        auto snapshot = snapshot_view(view);
+        agora::protocol::surface_snapshot_t snapshot;
+        {
+            std::lock_guard lock(state_mutex_);
+            snapshot = snapshot_view_with_state(view);
+        }
         auto identity = extract_client_identity(view);
         bridge_->send_line(agora::protocol::encode_surface_event(event_name, snapshot, identity, device));
     }
@@ -1633,6 +1697,7 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
     std::unique_ptr<bridge_client_t> bridge_;
     std::mutex state_mutex_;
     std::unordered_map<std::string, wayfire_view> views_by_surface_;
+    std::unordered_map<std::string, bool> always_on_top_by_surface_;
     std::unordered_map<wlr_layer_surface_v1*, std::unique_ptr<layer_surface_record_t>> layer_surfaces_;
     wl_event_source *layer_scan_source_ = nullptr;
     std::vector<std::string> pending_close_surfaces_;

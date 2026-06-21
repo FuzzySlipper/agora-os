@@ -147,6 +147,18 @@ func TestBuildFocusSurfaceRequestRequiresSurface(t *testing.T) {
 	}
 }
 
+func TestBuildAlwaysOnTopRequest(t *testing.T) {
+	t.Parallel()
+
+	req, err := buildAlwaysOnTopRequest([]string{"--surface", "view-42", "--state", "false", "--timeout-ms", "1500"})
+	if err != nil {
+		t.Fatalf("buildAlwaysOnTopRequest returned error: %v", err)
+	}
+	if req.SurfaceID != "view-42" || req.Enabled || req.WaitTimeoutMs != 1500 {
+		t.Fatalf("request = %+v, want surface view-42 enabled false timeout 1500", req)
+	}
+}
+
 func TestDefaultShellConfigDirUsesSharedDirWhenPresent(t *testing.T) {
 	sharedDir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "xdg"))

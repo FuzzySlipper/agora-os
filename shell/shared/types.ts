@@ -15,9 +15,14 @@ export interface SurfaceEvent {
     disabled?: boolean;
     status?: string;
     action_error?: string;
+    always_on_top?: boolean;
 }
 
 export type SurfaceActionDecision = "accepted" | "denied" | string;
+
+export interface SurfaceState {
+    always_on_top?: boolean;
+}
 
 export interface SurfaceActionResponse {
     action: string;
@@ -29,6 +34,9 @@ export interface SurfaceActionResponse {
     closed_surface_id?: string;
     target_geometry?: SurfaceGeometry;
     result_geometry?: SurfaceGeometry;
+    target_state?: SurfaceState;
+    result_state?: SurfaceState;
+    always_on_top?: boolean;
     queued?: boolean;
     actor?: string;
     actor_uid?: number;
