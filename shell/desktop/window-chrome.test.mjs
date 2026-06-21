@@ -70,6 +70,7 @@ const results = [];
 const focusCalls = [];
 const closeCalls = [];
 const moveCalls = [];
+const tileCalls = [];
 const widget = new WindowChromeWidget({
   onActionResult: (result) => results.push(result),
   focusSurface: async (surfaceId) => {
@@ -83,6 +84,11 @@ const widget = new WindowChromeWidget({
   moveSurface: async (surfaceId, geometry) => {
     moveCalls.push({ surfaceId, geometry });
     return { action: "surface.move", surface_id: surfaceId, decision: "accepted", target_geometry: geometry, result_geometry: geometry, surface: { surface: { id: surfaceId, title: "ASHA Studio", geometry } } };
+  },
+  tileSurface: async (surfaceId, region) => {
+    tileCalls.push({ surfaceId, region });
+    const geometry = { x: 960, y: 0, width: 960, height: 540 };
+    return { action: "surface.tile", surface_id: surfaceId, decision: "accepted", target_geometry: geometry, result_geometry: geometry, surface: { surface: { id: surfaceId, title: "ASHA Studio", geometry } } };
   },
 });
 widget.mount(new FakeElement("section"));
@@ -111,6 +117,13 @@ await Promise.resolve();
 assert.deepEqual(moveCalls, [{ surfaceId: "view-1", geometry: { x: 33, y: 2, width: 800, height: 600 } }]);
 assert.equal(results.at(-1).action, "surface.move");
 assert.equal(results.at(-1).result_geometry.x, 33);
+
+assert.equal(widget.querySelectorAll("[data-action=\"surface.resize\"]").length, 0, "resize controls are not visible in the grid/tile slice");
+widget.querySelectorAll("[data-action=\"surface.tile\"]").find((button) => button.dataset.row === "0" && button.dataset.col === "1").click();
+await Promise.resolve();
+assert.deepEqual(tileCalls, [{ surfaceId: "view-1", region: { rows: 2, cols: 2, row: 0, col: 1 } }]);
+assert.equal(results.at(-1).action, "surface.tile");
+assert.equal(results.at(-1).result_geometry.x, 960);
 
 widget.querySelectorAll("[data-action=\"surface.close\"]")[0].click();
 await Promise.resolve();

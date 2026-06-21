@@ -173,6 +173,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleSurfaceFocus(w, r)
 	case "/surface/move":
 		s.handleSurfaceMove(w, r)
+	case "/surface/resize":
+		s.handleSurfaceResize(w, r)
+	case "/surface/tile":
+		s.handleSurfaceTile(w, r)
 	case "/surface/close":
 		s.handleSurfaceClose(w, r)
 	case "/escalations/decide":
@@ -366,6 +370,112 @@ func (s *Server) handleSurfaceMove(w http.ResponseWriter, r *http.Request) {
 			Action: "surface.move", SurfaceID: req.SurfaceID, Decision: schema.SurfaceActionDenied,
 			Reason: err.Error(), Error: err.Error(), Actor: "human-shell", TargetGeometry: &target,
 		}
+		uid := uint32(identity.UID)
+		result.ActorUID = &uid
+		if resp != nil {
+			result.Reason = resp.ErrorMessage
+			result.Error = resp.ErrorMessage
+			var decoded schema.SurfaceActionResponse
+			if decodeErr := json.Unmarshal(resp.Body, &decoded); decodeErr == nil && decoded.Action != "" {
+				result = decoded
+				if result.Actor == "" {
+					result.Actor = "human-shell"
+				}
+				if result.ActorUID == nil {
+					result.ActorUID = &uid
+				}
+			}
+		}
+		status := http.StatusBadGateway
+		if resp != nil && (resp.ErrorClass == schema.ErrorSurfaceNotFound || resp.ErrorClass == schema.ErrorSurfaceStale || resp.ErrorClass == schema.ErrorBackendUnsupported || resp.ErrorClass == schema.ErrorInvalidCoordinates) {
+			status = http.StatusConflict
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_ = json.NewEncoder(w).Encode(surfaceActionHTTPError{ErrorClass: respErrorClass(resp), Result: result})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(body)
+}
+
+func (s *Server) handleSurfaceResize(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	identity, _, err := s.authenticateHuman(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	var req schema.ResizeSurfaceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("decode resize request: %v", err), http.StatusBadRequest)
+		return
+	}
+	if req.SurfaceID == "" {
+		http.Error(w, "surface_id is required", http.StatusBadRequest)
+		return
+	}
+	body, resp, err := callResponse(s.compositorSocket, schema.MethodResizeSurface, req)
+	if err != nil {
+		target := schema.SurfaceGeometry{Width: req.Width, Height: req.Height}
+		result := schema.SurfaceActionResponse{
+			Action: "surface.resize", SurfaceID: req.SurfaceID, Decision: schema.SurfaceActionDenied,
+			Reason: err.Error(), Error: err.Error(), Actor: "human-shell", TargetGeometry: &target,
+		}
+		uid := uint32(identity.UID)
+		result.ActorUID = &uid
+		if resp != nil {
+			result.Reason = resp.ErrorMessage
+			result.Error = resp.ErrorMessage
+			var decoded schema.SurfaceActionResponse
+			if decodeErr := json.Unmarshal(resp.Body, &decoded); decodeErr == nil && decoded.Action != "" {
+				result = decoded
+				if result.Actor == "" {
+					result.Actor = "human-shell"
+				}
+				if result.ActorUID == nil {
+					result.ActorUID = &uid
+				}
+			}
+		}
+		status := http.StatusBadGateway
+		if resp != nil && (resp.ErrorClass == schema.ErrorSurfaceNotFound || resp.ErrorClass == schema.ErrorSurfaceStale || resp.ErrorClass == schema.ErrorBackendUnsupported || resp.ErrorClass == schema.ErrorInvalidCoordinates) {
+			status = http.StatusConflict
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_ = json.NewEncoder(w).Encode(surfaceActionHTTPError{ErrorClass: respErrorClass(resp), Result: result})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(body)
+}
+
+func (s *Server) handleSurfaceTile(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	identity, _, err := s.authenticateHuman(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	var req schema.TileSurfaceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("decode tile request: %v", err), http.StatusBadRequest)
+		return
+	}
+	if req.SurfaceID == "" {
+		http.Error(w, "surface_id is required", http.StatusBadRequest)
+		return
+	}
+	body, resp, err := callResponse(s.compositorSocket, schema.MethodTileSurface, req)
+	if err != nil {
+		result := schema.SurfaceActionResponse{Action: "surface.tile", SurfaceID: req.SurfaceID, Decision: schema.SurfaceActionDenied, Reason: err.Error(), Error: err.Error(), Actor: "human-shell"}
 		uid := uint32(identity.UID)
 		result.ActorUID = &uid
 		if resp != nil {

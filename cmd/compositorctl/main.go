@@ -565,6 +565,39 @@ func buildMoveSurfaceRequest(args []string) (schema.MoveSurfaceRequest, error) {
 	return schema.MoveSurfaceRequest{SurfaceID: *surfaceID, X: *x, Y: *y, Width: *width, Height: *height, WaitTimeoutMs: *timeout}, nil
 }
 
+func buildResizeSurfaceRequest(args []string) (schema.ResizeSurfaceRequest, error) {
+	fs := flag.NewFlagSet("surface resize", flag.ExitOnError)
+	surfaceID := fs.String("surface", "", "surface id to resize")
+	width := fs.Int("width", 0, "target width (required)")
+	height := fs.Int("height", 0, "target height (required)")
+	timeout := fs.Int("timeout-ms", 2000, "resize acknowledgement timeout in milliseconds")
+	fs.Parse(args)
+	if *surfaceID == "" {
+		return schema.ResizeSurfaceRequest{}, fmt.Errorf("--surface is required")
+	}
+	if *width <= 0 || *height <= 0 {
+		return schema.ResizeSurfaceRequest{}, fmt.Errorf("--width and --height are required and must be positive")
+	}
+	return schema.ResizeSurfaceRequest{SurfaceID: *surfaceID, Width: *width, Height: *height, WaitTimeoutMs: *timeout}, nil
+}
+
+func buildTileSurfaceRequest(args []string) (schema.TileSurfaceRequest, error) {
+	fs := flag.NewFlagSet("surface tile", flag.ExitOnError)
+	surfaceID := fs.String("surface", "", "surface id to tile")
+	rows := fs.Int("rows", 2, "grid row count (currently 2)")
+	cols := fs.Int("cols", 2, "grid column count (currently 2)")
+	row := fs.Int("row", 0, "zero-based grid row")
+	col := fs.Int("col", 0, "zero-based grid column")
+	rowSpan := fs.Int("row-span", 1, "row span")
+	colSpan := fs.Int("col-span", 1, "column span")
+	timeout := fs.Int("timeout-ms", 4000, "tile acknowledgement/readback timeout in milliseconds")
+	fs.Parse(args)
+	if *surfaceID == "" {
+		return schema.TileSurfaceRequest{}, fmt.Errorf("--surface is required")
+	}
+	return schema.TileSurfaceRequest{SurfaceID: *surfaceID, Rows: *rows, Cols: *cols, Row: *row, Col: *col, RowSpan: *rowSpan, ColSpan: *colSpan, WaitTimeoutMs: *timeout}, nil
+}
+
 func buildCloseSurfaceRequest(args []string) (schema.CloseSurfaceRequest, error) {
 	fs := flag.NewFlagSet("surface close", flag.ExitOnError)
 	surfaceID := fs.String("surface", "", "surface id to close")
@@ -578,7 +611,7 @@ func buildCloseSurfaceRequest(args []string) (schema.CloseSurfaceRequest, error)
 
 func cmdSurface(args []string, pretty bool) error {
 	if len(args) == 0 {
-		return fmt.Errorf("surface subcommand is required: focus, move, close (raise/minimize/maximize are deferred until compositor support is explicit)")
+		return fmt.Errorf("surface subcommand is required: focus, move, tile, resize, close (raise/minimize/maximize are deferred until compositor support is explicit)")
 	}
 	switch args[0] {
 	case "focus":
@@ -593,6 +626,18 @@ func cmdSurface(args []string, pretty bool) error {
 			return err
 		}
 		return callAndPrint(schema.MethodMoveSurface, req, pretty)
+	case "resize":
+		req, err := buildResizeSurfaceRequest(args[1:])
+		if err != nil {
+			return err
+		}
+		return callAndPrint(schema.MethodResizeSurface, req, pretty)
+	case "tile":
+		req, err := buildTileSurfaceRequest(args[1:])
+		if err != nil {
+			return err
+		}
+		return callAndPrint(schema.MethodTileSurface, req, pretty)
 	case "close":
 		req, err := buildCloseSurfaceRequest(args[1:])
 		if err != nil {

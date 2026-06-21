@@ -825,6 +825,12 @@ func TestDispatchMoveSurfaceRoutesToPluginAndPublishesAction(t *testing.T) {
 	if msg.Type != string(schema.PluginMessagePlaceSurface) || msg.SurfaceID != "view-move" || msg.Geometry.X != 120 || msg.Geometry.Y != 160 || msg.Geometry.Width != 640 || msg.Geometry.Height != 480 {
 		t.Fatalf("unexpected place_surface message: %+v", msg)
 	}
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{
+		Type:    schema.PluginMessageSurfaceEvent,
+		Event:   schema.SurfaceEventFocused,
+		Surface: schema.CompositorSurface{ID: "view-move", WayfireViewID: 45, Visible: boolPtr(true), Geometry: &schema.SurfaceGeometry{X: 121, Y: 161, Width: 640, Height: 480}},
+		Client:  schema.CompositorClientIdentity{UID: 60001},
+	})
 	if err := json.NewEncoder(client).Encode(schema.CompositorPlacePluginResponse{Type: string(schema.PluginMessagePlaceResponse), RequestID: msg.RequestID, SurfaceID: "view-move", OK: true}); err != nil {
 		t.Fatalf("encode place response: %v", err)
 	}
@@ -840,7 +846,7 @@ func TestDispatchMoveSurfaceRoutesToPluginAndPublishesAction(t *testing.T) {
 		if err := json.Unmarshal(resp.Body, &action); err != nil {
 			t.Fatalf("unmarshal response: %v", err)
 		}
-		if action.Action != "surface.move" || action.Decision != schema.SurfaceActionAccepted || action.TargetGeometry == nil || action.TargetGeometry.X != 120 || action.ResultGeometry == nil || action.ResultGeometry.Y != 160 {
+		if action.Action != "surface.move" || action.Decision != schema.SurfaceActionAccepted || action.TargetGeometry == nil || action.TargetGeometry.X != 120 || action.ResultGeometry == nil || action.ResultGeometry.Y != 161 {
 			t.Fatalf("unexpected action response: %+v", action)
 		}
 	case <-time.After(700 * time.Millisecond):
@@ -884,6 +890,243 @@ func TestDispatchMoveSurfaceRejectsLayerShell(t *testing.T) {
 	}
 	if action.TargetGeometry == nil || action.TargetGeometry.X != 10 || action.TargetGeometry.Y != 20 || action.ResultGeometry == nil || action.ResultGeometry.Width != 100 {
 		t.Fatalf("move denial missing target/result geometry: %+v", action)
+	}
+}
+
+func TestDispatchTileSurfaceRoutesToPluginAndPublishesAction(t *testing.T) {
+	pub := &fakePublisher{}
+	bridge, err := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	server, client, cleanup := unixSocketPair(t)
+	defer cleanup()
+
+	go bridge.HandlePluginConn(server)
+	dec := json.NewDecoder(client)
+	readInitialSync(t, dec)
+
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{
+		Type:    schema.PluginMessageSurfaceEvent,
+		Event:   schema.SurfaceEventMapped,
+		Surface: schema.CompositorSurface{ID: "view-tile", WayfireViewID: 47, Visible: boolPtr(true), Geometry: &schema.SurfaceGeometry{X: 100, Y: 100, Width: 800, Height: 600}},
+		Client:  schema.CompositorClientIdentity{UID: 60001},
+	})
+	var discard schema.CompositorPolicyUpsert
+	_ = dec.Decode(&discard)
+
+	body, err := json.Marshal(schema.TileSurfaceRequest{SurfaceID: "view-tile", Rows: 2, Cols: 2, Row: 0, Col: 0, WaitTimeoutMs: 500})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	respCh := make(chan schema.Response, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		resp, err := bridge.dispatch(60002, schema.Request{Method: schema.MethodTileSurface, Body: body})
+		if err != nil {
+			errCh <- err
+			return
+		}
+		respCh <- resp
+	}()
+
+	var msg schema.CompositorPlaceSurface
+	if err := dec.Decode(&msg); err != nil {
+		t.Fatalf("decode place_surface: %v", err)
+	}
+	if msg.Type != string(schema.PluginMessagePlaceSurface) || msg.SurfaceID != "view-tile" || msg.Geometry.X != 80 || msg.Geometry.Y != 0 || msg.Geometry.Width != 800 || msg.Geometry.Height != 540 {
+		t.Fatalf("unexpected place_surface message: %+v", msg)
+	}
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{
+		Type:    schema.PluginMessageSurfaceEvent,
+		Event:   schema.SurfaceEventFocused,
+		Surface: schema.CompositorSurface{ID: "view-tile", WayfireViewID: 47, Visible: boolPtr(true), Geometry: &schema.SurfaceGeometry{X: 80, Y: 0, Width: 800, Height: 540}},
+		Client:  schema.CompositorClientIdentity{UID: 60001},
+	})
+	if err := json.NewEncoder(client).Encode(schema.CompositorPlacePluginResponse{Type: string(schema.PluginMessagePlaceResponse), RequestID: msg.RequestID, SurfaceID: "view-tile", OK: true}); err != nil {
+		t.Fatalf("encode tile response: %v", err)
+	}
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("dispatch returned error: %v", err)
+	case resp := <-respCh:
+		if !resp.OK {
+			t.Fatalf("dispatch response not OK: %+v", resp)
+		}
+		var action schema.SurfaceActionResponse
+		if err := json.Unmarshal(resp.Body, &action); err != nil {
+			t.Fatalf("unmarshal response: %v", err)
+		}
+		if action.Action != "surface.tile" || action.Decision != schema.SurfaceActionAccepted || action.TargetGeometry == nil || action.TargetGeometry.X != 80 || action.ResultGeometry == nil || action.ResultGeometry.Width != 800 {
+			t.Fatalf("unexpected action response: %+v", action)
+		}
+	case <-time.After(700 * time.Millisecond):
+		t.Fatal("timed out waiting for dispatch response")
+	}
+	if len(pub.events) == 0 || pub.events[len(pub.events)-1].topic != schema.TopicShellActionCompleted {
+		t.Fatalf("shell action completion was not published: %+v", pub.events)
+	}
+}
+
+func TestDispatchTileSurfaceRejectsInvalidRegion(t *testing.T) {
+	pub := &fakePublisher{}
+	bridge, err := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	body, err := json.Marshal(schema.TileSurfaceRequest{SurfaceID: "view-tile", Rows: 3, Cols: 3, Row: 1, Col: 1})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	if _, err := bridge.dispatch(60002, schema.Request{Method: schema.MethodTileSurface, Body: body}); err == nil {
+		t.Fatal("expected invalid tile denial")
+	} else {
+		class, _ := classifyError(err)
+		if class != schema.ErrorBackendUnsupported {
+			t.Fatalf("got error class %q (%v), want %q", class, err, schema.ErrorBackendUnsupported)
+		}
+	}
+	if len(pub.events) == 0 || pub.events[len(pub.events)-1].topic != schema.TopicShellActionDenied {
+		t.Fatalf("shell action denial was not published: %+v", pub.events)
+	}
+}
+
+func TestDispatchResizeSurfaceRoutesToPluginAndPublishesAction(t *testing.T) {
+	pub := &fakePublisher{}
+	bridge, err := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	server, client, cleanup := unixSocketPair(t)
+	defer cleanup()
+
+	go bridge.HandlePluginConn(server)
+	dec := json.NewDecoder(client)
+	readInitialSync(t, dec)
+
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{
+		Type:    schema.PluginMessageSurfaceEvent,
+		Event:   schema.SurfaceEventMapped,
+		Surface: schema.CompositorSurface{ID: "view-resize", WayfireViewID: 46, Visible: boolPtr(true), Geometry: &schema.SurfaceGeometry{X: 10, Y: 20, Width: 640, Height: 480}},
+		Client:  schema.CompositorClientIdentity{UID: 60001},
+	})
+	var discard schema.CompositorPolicyUpsert
+	_ = dec.Decode(&discard)
+
+	body, err := json.Marshal(schema.ResizeSurfaceRequest{SurfaceID: "view-resize", Width: 900, Height: 700, WaitTimeoutMs: 500})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	respCh := make(chan schema.Response, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		resp, err := bridge.dispatch(60002, schema.Request{Method: schema.MethodResizeSurface, Body: body})
+		if err != nil {
+			errCh <- err
+			return
+		}
+		respCh <- resp
+	}()
+
+	var msg schema.CompositorPlaceSurface
+	if err := dec.Decode(&msg); err != nil {
+		t.Fatalf("decode place_surface: %v", err)
+	}
+	if msg.Type != string(schema.PluginMessagePlaceSurface) || msg.SurfaceID != "view-resize" || msg.Geometry.X != 10 || msg.Geometry.Y != 20 || msg.Geometry.Width != 900 || msg.Geometry.Height != 700 {
+		t.Fatalf("unexpected place_surface message: %+v", msg)
+	}
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{
+		Type:    schema.PluginMessageSurfaceEvent,
+		Event:   schema.SurfaceEventFocused,
+		Surface: schema.CompositorSurface{ID: "view-resize", WayfireViewID: 46, Visible: boolPtr(true), Geometry: &schema.SurfaceGeometry{X: 10, Y: 20, Width: 901, Height: 701}},
+		Client:  schema.CompositorClientIdentity{UID: 60001},
+	})
+	if err := json.NewEncoder(client).Encode(schema.CompositorPlacePluginResponse{Type: string(schema.PluginMessagePlaceResponse), RequestID: msg.RequestID, SurfaceID: "view-resize", OK: true}); err != nil {
+		t.Fatalf("encode place response: %v", err)
+	}
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("dispatch returned error: %v", err)
+	case resp := <-respCh:
+		if !resp.OK {
+			t.Fatalf("dispatch response not OK: %+v", resp)
+		}
+		var action schema.SurfaceActionResponse
+		if err := json.Unmarshal(resp.Body, &action); err != nil {
+			t.Fatalf("unmarshal response: %v", err)
+		}
+		if action.Action != "surface.resize" || action.Decision != schema.SurfaceActionAccepted || action.TargetGeometry == nil || action.TargetGeometry.Width != 900 || action.ResultGeometry == nil || action.ResultGeometry.Height != 701 {
+			t.Fatalf("unexpected action response: %+v", action)
+		}
+	case <-time.After(700 * time.Millisecond):
+		t.Fatal("timed out waiting for dispatch response")
+	}
+	if len(pub.events) == 0 || pub.events[len(pub.events)-1].topic != schema.TopicShellActionCompleted {
+		t.Fatalf("shell action completion was not published: %+v", pub.events)
+	}
+}
+
+func TestDispatchResizeSurfaceRejectsInvalidSize(t *testing.T) {
+	pub := &fakePublisher{}
+	bridge, err := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{
+		Type:    schema.PluginMessageSurfaceEvent,
+		Event:   schema.SurfaceEventMapped,
+		Surface: schema.CompositorSurface{ID: "view-small", Visible: boolPtr(true), Geometry: &schema.SurfaceGeometry{X: 3, Y: 4, Width: 640, Height: 480}},
+		Client:  schema.CompositorClientIdentity{UID: 60001},
+	})
+	body, err := json.Marshal(schema.ResizeSurfaceRequest{SurfaceID: "view-small", Width: 40, Height: 40})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	if _, err := bridge.dispatch(60002, schema.Request{Method: schema.MethodResizeSurface, Body: body}); err == nil {
+		t.Fatal("expected invalid resize denial")
+	} else {
+		class, _ := classifyError(err)
+		if class != schema.ErrorInvalidCoordinates {
+			t.Fatalf("got error class %q (%v), want %q", class, err, schema.ErrorInvalidCoordinates)
+		}
+	}
+	if len(pub.events) == 0 || pub.events[len(pub.events)-1].topic != schema.TopicShellActionDenied {
+		t.Fatalf("shell action denial was not published: %+v", pub.events)
+	}
+	action, ok := pub.events[len(pub.events)-1].body.(schema.SurfaceActionResponse)
+	if !ok {
+		t.Fatalf("denial event body type = %T", pub.events[len(pub.events)-1].body)
+	}
+	if action.Action != "surface.resize" || action.TargetGeometry == nil || action.TargetGeometry.Width != 40 || action.ResultGeometry == nil || action.ResultGeometry.Width != 640 {
+		t.Fatalf("resize denial missing target/result geometry: %+v", action)
+	}
+}
+
+func TestDispatchResizeSurfaceRejectsLayerShell(t *testing.T) {
+	pub := &fakePublisher{}
+	bridge, err := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{
+		Type:    schema.PluginMessageSurfaceEvent,
+		Event:   schema.SurfaceEventMapped,
+		Surface: schema.CompositorSurface{ID: "layer-resize", SurfaceKind: schema.SurfaceKindLayerShell, Visible: boolPtr(true), Geometry: &schema.SurfaceGeometry{X: 0, Y: 0, Width: 400, Height: 300}},
+		Client:  schema.CompositorClientIdentity{UID: 60001},
+	})
+	body, err := json.Marshal(schema.ResizeSurfaceRequest{SurfaceID: "layer-resize", Width: 500, Height: 400})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	if _, err := bridge.dispatch(60002, schema.Request{Method: schema.MethodResizeSurface, Body: body}); err == nil {
+		t.Fatal("expected layer-shell resize denial")
+	} else {
+		class, _ := classifyError(err)
+		if class != schema.ErrorBackendUnsupported {
+			t.Fatalf("got error class %q (%v), want %q", class, err, schema.ErrorBackendUnsupported)
+		}
 	}
 }
 

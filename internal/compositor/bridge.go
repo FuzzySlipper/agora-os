@@ -1162,6 +1162,52 @@ func (b *Bridge) publishSurfaceMoveDenied(actorUID uint32, req schema.MoveSurfac
 	}
 }
 
+const (
+	minSurfaceResizeWidth  = 160
+	minSurfaceResizeHeight = 120
+	maxSurfaceResizeWidth  = 10000
+	maxSurfaceResizeHeight = 10000
+)
+
+func (b *Bridge) publishSurfaceResizeDenied(actorUID uint32, req schema.ResizeSurfaceRequest, err error, current *schema.SurfaceGeometry) {
+	if b.bus == nil {
+		return
+	}
+	actor, uid := b.surfaceActionActor(actorUID)
+	_, message := classifyError(err)
+	target := schema.SurfaceGeometry{Width: req.Width, Height: req.Height}
+	if current != nil {
+		target.X = current.X
+		target.Y = current.Y
+		copy := *current
+		result := schema.SurfaceActionResponse{
+			Action: "surface.resize", SurfaceID: req.SurfaceID, Decision: schema.SurfaceActionDenied,
+			Reason: message, Error: message, Actor: actor, ActorUID: uid, TargetGeometry: &target, ResultGeometry: &copy,
+		}
+		if err := b.bus.Publish(schema.TopicShellActionDenied, result); err != nil {
+			log.Printf("publish shell action denied: %v", err)
+		}
+		return
+	}
+	result := schema.SurfaceActionResponse{
+		Action: "surface.resize", SurfaceID: req.SurfaceID, Decision: schema.SurfaceActionDenied,
+		Reason: message, Error: message, Actor: actor, ActorUID: uid, TargetGeometry: &target,
+	}
+	if err := b.bus.Publish(schema.TopicShellActionDenied, result); err != nil {
+		log.Printf("publish shell action denied: %v", err)
+	}
+}
+
+func validateResizeGeometry(width, height int) error {
+	if width < minSurfaceResizeWidth || height < minSurfaceResizeHeight {
+		return compositorError(schema.ErrorInvalidCoordinates, "resize target %dx%d is below minimum %dx%d", width, height, minSurfaceResizeWidth, minSurfaceResizeHeight)
+	}
+	if width > maxSurfaceResizeWidth || height > maxSurfaceResizeHeight {
+		return compositorError(schema.ErrorInvalidCoordinates, "resize target %dx%d exceeds maximum %dx%d", width, height, maxSurfaceResizeWidth, maxSurfaceResizeHeight)
+	}
+	return nil
+}
+
 func (b *Bridge) FocusSurface(actorUID uint32, req schema.FocusSurfaceRequest) (schema.SurfaceActionResponse, error) {
 	if req.SurfaceID == "" {
 		err := fmt.Errorf("surface_id is required")
@@ -1315,30 +1361,27 @@ func (b *Bridge) MoveSurfaceAction(actorUID uint32, req schema.MoveSurfaceReques
 		b.publishSurfaceMoveDenied(actorUID, req, err, tracked.Geometry)
 		return schema.SurfaceActionResponse{}, err
 	}
-
-	if err := b.placeSurface(req.SurfaceID, geom, time.Duration(req.WaitTimeoutMs)*time.Millisecond); err != nil {
+	if err := b.placeSurface(req.SurfaceID, geom, time.Duration(req.WaitTimeoutMs)*time.Millisecond, true); err != nil {
 		b.publishSurfaceMoveDenied(actorUID, req, err, tracked.Geometry)
 		return schema.SurfaceActionResponse{}, err
 	}
-	b.mu.Lock()
+	b.mu.RLock()
 	updated, ok := b.surfaces[req.SurfaceID]
 	if ok {
-		updated.Geometry = &geom
-		updated.Surface.Geometry = &geom
-		updated.UpdatedAt = time.Now()
-		b.surfaces[req.SurfaceID] = updated
 		updated = b.decorateSurfaceLocked(updated)
 	}
-	b.mu.Unlock()
+	b.mu.RUnlock()
 	if !ok {
 		err := compositorError(schema.ErrorSurfaceStale, "surface %s disappeared after move", req.SurfaceID)
 		b.publishSurfaceMoveDenied(actorUID, req, err, tracked.Geometry)
 		return schema.SurfaceActionResponse{}, err
 	}
-	resultGeom := geom
-	if updated.Geometry != nil {
-		resultGeom = *updated.Geometry
+	if updated.Geometry == nil {
+		err := compositorError(schema.ErrorFrameTimeout, "surface %s move produced no compositor geometry readback", req.SurfaceID)
+		b.publishSurfaceMoveDenied(actorUID, req, err, tracked.Geometry)
+		return schema.SurfaceActionResponse{}, err
 	}
+	resultGeom := *updated.Geometry
 	actor, uid := b.surfaceActionActor(actorUID)
 	result := schema.SurfaceActionResponse{
 		Action: "surface.move", SurfaceID: req.SurfaceID, Decision: schema.SurfaceActionAccepted,
@@ -1351,6 +1394,227 @@ func (b *Bridge) MoveSurfaceAction(actorUID uint32, req schema.MoveSurfaceReques
 		}
 	}
 	return result, nil
+}
+
+func (b *Bridge) ResizeSurfaceAction(actorUID uint32, req schema.ResizeSurfaceRequest) (schema.SurfaceActionResponse, error) {
+	if req.SurfaceID == "" {
+		err := fmt.Errorf("surface_id is required")
+		b.publishSurfaceResizeDenied(actorUID, req, err, nil)
+		return schema.SurfaceActionResponse{}, err
+	}
+	b.mu.RLock()
+	tracked, ok := b.surfaces[req.SurfaceID]
+	b.mu.RUnlock()
+	if !ok {
+		b.mu.RLock()
+		_, stale := b.staleSurfaces[req.SurfaceID]
+		b.mu.RUnlock()
+		if stale {
+			err := compositorError(schema.ErrorSurfaceStale, "surface %s is unmapped/stale", req.SurfaceID)
+			b.publishSurfaceResizeDenied(actorUID, req, err, nil)
+			return schema.SurfaceActionResponse{}, err
+		}
+		err := compositorError(schema.ErrorSurfaceNotFound, "surface %s not found", req.SurfaceID)
+		b.publishSurfaceResizeDenied(actorUID, req, err, nil)
+		return schema.SurfaceActionResponse{}, err
+	}
+	if tracked.Surface.SurfaceKind == schema.SurfaceKindLayerShell {
+		err := compositorError(schema.ErrorBackendUnsupported, "surface %s is a layer-shell surface and cannot be resized as a work surface", req.SurfaceID)
+		b.publishSurfaceResizeDenied(actorUID, req, err, tracked.Geometry)
+		return schema.SurfaceActionResponse{}, err
+	}
+	if !tracked.Visible {
+		err := compositorError(schema.ErrorSurfaceStale, "surface %s is not visible", req.SurfaceID)
+		b.publishSurfaceResizeDenied(actorUID, req, err, tracked.Geometry)
+		return schema.SurfaceActionResponse{}, err
+	}
+	if err := validateResizeGeometry(req.Width, req.Height); err != nil {
+		b.publishSurfaceResizeDenied(actorUID, req, err, tracked.Geometry)
+		return schema.SurfaceActionResponse{}, err
+	}
+	if tracked.Geometry == nil {
+		err := compositorError(schema.ErrorInvalidCoordinates, "surface %s has no known geometry for resize", req.SurfaceID)
+		b.publishSurfaceResizeDenied(actorUID, req, err, nil)
+		return schema.SurfaceActionResponse{}, err
+	}
+	geom := schema.SurfaceGeometry{X: tracked.Geometry.X, Y: tracked.Geometry.Y, Width: req.Width, Height: req.Height}
+
+	if err := b.placeSurface(req.SurfaceID, geom, time.Duration(req.WaitTimeoutMs)*time.Millisecond, true); err != nil {
+		b.publishSurfaceResizeDenied(actorUID, req, err, tracked.Geometry)
+		return schema.SurfaceActionResponse{}, err
+	}
+	b.mu.RLock()
+	updated, ok := b.surfaces[req.SurfaceID]
+	if ok {
+		updated = b.decorateSurfaceLocked(updated)
+	}
+	b.mu.RUnlock()
+	if !ok {
+		err := compositorError(schema.ErrorSurfaceStale, "surface %s disappeared after resize", req.SurfaceID)
+		b.publishSurfaceResizeDenied(actorUID, req, err, tracked.Geometry)
+		return schema.SurfaceActionResponse{}, err
+	}
+	if updated.Geometry == nil {
+		err := compositorError(schema.ErrorFrameTimeout, "surface %s resize produced no compositor geometry readback", req.SurfaceID)
+		b.publishSurfaceResizeDenied(actorUID, req, err, tracked.Geometry)
+		return schema.SurfaceActionResponse{}, err
+	}
+	resultGeom := *updated.Geometry
+	actor, uid := b.surfaceActionActor(actorUID)
+	result := schema.SurfaceActionResponse{
+		Action: "surface.resize", SurfaceID: req.SurfaceID, Decision: schema.SurfaceActionAccepted,
+		Reason: "resized via compositor plugin", Actor: actor, ActorUID: uid,
+		TargetGeometry: &geom, ResultGeometry: &resultGeom, Surface: &updated,
+	}
+	if b.bus != nil {
+		if err := b.bus.Publish(schema.TopicShellActionCompleted, result); err != nil {
+			log.Printf("publish shell action completed: %v", err)
+		}
+	}
+	return result, nil
+}
+
+func normalizeTileRequest(req schema.TileSurfaceRequest) (schema.TileSurfaceRequest, error) {
+	if req.SurfaceID == "" {
+		return req, fmt.Errorf("surface_id is required")
+	}
+	if req.Rows == 0 {
+		req.Rows = 2
+	}
+	if req.Cols == 0 {
+		req.Cols = 2
+	}
+	if req.RowSpan == 0 {
+		req.RowSpan = 1
+	}
+	if req.ColSpan == 0 {
+		req.ColSpan = 1
+	}
+	if req.Rows != 2 || req.Cols != 2 {
+		return req, compositorError(schema.ErrorBackendUnsupported, "surface.tile currently supports the 2x2 grid only")
+	}
+	if req.Row < 0 || req.Col < 0 || req.RowSpan <= 0 || req.ColSpan <= 0 || req.Row+req.RowSpan > req.Rows || req.Col+req.ColSpan > req.Cols {
+		return req, compositorError(schema.ErrorInvalidCoordinates, "invalid tile region row=%d col=%d row_span=%d col_span=%d for %dx%d grid", req.Row, req.Col, req.RowSpan, req.ColSpan, req.Rows, req.Cols)
+	}
+	return req, nil
+}
+
+func (b *Bridge) tileCellGeometry(req schema.TileSurfaceRequest) schema.SurfaceGeometry {
+	b.mu.RLock()
+	physicalW, physicalH := b.physicalBoundsLocked()
+	b.mu.RUnlock()
+	cellW, cellH := physicalW/req.Cols, physicalH/req.Rows
+	if cellW <= 0 {
+		cellW = 960
+	}
+	if cellH <= 0 {
+		cellH = 540
+	}
+	return schema.SurfaceGeometry{X: req.Col * cellW, Y: req.Row * cellH, Width: req.ColSpan * cellW, Height: req.RowSpan * cellH}
+}
+
+func centeredTileGeometry(cell schema.SurfaceGeometry, current *schema.SurfaceGeometry) schema.SurfaceGeometry {
+	if current == nil || current.Width <= 0 || current.Height <= 0 {
+		return cell
+	}
+	width, height := current.Width, current.Height
+	if width > cell.Width {
+		width = cell.Width
+	}
+	if height > cell.Height {
+		height = cell.Height
+	}
+	return schema.SurfaceGeometry{X: cell.X + (cell.Width-width)/2, Y: cell.Y + (cell.Height-height)/2, Width: width, Height: height}
+}
+
+func (b *Bridge) publishSurfaceTileDenied(actorUID uint32, req schema.TileSurfaceRequest, target schema.SurfaceGeometry, err error, current *schema.SurfaceGeometry) {
+	if b.bus == nil {
+		return
+	}
+	actor, uid := b.surfaceActionActor(actorUID)
+	_, message := classifyError(err)
+	result := schema.SurfaceActionResponse{Action: "surface.tile", SurfaceID: req.SurfaceID, Decision: schema.SurfaceActionDenied, Reason: message, Error: message, Actor: actor, ActorUID: uid, TargetGeometry: &target}
+	if current != nil {
+		copy := *current
+		result.ResultGeometry = &copy
+	}
+	if err := b.bus.Publish(schema.TopicShellActionDenied, result); err != nil {
+		log.Printf("publish shell action denied: %v", err)
+	}
+}
+
+func (b *Bridge) TileSurfaceAction(actorUID uint32, req schema.TileSurfaceRequest) (schema.SurfaceActionResponse, error) {
+	normalized, err := normalizeTileRequest(req)
+	if err != nil {
+		target := schema.SurfaceGeometry{}
+		if normalized.Rows > 0 && normalized.Cols > 0 {
+			target = b.tileCellGeometry(normalized)
+		}
+		b.publishSurfaceTileDenied(actorUID, normalized, target, err, nil)
+		return schema.SurfaceActionResponse{}, err
+	}
+	req = normalized
+	cell := b.tileCellGeometry(req)
+	b.mu.RLock()
+	tracked, ok := b.surfaces[req.SurfaceID]
+	b.mu.RUnlock()
+	target := centeredTileGeometry(cell, tracked.Geometry)
+	if !ok {
+		b.mu.RLock()
+		_, stale := b.staleSurfaces[req.SurfaceID]
+		b.mu.RUnlock()
+		if stale {
+			err := compositorError(schema.ErrorSurfaceStale, "surface %s is unmapped/stale", req.SurfaceID)
+			b.publishSurfaceTileDenied(actorUID, req, target, err, nil)
+			return schema.SurfaceActionResponse{}, err
+		}
+		err := compositorError(schema.ErrorSurfaceNotFound, "surface %s not found", req.SurfaceID)
+		b.publishSurfaceTileDenied(actorUID, req, target, err, nil)
+		return schema.SurfaceActionResponse{}, err
+	}
+	if tracked.Surface.SurfaceKind == schema.SurfaceKindLayerShell {
+		err := compositorError(schema.ErrorBackendUnsupported, "surface %s is a layer-shell surface and cannot be tiled as a work surface", req.SurfaceID)
+		b.publishSurfaceTileDenied(actorUID, req, target, err, tracked.Geometry)
+		return schema.SurfaceActionResponse{}, err
+	}
+	if !tracked.Visible {
+		err := compositorError(schema.ErrorSurfaceStale, "surface %s is not visible", req.SurfaceID)
+		b.publishSurfaceTileDenied(actorUID, req, target, err, tracked.Geometry)
+		return schema.SurfaceActionResponse{}, err
+	}
+	if err := b.tileSurface(req.SurfaceID, target, time.Duration(req.WaitTimeoutMs)*time.Millisecond); err != nil {
+		b.publishSurfaceTileDenied(actorUID, req, target, err, tracked.Geometry)
+		return schema.SurfaceActionResponse{}, err
+	}
+	b.mu.RLock()
+	updated, ok := b.surfaces[req.SurfaceID]
+	if ok {
+		updated = b.decorateSurfaceLocked(updated)
+	}
+	b.mu.RUnlock()
+	if !ok {
+		err := compositorError(schema.ErrorSurfaceStale, "surface %s disappeared after tile", req.SurfaceID)
+		b.publishSurfaceTileDenied(actorUID, req, target, err, tracked.Geometry)
+		return schema.SurfaceActionResponse{}, err
+	}
+	if updated.Geometry == nil {
+		err := compositorError(schema.ErrorFrameTimeout, "surface %s tile produced no compositor geometry readback", req.SurfaceID)
+		b.publishSurfaceTileDenied(actorUID, req, target, err, tracked.Geometry)
+		return schema.SurfaceActionResponse{}, err
+	}
+	resultGeom := *updated.Geometry
+	actor, uid := b.surfaceActionActor(actorUID)
+	result := schema.SurfaceActionResponse{Action: "surface.tile", SurfaceID: req.SurfaceID, Decision: schema.SurfaceActionAccepted, Reason: "tiled via compositor window manager", Actor: actor, ActorUID: uid, TargetGeometry: &target, ResultGeometry: &resultGeom, Surface: &updated}
+	if b.bus != nil {
+		if err := b.bus.Publish(schema.TopicShellActionCompleted, result); err != nil {
+			log.Printf("publish shell action completed: %v", err)
+		}
+	}
+	return result, nil
+}
+
+func (b *Bridge) tileSurface(surfaceID string, target schema.SurfaceGeometry, timeout time.Duration) error {
+	return b.placeSurface(surfaceID, target, timeout, true)
 }
 
 func (b *Bridge) SetViewProperty(req schema.SetViewPropertyRequest) error {
@@ -1669,7 +1933,7 @@ func (b *Bridge) MoveSurfaceToOutput(surfaceID, outputName string) (schema.MoveS
 	}
 	b.mu.RUnlock()
 
-	if err := b.placeSurface(surfaceID, geom, 0); err != nil {
+	if err := b.placeSurface(surfaceID, geom, 0, true); err != nil {
 		return schema.MoveSurfaceToOutputResponse{}, err
 	}
 
@@ -1686,7 +1950,7 @@ func (b *Bridge) MoveSurfaceToOutput(surfaceID, outputName string) (schema.MoveS
 	return schema.MoveSurfaceToOutputResponse{SurfaceID: surfaceID, Output: outputName, Geometry: geom}, nil
 }
 
-func (b *Bridge) placeSurface(surfaceID string, geom schema.SurfaceGeometry, timeout time.Duration) error {
+func (b *Bridge) placeSurface(surfaceID string, geom schema.SurfaceGeometry, timeout time.Duration, waitReadback bool) error {
 	b.mu.Lock()
 	if b.plugin == nil {
 		b.mu.Unlock()
@@ -1715,6 +1979,7 @@ func (b *Bridge) placeSurface(surfaceID string, geom schema.SurfaceGeometry, tim
 	deadline := time.After(timeout)
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
+	pluginAcked := false
 	for {
 		select {
 		case resp := <-ch:
@@ -1724,12 +1989,18 @@ func (b *Bridge) placeSurface(surfaceID string, geom schema.SurfaceGeometry, tim
 				}
 				return compositorError(schema.ErrorProtocolError, "place surface failed: %s", resp.Error)
 			}
-			return nil
+			pluginAcked = true
+			if !waitReadback || b.surfaceGeometryMatches(surfaceID, geom) {
+				return nil
+			}
 		case <-ticker.C:
 			if b.surfaceGeometryMatches(surfaceID, geom) {
 				return nil
 			}
 		case <-deadline:
+			if pluginAcked {
+				return compositorError(schema.ErrorFrameTimeout, "place surface readback timed out")
+			}
 			return compositorError(schema.ErrorFrameTimeout, "place surface timed out")
 		}
 	}
@@ -2614,6 +2885,26 @@ func (b *Bridge) dispatch(peerUID uint32, req schema.Request) (schema.Response, 
 			return schema.Response{}, fmt.Errorf("bad body: %w", err)
 		}
 		resp, err := b.MoveSurfaceAction(peerUID, body)
+		if err != nil {
+			return schema.Response{}, err
+		}
+		return okResponse(resp), nil
+	case schema.MethodResizeSurface:
+		var body schema.ResizeSurfaceRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			return schema.Response{}, fmt.Errorf("bad body: %w", err)
+		}
+		resp, err := b.ResizeSurfaceAction(peerUID, body)
+		if err != nil {
+			return schema.Response{}, err
+		}
+		return okResponse(resp), nil
+	case schema.MethodTileSurface:
+		var body schema.TileSurfaceRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			return schema.Response{}, fmt.Errorf("bad body: %w", err)
+		}
+		resp, err := b.TileSurfaceAction(peerUID, body)
 		if err != nil {
 			return schema.Response{}, err
 		}

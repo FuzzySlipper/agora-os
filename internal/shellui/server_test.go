@@ -215,6 +215,111 @@ func TestSurfaceMoveEndpointForwardsCanonicalAction(t *testing.T) {
 	}
 }
 
+func TestSurfaceTileEndpointForwardsCanonicalAction(t *testing.T) {
+	t.Parallel()
+	authNow := time.Now().UTC().Truncate(time.Second)
+	compSock := startSchemaServer(t, func(req schema.Request) schema.Response {
+		if req.Method != schema.MethodTileSurface {
+			t.Fatalf("unexpected method %q", req.Method)
+		}
+		var body schema.TileSurfaceRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		if body.SurfaceID != "view-42" || body.Rows != 2 || body.Cols != 2 || body.Row != 1 || body.Col != 0 {
+			t.Fatalf("unexpected tile body %+v", body)
+		}
+		payload, _ := json.Marshal(schema.SurfaceActionResponse{Action: "surface.tile", SurfaceID: body.SurfaceID, Decision: schema.SurfaceActionAccepted, TargetGeometry: &schema.SurfaceGeometry{X: 0, Y: 540, Width: 960, Height: 540}, ResultGeometry: &schema.SurfaceGeometry{X: 0, Y: 540, Width: 960, Height: 540}})
+		return schema.Response{OK: true, Body: payload}
+	})
+	secret := []byte("01234567890123456789012345678901")
+	server := New(Config{Secret: secret, Now: func() time.Time { return authNow }, CompositorSocket: compSock})
+	body := bytes.NewReader([]byte(`{"surface_id":"view-42","rows":2,"cols":2,"row":1,"col":0}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/shell/surface/tile", body)
+	req.Header.Set("Authorization", "Bearer "+mustMintHumanToken(t, secret))
+	resp := httptest.NewRecorder()
+	server.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("got status %d body %q, want 200", resp.Code, resp.Body.String())
+	}
+	var result schema.SurfaceActionResponse
+	if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Action != "surface.tile" || result.Decision != schema.SurfaceActionAccepted || result.ResultGeometry == nil || result.ResultGeometry.Y != 540 {
+		t.Fatalf("unexpected result %+v", result)
+	}
+}
+
+func TestSurfaceResizeEndpointForwardsCanonicalAction(t *testing.T) {
+	t.Parallel()
+
+	authNow := time.Now().UTC().Truncate(time.Second)
+	compSock := startSchemaServer(t, func(req schema.Request) schema.Response {
+		if req.Method != schema.MethodResizeSurface {
+			t.Fatalf("unexpected method %q", req.Method)
+		}
+		var body schema.ResizeSurfaceRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		if body.SurfaceID != "view-42" || body.Width != 900 || body.Height != 700 {
+			t.Fatalf("unexpected resize body %+v", body)
+		}
+		payload, _ := json.Marshal(schema.SurfaceActionResponse{Action: "surface.resize", SurfaceID: body.SurfaceID, Decision: schema.SurfaceActionAccepted, TargetGeometry: &schema.SurfaceGeometry{X: 100, Y: 100, Width: body.Width, Height: body.Height}, ResultGeometry: &schema.SurfaceGeometry{X: 100, Y: 100, Width: body.Width, Height: body.Height}})
+		return schema.Response{OK: true, Body: payload}
+	})
+	secret := []byte("01234567890123456789012345678901")
+	server := New(Config{Secret: secret, Now: func() time.Time { return authNow }, CompositorSocket: compSock})
+	body := bytes.NewReader([]byte(`{"surface_id":"view-42","width":900,"height":700}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/shell/surface/resize", body)
+	req.Header.Set("Authorization", "Bearer "+mustMintHumanToken(t, secret))
+	resp := httptest.NewRecorder()
+
+	server.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("got status %d body %q, want 200", resp.Code, resp.Body.String())
+	}
+	var result schema.SurfaceActionResponse
+	if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Action != "surface.resize" || result.Decision != schema.SurfaceActionAccepted || result.TargetGeometry == nil || result.TargetGeometry.Width != 900 || result.ResultGeometry == nil || result.ResultGeometry.Height != 700 {
+		t.Fatalf("unexpected result %+v", result)
+	}
+}
+
+func TestSurfaceResizeEndpointReturnsStructuredInvalidDeniedResult(t *testing.T) {
+	t.Parallel()
+
+	authNow := time.Now().UTC().Truncate(time.Second)
+	compSock := startSchemaServer(t, func(req schema.Request) schema.Response {
+		if req.Method != schema.MethodResizeSurface {
+			t.Fatalf("unexpected method %q", req.Method)
+		}
+		payload, _ := json.Marshal(schema.SurfaceActionResponse{Action: "surface.resize", SurfaceID: "view-small", Decision: schema.SurfaceActionDenied, Error: "resize target 40x40 is below minimum", TargetGeometry: &schema.SurfaceGeometry{X: 100, Y: 100, Width: 40, Height: 40}, ResultGeometry: &schema.SurfaceGeometry{X: 100, Y: 100, Width: 800, Height: 600}})
+		return schema.Response{OK: false, Body: payload, ErrorClass: schema.ErrorInvalidCoordinates, ErrorMessage: "resize target 40x40 is below minimum"}
+	})
+	secret := []byte("01234567890123456789012345678901")
+	server := New(Config{Secret: secret, Now: func() time.Time { return authNow }, CompositorSocket: compSock})
+	body := bytes.NewReader([]byte(`{"surface_id":"view-small","width":40,"height":40}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/shell/surface/resize", body)
+	req.Header.Set("Authorization", "Bearer "+mustMintHumanToken(t, secret))
+	resp := httptest.NewRecorder()
+
+	server.ServeHTTP(resp, req)
+	if resp.Code != http.StatusConflict {
+		t.Fatalf("got status %d body %q, want 409", resp.Code, resp.Body.String())
+	}
+	var result surfaceActionHTTPError
+	if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.ErrorClass != schema.ErrorInvalidCoordinates || result.Result.Decision != schema.SurfaceActionDenied || result.Result.TargetGeometry == nil || result.Result.ResultGeometry == nil {
+		t.Fatalf("unexpected result %+v", result)
+	}
+}
+
 func TestSurfaceFocusEndpointReturnsStructuredDeniedResult(t *testing.T) {
 	t.Parallel()
 

@@ -334,13 +334,13 @@ export function applySurfaceActionEvent(state: DesktopShellState, event: BusEnve
             mergeActionReadback(state, body);
             return;
         }
-        if (body.action === "surface.move") {
+        if (body.action === "surface.move" || body.action === "surface.resize" || body.action === "surface.tile") {
             state.surfaces = state.surfaces.map((entry) => entry.id === body.surface_id ? { ...entry, geometry: body.result_geometry ?? body.target_geometry ?? entry.geometry, action_error: undefined, disabled: false } : entry);
             mergeActionReadback(state, body);
             return;
         }
     }
-    if (body.action !== "surface.focus" && body.action !== "surface.close" && body.action !== "surface.move") {
+    if (body.action !== "surface.focus" && body.action !== "surface.close" && body.action !== "surface.move" && body.action !== "surface.resize" && body.action !== "surface.tile") {
         return;
     }
     const message = body.error || body.reason || `${body.action} denied`;

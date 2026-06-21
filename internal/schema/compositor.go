@@ -69,6 +69,8 @@ const (
 	MethodSetInputContext     = "set_input_context"
 	MethodFocusSurface        = "focus_surface"
 	MethodMoveSurface         = "move_surface"
+	MethodResizeSurface       = "resize_surface"
+	MethodTileSurface         = "tile_surface"
 	MethodSetViewProperty     = "set_view_property"
 	MethodCloseSurface        = "close_surface"
 	MethodCloseSurfacesByUID  = "close_surfaces_by_uid"
@@ -436,6 +438,24 @@ type MoveSurfaceRequest struct {
 	Y             int    `json:"y"`
 	Width         int    `json:"width,omitempty"`
 	Height        int    `json:"height,omitempty"`
+	WaitTimeoutMs int    `json:"wait_timeout_ms,omitempty"`
+}
+
+type ResizeSurfaceRequest struct {
+	SurfaceID     string `json:"surface_id"`
+	Width         int    `json:"width"`
+	Height        int    `json:"height"`
+	WaitTimeoutMs int    `json:"wait_timeout_ms,omitempty"`
+}
+
+type TileSurfaceRequest struct {
+	SurfaceID     string `json:"surface_id"`
+	Rows          int    `json:"rows"`
+	Cols          int    `json:"cols"`
+	Row           int    `json:"row"`
+	Col           int    `json:"col"`
+	RowSpan       int    `json:"row_span,omitempty"`
+	ColSpan       int    `json:"col_span,omitempty"`
 	WaitTimeoutMs int    `json:"wait_timeout_ms,omitempty"`
 }
 

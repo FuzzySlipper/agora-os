@@ -3,11 +3,14 @@ import { createSurfaceFocusAction, SurfaceFocusError, type SurfaceFocusAction } 
 
 export type SurfaceCloseAction = (surfaceId: string) => Promise<SurfaceActionResponse>;
 export type SurfaceMoveAction = (surfaceId: string, geometry: { x: number; y: number; width?: number; height?: number }) => Promise<SurfaceActionResponse>;
+export type SurfaceResizeAction = (surfaceId: string, size: { width: number; height: number }) => Promise<SurfaceActionResponse>;
+export type SurfaceTileAction = (surfaceId: string, region: { rows: number; cols: number; row: number; col: number; row_span?: number; col_span?: number }) => Promise<SurfaceActionResponse>;
 
 export interface WindowChromeWidgetOptions {
     focusSurface?: SurfaceFocusAction;
     closeSurface?: SurfaceCloseAction;
     moveSurface?: SurfaceMoveAction;
+    tileSurface?: SurfaceTileAction;
     onActionResult?: (result: SurfaceActionResponse) => void;
 }
 
@@ -22,6 +25,7 @@ export class WindowChromeWidget extends HTMLElement implements ShellWidget {
     private focusSurface: SurfaceFocusAction;
     private closeSurface: SurfaceCloseAction;
     private moveSurface: SurfaceMoveAction;
+    private tileSurface: SurfaceTileAction;
     private onActionResult: (result: SurfaceActionResponse) => void;
     private surfaces: SurfaceEvent[] = [];
     private actionStatus = new Map<string, ChromeActionStatus>();
@@ -31,6 +35,7 @@ export class WindowChromeWidget extends HTMLElement implements ShellWidget {
         this.focusSurface = options.focusSurface ?? createSurfaceFocusAction();
         this.closeSurface = options.closeSurface ?? createSurfaceCloseAction();
         this.moveSurface = options.moveSurface ?? createSurfaceMoveAction();
+        this.tileSurface = options.tileSurface ?? createSurfaceTileAction();
         this.onActionResult = options.onActionResult ?? (() => undefined);
     }
 
@@ -79,6 +84,15 @@ export class WindowChromeWidget extends HTMLElement implements ShellWidget {
             y: geometry.y + dy,
             width: geometry.width,
             height: geometry.height,
+        }));
+    }
+
+    private async requestTile(surface: SurfaceEvent, row: number, col: number): Promise<void> {
+        await this.runAction(surface, "surface.tile", () => this.tileSurface(surface.id, {
+            rows: 2,
+            cols: 2,
+            row,
+            col,
         }));
     }
 
@@ -178,6 +192,23 @@ export class WindowChromeWidget extends HTMLElement implements ShellWidget {
             });
             controls.append(moveButton);
         }
+        for (const tile of [
+            { label: "↖", row: 0, col: 0, name: "top left" },
+            { label: "↗", row: 0, col: 1, name: "top right" },
+            { label: "↙", row: 1, col: 0, name: "bottom left" },
+            { label: "↘", row: 1, col: 1, name: "bottom right" },
+        ]) {
+            const tileButton = button("window-chrome-widget__button window-chrome-widget__button--tile", tile.label, `Tile ${surfaceLabel(surface)} ${tile.name}`);
+            tileButton.dataset.action = "surface.tile";
+            tileButton.dataset.row = String(tile.row);
+            tileButton.dataset.col = String(tile.col);
+            tileButton.disabled = status?.pending === "surface.tile";
+            tileButton.addEventListener("click", (event) => {
+                event.stopPropagation();
+                void this.requestTile(surface, tile.row, tile.col);
+            });
+            controls.append(tileButton);
+        }
         const focus = button("window-chrome-widget__button", "Focus", `Focus ${surfaceLabel(surface)}`);
         focus.dataset.action = "surface.focus";
         focus.disabled = status?.pending === "surface.focus";
@@ -240,6 +271,48 @@ export function createSurfaceMoveAction(fetcher: typeof fetch = fetch, tokenProv
         if (!response.ok) {
             const result = body && "result" in body ? body.result : undefined;
             throw new SurfaceFocusError(result, result?.error || result?.reason || `surface.move failed (${response.status})`);
+        }
+        return body as SurfaceActionResponse;
+    };
+}
+
+export function createSurfaceTileAction(fetcher: typeof fetch = fetch, tokenProvider: () => string | null = shellToken): SurfaceTileAction {
+    return async (surfaceId: string, region: { rows: number; cols: number; row: number; col: number; row_span?: number; col_span?: number }): Promise<SurfaceActionResponse> => {
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        const token = tokenProvider();
+        if (token) {
+            headers.Authorization = `Bearer ${token}`;
+        }
+        const response = await fetcher("/api/shell/surface/tile", {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ surface_id: surfaceId, ...region }),
+        });
+        const body = await response.json().catch(() => undefined) as SurfaceActionResponse | { result?: SurfaceActionResponse; error_class?: string } | undefined;
+        if (!response.ok) {
+            const result = body && "result" in body ? body.result : undefined;
+            throw new SurfaceFocusError(result, result?.error || result?.reason || `surface.tile failed (${response.status})`);
+        }
+        return body as SurfaceActionResponse;
+    };
+}
+
+export function createSurfaceResizeAction(fetcher: typeof fetch = fetch, tokenProvider: () => string | null = shellToken): SurfaceResizeAction {
+    return async (surfaceId: string, size: { width: number; height: number }): Promise<SurfaceActionResponse> => {
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        const token = tokenProvider();
+        if (token) {
+            headers.Authorization = `Bearer ${token}`;
+        }
+        const response = await fetcher("/api/shell/surface/resize", {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ surface_id: surfaceId, ...size }),
+        });
+        const body = await response.json().catch(() => undefined) as SurfaceActionResponse | { result?: SurfaceActionResponse; error_class?: string } | undefined;
+        if (!response.ok) {
+            const result = body && "result" in body ? body.result : undefined;
+            throw new SurfaceFocusError(result, result?.error || result?.reason || `surface.resize failed (${response.status})`);
         }
         return body as SurfaceActionResponse;
     };

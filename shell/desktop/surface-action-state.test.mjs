@@ -72,6 +72,25 @@ applySurfaceActionEvent(state, {
 });
 assert.equal(state.surfaces.some((surface) => surface.id === "view-4"), false, "stale move denial removes stale surface");
 
+state.surfaces.push({ id: "view-5", title: "Resizable", focused: false, geometry: { x: 10, y: 20, width: 400, height: 300 } });
+applySurfaceActionEvent(state, {
+  topic: "shell.action.completed",
+  body: { action: "surface.resize", surface_id: "view-5", decision: "accepted", target_geometry: { x: 10, y: 20, width: 640, height: 480 }, result_geometry: { x: 10, y: 20, width: 641, height: 481 } },
+});
+assert.deepEqual(state.surfaces.find((surface) => surface.id === "view-5").geometry, { x: 10, y: 20, width: 641, height: 481 }, "resize completion updates geometry from readback result");
+applySurfaceActionEvent(state, {
+  topic: "shell.action.denied",
+  body: { action: "surface.resize", surface_id: "view-5", decision: "denied", error: "resize target is below minimum" },
+});
+assert.equal(state.surfaces.find((surface) => surface.id === "view-5").disabled, true, "non-stale resize denial disables entry");
+
+state.surfaces.push({ id: "view-6", title: "Tiled", focused: false, geometry: { x: 10, y: 20, width: 400, height: 300 } });
+applySurfaceActionEvent(state, {
+  topic: "shell.action.completed",
+  body: { action: "surface.tile", surface_id: "view-6", decision: "accepted", target_geometry: { x: 960, y: 0, width: 960, height: 540 }, result_geometry: { x: 960, y: 0, width: 960, height: 540 } },
+});
+assert.deepEqual(state.surfaces.find((surface) => surface.id === "view-6").geometry, { x: 960, y: 0, width: 960, height: 540 }, "tile completion updates geometry from readback result");
+
 const snapshotState = {
   surfaces: [
     { id: "view-old", title: "Stale" },
