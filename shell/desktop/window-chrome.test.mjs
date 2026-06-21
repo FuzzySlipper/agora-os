@@ -69,6 +69,7 @@ const { WindowChromeWidget } = await import("../dist/desktop/widgets/window-chro
 const results = [];
 const focusCalls = [];
 const closeCalls = [];
+const moveCalls = [];
 const widget = new WindowChromeWidget({
   onActionResult: (result) => results.push(result),
   focusSurface: async (surfaceId) => {
@@ -78,6 +79,10 @@ const widget = new WindowChromeWidget({
   closeSurface: async (surfaceId) => {
     closeCalls.push(surfaceId);
     return { action: "surface.close", surface_id: surfaceId, decision: "accepted", closed_surface_id: surfaceId, queued: true };
+  },
+  moveSurface: async (surfaceId, geometry) => {
+    moveCalls.push({ surfaceId, geometry });
+    return { action: "surface.move", surface_id: surfaceId, decision: "accepted", target_geometry: geometry, result_geometry: geometry, surface: { surface: { id: surfaceId, title: "ASHA Studio", geometry } } };
   },
 });
 widget.mount(new FakeElement("section"));
@@ -100,6 +105,12 @@ widget.querySelectorAll("[data-action=\"surface.focus\"]")[0].click();
 await Promise.resolve();
 assert.deepEqual(focusCalls, ["view-1"]);
 assert.equal(results.at(-1).action, "surface.focus");
+
+widget.querySelectorAll("[data-action=\"surface.move\"]").find((button) => button.dataset.dx === "32").click();
+await Promise.resolve();
+assert.deepEqual(moveCalls, [{ surfaceId: "view-1", geometry: { x: 33, y: 2, width: 800, height: 600 } }]);
+assert.equal(results.at(-1).action, "surface.move");
+assert.equal(results.at(-1).result_geometry.x, 33);
 
 widget.querySelectorAll("[data-action=\"surface.close\"]")[0].click();
 await Promise.resolve();

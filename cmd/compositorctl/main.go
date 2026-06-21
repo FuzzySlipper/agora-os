@@ -550,6 +550,21 @@ func buildFocusSurfaceRequest(args []string) (schema.FocusSurfaceRequest, error)
 	return schema.FocusSurfaceRequest{SurfaceID: *surfaceID, WaitTimeoutMs: *timeout}, nil
 }
 
+func buildMoveSurfaceRequest(args []string) (schema.MoveSurfaceRequest, error) {
+	fs := flag.NewFlagSet("surface move", flag.ExitOnError)
+	surfaceID := fs.String("surface", "", "surface id to move")
+	x := fs.Int("x", 0, "target top-left x coordinate")
+	y := fs.Int("y", 0, "target top-left y coordinate")
+	width := fs.Int("width", 0, "optional target width; defaults to current width")
+	height := fs.Int("height", 0, "optional target height; defaults to current height")
+	timeout := fs.Int("timeout-ms", 2000, "placement acknowledgement timeout in milliseconds")
+	fs.Parse(args)
+	if *surfaceID == "" {
+		return schema.MoveSurfaceRequest{}, fmt.Errorf("--surface is required")
+	}
+	return schema.MoveSurfaceRequest{SurfaceID: *surfaceID, X: *x, Y: *y, Width: *width, Height: *height, WaitTimeoutMs: *timeout}, nil
+}
+
 func buildCloseSurfaceRequest(args []string) (schema.CloseSurfaceRequest, error) {
 	fs := flag.NewFlagSet("surface close", flag.ExitOnError)
 	surfaceID := fs.String("surface", "", "surface id to close")
@@ -563,7 +578,7 @@ func buildCloseSurfaceRequest(args []string) (schema.CloseSurfaceRequest, error)
 
 func cmdSurface(args []string, pretty bool) error {
 	if len(args) == 0 {
-		return fmt.Errorf("surface subcommand is required: focus, close (raise/minimize/maximize are deferred until compositor support is explicit)")
+		return fmt.Errorf("surface subcommand is required: focus, move, close (raise/minimize/maximize are deferred until compositor support is explicit)")
 	}
 	switch args[0] {
 	case "focus":
@@ -572,6 +587,12 @@ func cmdSurface(args []string, pretty bool) error {
 			return err
 		}
 		return callAndPrint(schema.MethodFocusSurface, req, pretty)
+	case "move", "place":
+		req, err := buildMoveSurfaceRequest(args[1:])
+		if err != nil {
+			return err
+		}
+		return callAndPrint(schema.MethodMoveSurface, req, pretty)
 	case "close":
 		req, err := buildCloseSurfaceRequest(args[1:])
 		if err != nil {

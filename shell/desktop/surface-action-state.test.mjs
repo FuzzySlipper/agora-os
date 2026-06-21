@@ -60,6 +60,18 @@ const closing = state.surfaces.find((surface) => surface.id === "view-3");
 assert.equal(closing.status, "closing", "queued close marks surface closing");
 assert.equal(state.surfaces.some((surface) => surface.id === "view-3"), true, "queued close keeps surface until compositor unmap/readback");
 
+state.surfaces.push({ id: "view-4", title: "Movable", focused: false, geometry: { x: 0, y: 0, width: 400, height: 300 } });
+applySurfaceActionEvent(state, {
+  topic: "shell.action.completed",
+  body: { action: "surface.move", surface_id: "view-4", decision: "accepted", target_geometry: { x: 64, y: 96, width: 400, height: 300 }, result_geometry: { x: 65, y: 97, width: 400, height: 300 } },
+});
+assert.deepEqual(state.surfaces.find((surface) => surface.id === "view-4").geometry, { x: 65, y: 97, width: 400, height: 300 }, "move completion updates geometry from readback result");
+applySurfaceActionEvent(state, {
+  topic: "shell.action.denied",
+  body: { action: "surface.move", surface_id: "view-4", decision: "denied", error: "surface view-4 is unmapped/stale" },
+});
+assert.equal(state.surfaces.some((surface) => surface.id === "view-4"), false, "stale move denial removes stale surface");
+
 const snapshotState = {
   surfaces: [
     { id: "view-old", title: "Stale" },

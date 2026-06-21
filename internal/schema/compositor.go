@@ -68,6 +68,7 @@ const (
 	MethodRemoveSurfacePolicy = "remove_surface_policy"
 	MethodSetInputContext     = "set_input_context"
 	MethodFocusSurface        = "focus_surface"
+	MethodMoveSurface         = "move_surface"
 	MethodSetViewProperty     = "set_view_property"
 	MethodCloseSurface        = "close_surface"
 	MethodCloseSurfacesByUID  = "close_surfaces_by_uid"
@@ -429,6 +430,15 @@ type FocusSurfaceRequest struct {
 	WaitTimeoutMs int    `json:"wait_timeout_ms,omitempty"`
 }
 
+type MoveSurfaceRequest struct {
+	SurfaceID     string `json:"surface_id"`
+	X             int    `json:"x"`
+	Y             int    `json:"y"`
+	Width         int    `json:"width,omitempty"`
+	Height        int    `json:"height,omitempty"`
+	WaitTimeoutMs int    `json:"wait_timeout_ms,omitempty"`
+}
+
 type SurfaceActionResponse struct {
 	Action           string                    `json:"action"`
 	SurfaceID        string                    `json:"surface_id"`
@@ -437,6 +447,8 @@ type SurfaceActionResponse struct {
 	Error            string                    `json:"error,omitempty"`
 	FocusedSurfaceID string                    `json:"focused_surface_id,omitempty"`
 	ClosedSurfaceID  string                    `json:"closed_surface_id,omitempty"`
+	TargetGeometry   *SurfaceGeometry          `json:"target_geometry,omitempty"`
+	ResultGeometry   *SurfaceGeometry          `json:"result_geometry,omitempty"`
 	Queued           bool                      `json:"queued,omitempty"`
 	Actor            string                    `json:"actor,omitempty"`
 	ActorUID         *uint32                   `json:"actor_uid,omitempty"`

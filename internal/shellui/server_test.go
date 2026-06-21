@@ -177,6 +177,44 @@ func TestSurfaceCloseEndpointForwardsCanonicalAction(t *testing.T) {
 	}
 }
 
+func TestSurfaceMoveEndpointForwardsCanonicalAction(t *testing.T) {
+	t.Parallel()
+
+	authNow := time.Now().UTC().Truncate(time.Second)
+	compSock := startSchemaServer(t, func(req schema.Request) schema.Response {
+		if req.Method != schema.MethodMoveSurface {
+			t.Fatalf("unexpected method %q", req.Method)
+		}
+		var body schema.MoveSurfaceRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		if body.SurfaceID != "view-42" || body.X != 111 || body.Y != 222 {
+			t.Fatalf("unexpected move body %+v", body)
+		}
+		payload, _ := json.Marshal(schema.SurfaceActionResponse{Action: "surface.move", SurfaceID: body.SurfaceID, Decision: schema.SurfaceActionAccepted, TargetGeometry: &schema.SurfaceGeometry{X: body.X, Y: body.Y, Width: 640, Height: 480}, ResultGeometry: &schema.SurfaceGeometry{X: body.X, Y: body.Y, Width: 640, Height: 480}})
+		return schema.Response{OK: true, Body: payload}
+	})
+	secret := []byte("01234567890123456789012345678901")
+	server := New(Config{Secret: secret, Now: func() time.Time { return authNow }, CompositorSocket: compSock})
+	body := bytes.NewReader([]byte(`{"surface_id":"view-42","x":111,"y":222}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/shell/surface/move", body)
+	req.Header.Set("Authorization", "Bearer "+mustMintHumanToken(t, secret))
+	resp := httptest.NewRecorder()
+
+	server.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("got status %d body %q, want 200", resp.Code, resp.Body.String())
+	}
+	var result schema.SurfaceActionResponse
+	if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Action != "surface.move" || result.Decision != schema.SurfaceActionAccepted || result.TargetGeometry == nil || result.TargetGeometry.X != 111 || result.ResultGeometry == nil || result.ResultGeometry.Y != 222 {
+		t.Fatalf("unexpected result %+v", result)
+	}
+}
+
 func TestSurfaceFocusEndpointReturnsStructuredDeniedResult(t *testing.T) {
 	t.Parallel()
 

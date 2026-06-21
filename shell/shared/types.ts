@@ -27,6 +27,8 @@ export interface SurfaceActionResponse {
     error?: string;
     focused_surface_id?: string;
     closed_surface_id?: string;
+    target_geometry?: SurfaceGeometry;
+    result_geometry?: SurfaceGeometry;
     queued?: boolean;
     actor?: string;
     actor_uid?: number;

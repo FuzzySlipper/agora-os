@@ -2,10 +2,12 @@ import type { DesktopShellState, ShellWidget, SurfaceActionResponse, SurfaceEven
 import { createSurfaceFocusAction, SurfaceFocusError, type SurfaceFocusAction } from "./taskbar.js";
 
 export type SurfaceCloseAction = (surfaceId: string) => Promise<SurfaceActionResponse>;
+export type SurfaceMoveAction = (surfaceId: string, geometry: { x: number; y: number; width?: number; height?: number }) => Promise<SurfaceActionResponse>;
 
 export interface WindowChromeWidgetOptions {
     focusSurface?: SurfaceFocusAction;
     closeSurface?: SurfaceCloseAction;
+    moveSurface?: SurfaceMoveAction;
     onActionResult?: (result: SurfaceActionResponse) => void;
 }
 
@@ -19,6 +21,7 @@ export class WindowChromeWidget extends HTMLElement implements ShellWidget {
     readonly layer = 20;
     private focusSurface: SurfaceFocusAction;
     private closeSurface: SurfaceCloseAction;
+    private moveSurface: SurfaceMoveAction;
     private onActionResult: (result: SurfaceActionResponse) => void;
     private surfaces: SurfaceEvent[] = [];
     private actionStatus = new Map<string, ChromeActionStatus>();
@@ -27,6 +30,7 @@ export class WindowChromeWidget extends HTMLElement implements ShellWidget {
         super();
         this.focusSurface = options.focusSurface ?? createSurfaceFocusAction();
         this.closeSurface = options.closeSurface ?? createSurfaceCloseAction();
+        this.moveSurface = options.moveSurface ?? createSurfaceMoveAction();
         this.onActionResult = options.onActionResult ?? (() => undefined);
     }
 
@@ -61,6 +65,21 @@ export class WindowChromeWidget extends HTMLElement implements ShellWidget {
 
     private async requestClose(surface: SurfaceEvent): Promise<void> {
         await this.runAction(surface, "surface.close", () => this.closeSurface(surface.id));
+    }
+
+    private async requestMove(surface: SurfaceEvent, dx: number, dy: number): Promise<void> {
+        const geometry = surface.geometry;
+        if (!geometry) {
+            this.actionStatus.set(surface.id, { error: "surface.move requires geometry readback" });
+            this.render();
+            return;
+        }
+        await this.runAction(surface, "surface.move", () => this.moveSurface(surface.id, {
+            x: geometry.x + dx,
+            y: geometry.y + dy,
+            width: geometry.width,
+            height: geometry.height,
+        }));
     }
 
     private async runAction(surface: SurfaceEvent, action: string, invoke: () => Promise<SurfaceActionResponse>): Promise<void> {
@@ -142,6 +161,23 @@ export class WindowChromeWidget extends HTMLElement implements ShellWidget {
 
         const controls = document.createElement("div");
         controls.className = "window-chrome-widget__controls";
+        for (const move of [
+            { label: "←", dx: -32, dy: 0, name: "left" },
+            { label: "→", dx: 32, dy: 0, name: "right" },
+            { label: "↑", dx: 0, dy: -32, name: "up" },
+            { label: "↓", dx: 0, dy: 32, name: "down" },
+        ]) {
+            const moveButton = button("window-chrome-widget__button window-chrome-widget__button--move", move.label, `Move ${surfaceLabel(surface)} ${move.name}`);
+            moveButton.dataset.action = "surface.move";
+            moveButton.dataset.dx = String(move.dx);
+            moveButton.dataset.dy = String(move.dy);
+            moveButton.disabled = status?.pending === "surface.move" || !surface.geometry;
+            moveButton.addEventListener("click", (event) => {
+                event.stopPropagation();
+                void this.requestMove(surface, move.dx, move.dy);
+            });
+            controls.append(moveButton);
+        }
         const focus = button("window-chrome-widget__button", "Focus", `Focus ${surfaceLabel(surface)}`);
         focus.dataset.action = "surface.focus";
         focus.disabled = status?.pending === "surface.focus";
@@ -186,6 +222,27 @@ function surfaceStatusLabel(surface: SurfaceEvent): string {
         return "Close requested — waiting for compositor unmap";
     }
     return surface.focused ? "Focused" : "Ready";
+}
+
+export function createSurfaceMoveAction(fetcher: typeof fetch = fetch, tokenProvider: () => string | null = shellToken): SurfaceMoveAction {
+    return async (surfaceId: string, geometry: { x: number; y: number; width?: number; height?: number }): Promise<SurfaceActionResponse> => {
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        const token = tokenProvider();
+        if (token) {
+            headers.Authorization = `Bearer ${token}`;
+        }
+        const response = await fetcher("/api/shell/surface/move", {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ surface_id: surfaceId, ...geometry }),
+        });
+        const body = await response.json().catch(() => undefined) as SurfaceActionResponse | { result?: SurfaceActionResponse; error_class?: string } | undefined;
+        if (!response.ok) {
+            const result = body && "result" in body ? body.result : undefined;
+            throw new SurfaceFocusError(result, result?.error || result?.reason || `surface.move failed (${response.status})`);
+        }
+        return body as SurfaceActionResponse;
+    };
 }
 
 function isShellSurface(surface: SurfaceEvent): boolean {
