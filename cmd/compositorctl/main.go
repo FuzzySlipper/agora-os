@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/patch/agora-os/internal/appcatalog"
 	"github.com/patch/agora-os/internal/schema"
 )
 
@@ -270,9 +271,32 @@ func cmdSession(args []string, pretty bool) error {
 
 func cmdApp(args []string, pretty bool) error {
 	if len(args) == 0 {
-		return fmt.Errorf("app subcommand is required")
+		return fmt.Errorf("app subcommand is required: list, launch, command, result")
 	}
 	switch args[0] {
+	case "list":
+		fs := flag.NewFlagSet("app list", flag.ExitOnError)
+		catalogFile := fs.String("catalog-file", appcatalog.DefaultCatalogFile, "app catalog JSON path")
+		fs.Parse(args[1:])
+		catalog, err := appcatalog.Load(*catalogFile)
+		if err != nil {
+			return err
+		}
+		entries := make([]schema.AppCatalogEntry, 0, len(catalog.Entries))
+		for _, entry := range catalog.PublicEntries() {
+			entries = append(entries, schema.AppCatalogEntry{ID: entry.ID, Label: entry.Label, Description: entry.Description, Icon: entry.Icon, Tags: entry.Tags, State: entry.State, Reason: entry.Reason})
+		}
+		payload, err := json.Marshal(schema.AppCatalogListResponse{Entries: entries})
+		if err != nil {
+			return err
+		}
+		return printJSON(payload, pretty)
+	case "launch":
+		req, err := buildCatalogAppLaunchRequest(args[1:])
+		if err != nil {
+			return err
+		}
+		return launchCatalogApp(req, pretty)
 	case "command":
 		fs := flag.NewFlagSet("app command", flag.ExitOnError)
 		surfaceID := fs.String("surface", "", "surface id")
@@ -299,6 +323,71 @@ func cmdApp(args []string, pretty bool) error {
 	default:
 		return fmt.Errorf("unknown app subcommand %q", args[0])
 	}
+}
+
+type catalogLaunchRequest struct {
+	entry  appcatalog.Entry
+	launch schema.LaunchAppRequest
+}
+
+func buildCatalogAppLaunchRequest(args []string) (catalogLaunchRequest, error) {
+	fs := flag.NewFlagSet("app launch", flag.ExitOnError)
+	catalogID := fs.String("catalog-id", "", "app catalog id to launch")
+	catalogFile := fs.String("catalog-file", appcatalog.DefaultCatalogFile, "app catalog JSON path")
+	sessionID := fs.String("session", "", "session id")
+	sessionToken := fs.String("session-token", os.Getenv("AGORA_COMPOSITOR_SESSION_TOKEN"), "session token (defaults to AGORA_COMPOSITOR_SESSION_TOKEN)")
+	auditID := fs.String("audit-correlation-id", "", "audit correlation id")
+	fs.Parse(args)
+	if *catalogID == "" {
+		return catalogLaunchRequest{}, fmt.Errorf("--catalog-id is required")
+	}
+	catalog, err := appcatalog.Load(*catalogFile)
+	if err != nil {
+		return catalogLaunchRequest{}, err
+	}
+	entry, ok := catalog.Find(*catalogID)
+	if !ok {
+		return catalogLaunchRequest{}, fmt.Errorf("app_not_found: no app catalog entry %q", *catalogID)
+	}
+	if !entry.Enabled {
+		return catalogLaunchRequest{}, fmt.Errorf("app_disabled: %s", entry.Reason)
+	}
+	waitSurface := true
+	if entry.WaitSurface != nil {
+		waitSurface = *entry.WaitSurface
+	}
+	waitTimeout := entry.WaitTimeoutMs
+	if waitTimeout <= 0 {
+		waitTimeout = 10000
+	}
+	return catalogLaunchRequest{entry: entry, launch: schema.LaunchAppRequest{
+		SessionID: *sessionID, SessionToken: *sessionToken, AuditCorrelationID: *auditID,
+		Command: entry.Command, Cwd: entry.Cwd, Env: entry.Env, ExpectedAppID: entry.ExpectedAppID,
+		ExpectedTitle: entry.ExpectedTitle, Role: entry.Role, Output: entry.Output, WaitSurface: waitSurface, WaitTimeoutMs: waitTimeout,
+	}}, nil
+}
+
+func launchCatalogApp(req catalogLaunchRequest, pretty bool) error {
+	body, err := call(compositorSock, schema.MethodLaunchApp, req.launch)
+	if err != nil {
+		return err
+	}
+	var launch schema.LaunchAppResponse
+	if err := json.Unmarshal(body, &launch); err != nil {
+		return fmt.Errorf("decode launch response: %w", err)
+	}
+	result := schema.AppLaunchActionResponse{
+		Action: "app.launch", CatalogID: req.entry.ID, AppID: req.entry.ExpectedAppID, Decision: schema.SurfaceActionAccepted,
+		Reason: "launch accepted", Actor: "compositorctl", LaunchID: launch.LaunchID, PID: launch.PID, Surface: launch.Surface,
+	}
+	if result.AppID == "" && launch.Surface != nil {
+		result.AppID = launch.Surface.Surface.AppID
+	}
+	payload, err := json.Marshal(result)
+	if err != nil {
+		return err
+	}
+	return printJSON(payload, pretty)
 }
 
 func cmdA11y(args []string, pretty bool) error {

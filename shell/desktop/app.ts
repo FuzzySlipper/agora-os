@@ -1,5 +1,5 @@
 import { createBusConnection, type BusConnection } from "../shared/bus.js";
-import type { AgentInfo, BusEnvelope, CommandCenterState, ConversationTurnRequest, DesktopShellState, ShellNotification, ShellWidget, SurfaceActionResponse, SurfaceEvent } from "../shared/types.js";
+import type { AgentInfo, AppLaunchActionResponse, BusEnvelope, CommandCenterState, ConversationTurnRequest, DesktopShellState, ShellNotification, ShellWidget, SurfaceActionResponse, SurfaceEvent } from "../shared/types.js";
 import { AgentHealthWidget } from "./widgets/agent-health.js";
 import { ClockWidget } from "./widgets/clock.js";
 import { CommandCenterWidget } from "./widgets/command-center.js";
@@ -132,10 +132,27 @@ export class ShellApp {
             });
             this.update(next);
         };
+        const applyAppLaunchResult = (result: AppLaunchActionResponse): void => {
+            const next = cloneState(this.state);
+            next.notifications = [{
+                id: `app-launch:${result.launch_id ?? result.catalog_id}:${Date.now()}`,
+                title: result.decision === "denied" ? "App launch denied" : "App launched",
+                message: result.decision === "denied" ? (result.error ?? result.reason ?? result.catalog_id) : `${result.catalog_id}${result.surface?.surface?.title ? ` → ${result.surface.surface.title}` : ""}`,
+                level: result.decision === "denied" ? "error" : "success",
+                timestamp: new Date().toISOString(),
+                topic: result.decision === "denied" ? "shell.action.denied" : "shell.action.completed",
+            }, ...next.notifications].slice(0, 8);
+            if (result.surface?.surface) {
+                applySurfaceEvent(next, { topic: "compositor.surface.created", body: { surface: result.surface.surface }, timestamp: new Date().toISOString() });
+            }
+            this.update(next);
+            void this.refreshShellStateSnapshot();
+        };
         this.registerWidget(new WindowChromeWidget({ onActionResult: applyLocalActionResult }));
         this.registerWidget(new CommandCenterWidget({
             publish: (topic, body) => this.bus.publish(topic, body),
             onFocusResult: applyLocalActionResult,
+            onAppLaunchResult: applyAppLaunchResult,
             onClose: () => this.setCommandCenterOpen(false),
             onPromptSubmit: (request) => this.submitCommandCenterPrompt(request),
         }));

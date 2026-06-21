@@ -357,6 +357,30 @@ func TestHandlePluginConnRejectsUnauthorizedPeer(t *testing.T) {
 	<-done
 }
 
+func TestLaunchAppAllowsDesktopShellCorrelationSessionWithoutToken(t *testing.T) {
+	bridge, err := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	launch, err := bridge.LaunchApp(schema.LaunchAppRequest{SessionID: "desktop-shell:test-session", Command: "sleep 30"})
+	if err != nil {
+		t.Fatalf("LaunchApp with desktop-shell correlation session: %v", err)
+	}
+	if launch.SessionID != "desktop-shell:test-session" || launch.LaunchID == "" {
+		t.Fatalf("unexpected launch: %+v", launch)
+	}
+	if _, err := bridge.GetSession("desktop-shell:test-session"); err == nil {
+		t.Fatal("desktop-shell correlation id should not create a compositor session")
+	}
+	processes := bridge.ListProcesses("desktop-shell:test-session")
+	if len(processes) != 1 || processes[0].LaunchID != launch.LaunchID {
+		t.Fatalf("launch not correlated in process list: %+v", processes)
+	}
+	if _, err := bridge.TerminateLaunch(launch.LaunchID); err != nil {
+		t.Fatalf("TerminateLaunch: %v", err)
+	}
+}
+
 func TestSessionLifecycleAndLaunchTracking(t *testing.T) {
 	bridge, err := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
 	if err != nil {

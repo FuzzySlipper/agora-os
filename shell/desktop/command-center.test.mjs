@@ -45,6 +45,7 @@ class FakeElement {
       if (selector === "form" && node.tagName === "FORM") return true;
       if (selector.startsWith("[data-action=") && node.dataset?.action === selector.match(/\"([^\"]+)\"/)?.[1]) return true;
       if (selector.startsWith("[data-surface-id=") && node.dataset?.surfaceId === selector.match(/\"([^\"]+)\"/)?.[1]) return true;
+      if (selector.startsWith("[data-catalog-id=") && node.dataset?.catalogId === selector.match(/\"([^\"]+)\"/)?.[1]) return true;
       return false;
     };
     const visit = (node) => {
@@ -72,7 +73,9 @@ const { SurfaceFocusError } = await import("../dist/desktop/widgets/taskbar.js")
 const published = [];
 const focusCalls = [];
 const focusResults = [];
+const appLaunchResults = [];
 const promptRequests = [];
+const launchedApps = [];
 let closed = 0;
 const widget = new CommandCenterWidget({
   publish: (topic, body) => published.push({ topic, body }),
@@ -81,6 +84,15 @@ const widget = new CommandCenterWidget({
   onClose: () => { closed += 1; },
   onPromptSubmit: (request) => promptRequests.push(request),
   onFocusResult: (result) => focusResults.push(result),
+  onAppLaunchResult: (result) => appLaunchResults.push(result),
+  loadApps: async () => [
+    { id: "terminal", label: "Terminal", state: "ready", reason: "default Agora shell tool" },
+    { id: "browser", label: "Browser", state: "disabled", reason: "not installed/allowlisted on this host (#3024)" },
+  ],
+  launchApp: async (catalogId) => {
+    launchedApps.push(catalogId);
+    return { action: "app.launch", catalog_id: catalogId, decision: "accepted", launch_id: "launch-test", pid: 1234 };
+  },
   focusSurface: async (surfaceId) => {
     focusCalls.push(surfaceId);
     return { action: "surface.focus", surface_id: surfaceId, decision: "accepted", focused_surface_id: surfaceId };
@@ -98,10 +110,22 @@ widget.update({
   config: {},
   commandCenter: { open: true, transcript: [] },
 });
+for (let i = 0; i < 5 && !widget.textContent.includes("Launch: Terminal"); i += 1) {
+  await Promise.resolve();
+}
 assert.ok(widget.textContent.includes("Command Center"), "open state renders visible overlay");
 assert.equal(published.length, 0, "opening Command Center publishes no invisible conversation placeholder");
-assert.ok(widget.textContent.includes("Launch: Terminal"), "disabled app launch row is visible");
-assert.ok(widget.textContent.includes("not wired yet (#3024)"), "disabled app launch row includes reason and task link");
+assert.ok(widget.textContent.includes("Launch: Terminal"), "ready app launch row is visible");
+assert.ok(widget.textContent.includes("terminal"), "ready app launch row shows catalog id, not raw command");
+assert.ok(widget.textContent.includes("Launch: Browser"), "disabled app launch row is visible");
+assert.ok(widget.textContent.includes("not installed/allowlisted on this host (#3024)"), "disabled app launch row includes reason and task link");
+
+const terminalRow = widget.querySelectorAll('[data-catalog-id="terminal"]')[0];
+terminalRow.click();
+await Promise.resolve();
+assert.deepEqual(launchedApps, ["terminal"], "ready app row launches by catalog id only");
+assert.equal(appLaunchResults.at(-1).action, "app.launch");
+assert.equal(appLaunchResults.at(-1).launch_id, "launch-test");
 
 const surfaceRow = widget.querySelectorAll('[data-surface-id="view-2"]')[0];
 surfaceRow.click();

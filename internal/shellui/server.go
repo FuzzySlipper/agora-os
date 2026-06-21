@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/patch/agora-os/internal/appcatalog"
 	"github.com/patch/agora-os/internal/bus"
 	"github.com/patch/agora-os/internal/schema"
 	"github.com/patch/agora-os/internal/webbus"
@@ -169,6 +170,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleSessionToken(w, r)
 	case "/grants":
 		s.handleGrant(w, r)
+	case "/apps":
+		s.handleApps(w, r)
+	case "/app/launch":
+		s.handleAppLaunch(w, r)
 	case "/surface/focus":
 		s.handleSurfaceFocus(w, r)
 	case "/surface/move":
@@ -247,6 +252,129 @@ func (s *Server) handleSessionToken(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt: expiresAt,
 		Use:       "websocket-subprotocol",
 	})
+}
+
+func (s *Server) appCatalogPath() string {
+	return filepath.Join(s.shellConfigDir, "app-catalog.json")
+}
+
+func (s *Server) loadAppCatalog() (appcatalog.Catalog, error) {
+	return appcatalog.Load(s.appCatalogPath())
+}
+
+func (s *Server) handleApps(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if _, _, err := s.authenticateHuman(r); err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	catalog, err := s.loadAppCatalog()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	entries := make([]schema.AppCatalogEntry, 0, len(catalog.Entries))
+	for _, entry := range catalog.PublicEntries() {
+		entries = append(entries, schema.AppCatalogEntry{
+			ID: entry.ID, Label: entry.Label, Description: entry.Description, Icon: entry.Icon,
+			Tags: entry.Tags, State: entry.State, Reason: entry.Reason,
+		})
+	}
+	writeJSON(w, schema.AppCatalogListResponse{Entries: entries})
+}
+
+func (s *Server) handleAppLaunch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	identity, _, err := s.authenticateHuman(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	var req schema.AppLaunchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("decode app launch request: %v", err), http.StatusBadRequest)
+		return
+	}
+	catalog, err := s.loadAppCatalog()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	entry, ok := catalog.Find(req.CatalogID)
+	if !ok {
+		result := appLaunchDenied(req.CatalogID, uint32(identity.UID), "No app catalog entry: "+req.CatalogID)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]any{"error_class": "app_not_found", "result": result})
+		return
+	}
+	if !entry.Enabled {
+		reason := entry.Reason
+		if reason == "" {
+			reason = "app catalog entry is disabled"
+		}
+		result := appLaunchDenied(entry.ID, uint32(identity.UID), reason)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]any{"error_class": "app_disabled", "result": result})
+		return
+	}
+	launchReq := schema.LaunchAppRequest{
+		SessionID: strings.TrimSpace(req.SessionID),
+		Command:   entry.Command, Cwd: entry.Cwd, Env: entry.Env,
+		AuditCorrelationID: strings.TrimSpace(req.TurnID),
+		ExpectedAppID:      entry.ExpectedAppID, ExpectedTitle: entry.ExpectedTitle,
+		Role: entry.Role, Output: entry.Output, WaitSurface: true, WaitTimeoutMs: entry.WaitTimeoutMs,
+	}
+	if entry.WaitSurface != nil {
+		launchReq.WaitSurface = *entry.WaitSurface
+	}
+	if launchReq.WaitTimeoutMs <= 0 {
+		launchReq.WaitTimeoutMs = 10000
+	}
+	body, resp, err := callResponse(s.compositorSocket, schema.MethodLaunchApp, launchReq)
+	if err != nil {
+		result := appLaunchDenied(entry.ID, uint32(identity.UID), err.Error())
+		status := http.StatusBadGateway
+		errorClass := respErrorClass(resp)
+		if errorClass == schema.ErrorAppNotReady {
+			status = http.StatusGatewayTimeout
+		}
+		if resp != nil && resp.ErrorMessage != "" {
+			result.Reason = resp.ErrorMessage
+			result.Error = resp.ErrorMessage
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_ = json.NewEncoder(w).Encode(map[string]any{"error_class": errorClass, "result": result})
+		return
+	}
+	var launch schema.LaunchAppResponse
+	if err := json.Unmarshal(body, &launch); err != nil {
+		http.Error(w, fmt.Sprintf("decode launch response: %v", err), http.StatusBadGateway)
+		return
+	}
+	uid := uint32(identity.UID)
+	result := schema.AppLaunchActionResponse{
+		Action: "app.launch", CatalogID: entry.ID, AppID: entry.ExpectedAppID, Decision: schema.SurfaceActionAccepted,
+		Reason: "launch accepted", Actor: "human-shell", ActorUID: &uid,
+		LaunchID: launch.LaunchID, PID: launch.PID, Surface: launch.Surface,
+	}
+	if result.AppID == "" && launch.Surface != nil {
+		result.AppID = launch.Surface.Surface.AppID
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(result)
+}
+
+func appLaunchDenied(catalogID string, actorUID uint32, reason string) schema.AppLaunchActionResponse {
+	return schema.AppLaunchActionResponse{Action: "app.launch", CatalogID: catalogID, Decision: schema.SurfaceActionDenied, Reason: reason, Error: reason, Actor: "human-shell", ActorUID: &actorUID}
 }
 
 func (s *Server) handleGrant(w http.ResponseWriter, r *http.Request) {

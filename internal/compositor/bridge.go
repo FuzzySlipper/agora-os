@@ -466,9 +466,10 @@ func (b *Bridge) launchAppAsPeer(peerUID uint32, req schema.LaunchAppRequest) (s
 	}
 	b.launches[launchID] = &launchRecord{process: process, cmd: cmd, done: make(chan struct{}), expectedAppID: req.ExpectedAppID, expectedTitle: req.ExpectedTitle, expectedOutput: req.Output}
 	if req.SessionID != "" {
-		session := b.sessions[req.SessionID]
-		session.LastUsedAt = now
-		b.sessions[req.SessionID] = session
+		if session, ok := b.sessions[req.SessionID]; ok {
+			session.LastUsedAt = now
+			b.sessions[req.SessionID] = session
+		}
 	}
 	b.mu.Unlock()
 

@@ -14,6 +14,25 @@ import (
 	"github.com/patch/agora-os/internal/shelldefaults"
 )
 
+func TestBuildCatalogAppLaunchRequest(t *testing.T) {
+	t.Parallel()
+	catalogFile := filepath.Join(t.TempDir(), "catalog.json")
+	if err := os.WriteFile(catalogFile, []byte(`{"version":1,"entries":[{"id":"terminal","label":"Terminal","enabled":true,"command":"foot --title Agora","role":"toplevel","expected_app_id":"foot","wait_surface":true,"wait_timeout_ms":2500},{"id":"browser","label":"Browser","enabled":false,"reason":"not installed"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	req, err := buildCatalogAppLaunchRequest([]string{"--catalog-id", "terminal", "--catalog-file", catalogFile, "--audit-correlation-id", "turn:test"})
+	if err != nil {
+		t.Fatalf("buildCatalogAppLaunchRequest returned error: %v", err)
+	}
+	if req.entry.ID != "terminal" || req.launch.Command != "foot --title Agora" || req.launch.ExpectedAppID != "foot" || !req.launch.WaitSurface || req.launch.WaitTimeoutMs != 2500 || req.launch.AuditCorrelationID != "turn:test" {
+		t.Fatalf("unexpected request %+v", req)
+	}
+	_, err = buildCatalogAppLaunchRequest([]string{"--catalog-id", "browser", "--catalog-file", catalogFile})
+	if err == nil || !strings.Contains(err.Error(), "app_disabled") {
+		t.Fatalf("expected app_disabled error, got %v", err)
+	}
+}
+
 func TestBuildLaunchRequestDefaultsRole(t *testing.T) {
 	t.Parallel()
 

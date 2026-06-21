@@ -3,6 +3,7 @@ package compositor
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"strings"
 	"time"
 
 	"github.com/patch/agora-os/internal/schema"
@@ -16,8 +17,12 @@ func generateSessionToken() string {
 	return hex.EncodeToString(buf[:])
 }
 
+func isShellCorrelationSessionID(sessionID string) bool {
+	return strings.HasPrefix(sessionID, "desktop-shell:")
+}
+
 func (b *Bridge) requireSessionToken(sessionID, token string) error {
-	if sessionID == "" {
+	if sessionID == "" || isShellCorrelationSessionID(sessionID) {
 		return nil
 	}
 	b.mu.RLock()

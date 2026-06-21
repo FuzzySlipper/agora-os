@@ -548,6 +548,42 @@ type CompositorLaunchProcess struct {
 	Surfaces  []string   `json:"surfaces,omitempty"`
 }
 
+type AppCatalogListResponse struct {
+	Entries []AppCatalogEntry `json:"entries"`
+}
+
+type AppCatalogEntry struct {
+	ID          string   `json:"id"`
+	Label       string   `json:"label"`
+	Description string   `json:"description,omitempty"`
+	Icon        string   `json:"icon,omitempty"`
+	Tags        []string `json:"tags,omitempty"`
+	State       string   `json:"state"`
+	Reason      string   `json:"reason,omitempty"`
+}
+
+type AppLaunchRequest struct {
+	CatalogID string `json:"catalog_id"`
+	Reason    string `json:"reason,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+	TurnID    string `json:"turn_id,omitempty"`
+}
+
+type AppLaunchActionResponse struct {
+	Action    string                    `json:"action"`
+	CatalogID string                    `json:"catalog_id"`
+	AppID     string                    `json:"app_id,omitempty"`
+	Decision  SurfaceActionDecision     `json:"decision"`
+	Reason    string                    `json:"reason,omitempty"`
+	Error     string                    `json:"error,omitempty"`
+	Actor     string                    `json:"actor,omitempty"`
+	ActorUID  *uint32                   `json:"actor_uid,omitempty"`
+	LaunchID  string                    `json:"launch_id,omitempty"`
+	PID       int                       `json:"pid,omitempty"`
+	Surface   *CompositorTrackedSurface `json:"surface,omitempty"`
+	Queued    bool                      `json:"queued,omitempty"`
+}
+
 type LaunchAppRequest struct {
 	SessionID          string            `json:"session_id,omitempty"`
 	Command            string            `json:"command"`

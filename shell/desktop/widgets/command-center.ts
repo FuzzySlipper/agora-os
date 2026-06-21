@@ -1,14 +1,19 @@
-import type { CommandCenterState, ConversationTurnRequest, DesktopShellState, ShellWidget, SurfaceActionResponse, SurfaceEvent } from "../../shared/types.js";
+import type { AppCatalogEntry, AppCatalogListResponse, AppLaunchActionResponse, CommandCenterState, ConversationTurnRequest, DesktopShellState, ShellWidget, SurfaceActionResponse, SurfaceEvent } from "../../shared/types.js";
 import { createSurfaceFocusAction, SurfaceFocusError, type SurfaceFocusAction } from "./taskbar.js";
 
 export type ShellPublisher = (topic: string, body: unknown) => void;
+export type LoadAppsAction = () => Promise<AppCatalogEntry[]>;
+export type LaunchAppAction = (catalogId: string) => Promise<AppLaunchActionResponse>;
 
 export interface CommandCenterWidgetOptions {
     publish?: ShellPublisher;
     focusSurface?: SurfaceFocusAction;
     onFocusResult?: (result: SurfaceActionResponse) => void;
+    onAppLaunchResult?: (result: AppLaunchActionResponse) => void;
     onPromptSubmit?: (request: ConversationTurnRequest) => void;
     onClose?: () => void;
+    loadApps?: LoadAppsAction;
+    launchApp?: LaunchAppAction;
     sessionId?: string;
     turnIdFactory?: () => string;
 }
@@ -19,12 +24,18 @@ export class CommandCenterWidget extends HTMLElement implements ShellWidget {
     private publish: ShellPublisher;
     private focusSurface: SurfaceFocusAction;
     private onFocusResult: (result: SurfaceActionResponse) => void;
+    private onAppLaunchResult: (result: AppLaunchActionResponse) => void;
     private onPromptSubmit: (request: ConversationTurnRequest) => void;
     private onClose: () => void;
+    private loadApps: LoadAppsAction;
+    private launchApp: LaunchAppAction;
     private sessionId: string;
     private turnIdFactory: () => string;
     private surfaces: SurfaceEvent[] = [];
     private commandCenter: CommandCenterState = { open: false, transcript: [] };
+    private apps: AppCatalogEntry[] = [];
+    private loadingApps = false;
+    private launchingCatalogId: string | undefined;
     private localError: string | undefined;
 
     constructor(options: CommandCenterWidgetOptions = {}) {
@@ -32,8 +43,11 @@ export class CommandCenterWidget extends HTMLElement implements ShellWidget {
         this.publish = options.publish ?? (() => undefined);
         this.focusSurface = options.focusSurface ?? createSurfaceFocusAction();
         this.onFocusResult = options.onFocusResult ?? (() => undefined);
+        this.onAppLaunchResult = options.onAppLaunchResult ?? (() => undefined);
         this.onPromptSubmit = options.onPromptSubmit ?? ((request) => this.publish("conversation.turn.requested", request));
         this.onClose = options.onClose ?? (() => undefined);
+        this.loadApps = options.loadApps ?? loadAppsFromShellAPI;
+        this.launchApp = options.launchApp ?? ((catalogId) => launchAppFromShellAPI(catalogId, this.sessionId));
         this.sessionId = options.sessionId ?? stableSessionID();
         this.turnIdFactory = options.turnIdFactory ?? (() => `turn:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`);
     }
@@ -55,11 +69,30 @@ export class CommandCenterWidget extends HTMLElement implements ShellWidget {
         this.surfaces = [...state.surfaces].filter((surface) => surface.role !== "layer-shell" && surface.status !== "closing");
         this.commandCenter = state.commandCenter;
         this.render();
+        if (this.commandCenter.open) {
+            void this.ensureAppsLoaded();
+        }
     }
 
     private close(): void {
         this.localError = undefined;
         this.onClose();
+    }
+
+    private async ensureAppsLoaded(): Promise<void> {
+        if (this.loadingApps || this.apps.length > 0) {
+            return;
+        }
+        this.loadingApps = true;
+        try {
+            this.apps = await this.loadApps();
+            this.localError = undefined;
+        } catch (error) {
+            this.localError = error instanceof Error ? error.message : String(error);
+        } finally {
+            this.loadingApps = false;
+            this.render();
+        }
     }
 
     private submitPrompt(input: HTMLInputElement): void {
@@ -96,6 +129,27 @@ export class CommandCenterWidget extends HTMLElement implements ShellWidget {
             }
             const message = result?.error || result?.reason || (error instanceof Error ? error.message : String(error));
             this.localError = message;
+            this.render();
+        }
+    }
+
+    private async launchAppRow(app: AppCatalogEntry): Promise<void> {
+        if (app.state !== "ready") {
+            return;
+        }
+        this.launchingCatalogId = app.id;
+        this.localError = undefined;
+        this.render();
+        try {
+            const result = await this.launchApp(app.id);
+            this.onAppLaunchResult(result);
+            if (result.decision === "denied") {
+                this.localError = result.error || result.reason || `Launch denied for ${app.label}`;
+            }
+        } catch (error) {
+            this.localError = error instanceof Error ? error.message : String(error);
+        } finally {
+            this.launchingCatalogId = undefined;
             this.render();
         }
     }
@@ -153,7 +207,8 @@ export class CommandCenterWidget extends HTMLElement implements ShellWidget {
         suggestions.className = "command-center-widget__suggestions";
         const suggestionsTitle = document.createElement("h3");
         suggestionsTitle.textContent = "Suggested";
-        suggestions.append(suggestionsTitle, askRow(), ...this.surfaces.map((surface) => this.surfaceRow(surface)), disabledLaunchRow("Terminal"), disabledLaunchRow("Browser"));
+        const appRows = this.apps.length > 0 ? this.apps.map((app) => this.appRow(app)) : [loadingAppsRow(this.loadingApps)];
+        suggestions.append(suggestionsTitle, askRow(), ...this.surfaces.map((surface) => this.surfaceRow(surface)), ...appRows);
 
         const transcript = this.transcriptNode();
         const errorText = this.commandCenter.error ?? this.localError;
@@ -179,6 +234,21 @@ export class CommandCenterWidget extends HTMLElement implements ShellWidget {
         const meta = document.createElement("span");
         meta.className = "command-center-widget__row-meta";
         meta.textContent = surface.focused ? "focused" : surface.id;
+        row.append(meta);
+        return row;
+    }
+
+    private appRow(app: AppCatalogEntry): HTMLButtonElement {
+        const ready = app.state === "ready";
+        const label = ready ? `Launch: ${app.label}` : `Launch: ${app.label}`;
+        const row = button(`command-center-widget__row${ready ? "" : " command-center-widget__row--disabled"}`, label, `Launch ${app.label}`);
+        row.dataset.action = "app.launch";
+        row.dataset.catalogId = app.id;
+        row.disabled = !ready || this.launchingCatalogId === app.id;
+        row.addEventListener("click", () => { void this.launchAppRow(app); });
+        const meta = document.createElement("span");
+        meta.className = "command-center-widget__row-meta";
+        meta.textContent = this.launchingCatalogId === app.id ? "launching…" : (ready ? app.id : app.reason ?? "disabled");
         row.append(meta);
         return row;
     }
@@ -221,13 +291,13 @@ function askRow(): HTMLButtonElement {
     return row;
 }
 
-function disabledLaunchRow(name: string): HTMLButtonElement {
-    const row = button("command-center-widget__row command-center-widget__row--disabled", `Launch: ${name}`, `Launch ${name} disabled`);
+function loadingAppsRow(loading: boolean): HTMLButtonElement {
+    const row = button("command-center-widget__row command-center-widget__row--disabled", "Launch apps", "App catalog loading");
     row.disabled = true;
     row.dataset.action = "app.launch";
     const meta = document.createElement("span");
     meta.className = "command-center-widget__row-meta";
-    meta.textContent = "not wired yet (#3024)";
+    meta.textContent = loading ? "loading catalog…" : "catalog unavailable";
     row.append(meta);
     return row;
 }
@@ -254,6 +324,42 @@ function stableSessionID(): string {
     const value = `desktop-shell:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`;
     globalThis.sessionStorage?.setItem(key, value);
     return value;
+}
+
+async function loadAppsFromShellAPI(): Promise<AppCatalogEntry[]> {
+    const response = await fetch("/api/shell/apps", { cache: "no-store", headers: authHeaders() });
+    if (!response.ok) {
+        throw new Error(`load apps failed: ${response.status}`);
+    }
+    const body = await response.json() as AppCatalogListResponse;
+    return body.entries ?? [];
+}
+
+async function launchAppFromShellAPI(catalogId: string, sessionId: string): Promise<AppLaunchActionResponse> {
+    const response = await fetch("/api/shell/app/launch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ catalog_id: catalogId, reason: "Command Center row click", session_id: sessionId }),
+    });
+    const body = await response.json() as AppLaunchActionResponse | { result?: AppLaunchActionResponse; error?: string };
+    const result = "result" in body && body.result ? body.result : body as AppLaunchActionResponse;
+    if (!response.ok && !result) {
+        throw new Error(`launch failed: ${response.status}`);
+    }
+    return result;
+}
+
+function authHeaders(): Record<string, string> {
+    const token = tokenFromLocationOrStorage();
+    return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+function tokenFromLocationOrStorage(): string {
+    const fromHash = globalThis.location?.hash?.match(/(?:^|[#&])token=([^&]+)/)?.[1];
+    if (fromHash) {
+        return decodeURIComponent(fromHash);
+    }
+    return globalThis.localStorage?.getItem("agora.shell.token") ?? globalThis.sessionStorage?.getItem("agora.shell.token") ?? "";
 }
 
 if (!customElements.get("agora-command-center")) {

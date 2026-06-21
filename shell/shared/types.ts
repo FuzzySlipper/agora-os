@@ -40,6 +40,41 @@ export interface SurfaceActionResponse {
     };
 }
 
+
+export interface AppCatalogEntry {
+    id: string;
+    label: string;
+    description?: string;
+    icon?: string;
+    tags?: string[];
+    state: "ready" | "disabled" | "pending" | "error" | string;
+    reason?: string;
+}
+
+export interface AppCatalogListResponse {
+    entries: AppCatalogEntry[];
+}
+
+export interface AppLaunchActionResponse {
+    action: "app.launch" | string;
+    catalog_id: string;
+    app_id?: string;
+    decision: SurfaceActionDecision;
+    reason?: string;
+    error?: string;
+    actor?: string;
+    actor_uid?: number;
+    launch_id?: string;
+    pid?: number;
+    surface?: {
+        surface?: SurfaceEvent;
+        focused?: boolean;
+        visible?: boolean;
+        [key: string]: unknown;
+    };
+    queued?: boolean;
+}
+
 export type AgentStatus = "running" | "exited" | "stopped" | "available" | "busy" | "offline" | string;
 
 export interface AgentInfo {

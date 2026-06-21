@@ -99,6 +99,135 @@ func TestStateReturnsAgentsSurfacesAndPendingEscalations(t *testing.T) {
 	}
 }
 
+func TestAppsEndpointListsCatalogWithoutCommands(t *testing.T) {
+	t.Parallel()
+	authNow := time.Now().UTC().Truncate(time.Second)
+	secret := []byte("01234567890123456789012345678901")
+	configDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(configDir, "app-catalog.json"), []byte(`{"version":1,"entries":[{"id":"terminal","label":"Terminal","enabled":true,"command":"foot","role":"toplevel"},{"id":"browser","label":"Browser","enabled":false,"reason":"not installed (#3037)"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	server := New(Config{Secret: secret, Now: func() time.Time { return authNow }, ShellConfigDir: configDir})
+	req := httptest.NewRequest(http.MethodGet, "/api/shell/apps", nil)
+	req.Header.Set("Authorization", "Bearer "+mustMintHumanToken(t, secret))
+	resp := httptest.NewRecorder()
+	server.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("got status %d body %q, want 200", resp.Code, resp.Body.String())
+	}
+	if strings.Contains(resp.Body.String(), "foot") {
+		t.Fatalf("apps response leaked raw command: %s", resp.Body.String())
+	}
+	var list schema.AppCatalogListResponse
+	if err := json.Unmarshal(resp.Body.Bytes(), &list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Entries) != 2 {
+		t.Fatalf("got entries %+v", list.Entries)
+	}
+	for _, entry := range list.Entries {
+		if entry.ID == "terminal" && entry.State != "ready" {
+			t.Fatalf("terminal entry = %+v", entry)
+		}
+		if entry.ID == "browser" && (entry.State != "disabled" || entry.Reason == "") {
+			t.Fatalf("browser entry = %+v", entry)
+		}
+	}
+}
+
+func TestAppLaunchEndpointResolvesCatalogAndReturnsActionResult(t *testing.T) {
+	t.Parallel()
+	authNow := time.Now().UTC().Truncate(time.Second)
+	configDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(configDir, "app-catalog.json"), []byte(`{"version":1,"entries":[{"id":"terminal","label":"Terminal","enabled":true,"command":"foot --title Agora","role":"toplevel","expected_app_id":"foot","wait_surface":true,"wait_timeout_ms":2500}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	compSock := startSchemaServer(t, func(req schema.Request) schema.Response {
+		if req.Method != schema.MethodLaunchApp {
+			t.Fatalf("unexpected method %q", req.Method)
+		}
+		var body schema.LaunchAppRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		if body.Command != "foot --title Agora" || body.Role != "toplevel" || body.ExpectedAppID != "foot" || !body.WaitSurface || body.WaitTimeoutMs != 2500 || body.SessionID != "desktop-shell:test-session" {
+			t.Fatalf("unexpected launch body %+v", body)
+		}
+		payload, _ := json.Marshal(schema.LaunchAppResponse{LaunchID: "launch-1", PID: 4242, Surface: &schema.CompositorTrackedSurface{Surface: schema.CompositorSurface{ID: "view-1", AppID: "foot", Title: "Agora"}}})
+		return schema.Response{OK: true, Body: payload}
+	})
+	secret := []byte("01234567890123456789012345678901")
+	server := New(Config{Secret: secret, Now: func() time.Time { return authNow }, CompositorSocket: compSock, ShellConfigDir: configDir})
+	req := httptest.NewRequest(http.MethodPost, "/api/shell/app/launch", strings.NewReader(`{"catalog_id":"terminal","reason":"test","session_id":"desktop-shell:test-session"}`))
+	req.Header.Set("Authorization", "Bearer "+mustMintHumanToken(t, secret))
+	resp := httptest.NewRecorder()
+	server.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("got status %d body %q, want 200", resp.Code, resp.Body.String())
+	}
+	var result schema.AppLaunchActionResponse
+	if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Action != "app.launch" || result.CatalogID != "terminal" || result.Decision != schema.SurfaceActionAccepted || result.LaunchID != "launch-1" || result.PID != 4242 || result.Surface == nil || result.Surface.Surface.ID != "view-1" {
+		t.Fatalf("unexpected result %+v", result)
+	}
+}
+
+func TestAppLaunchEndpointReturnsStructuredBridgeFailure(t *testing.T) {
+	t.Parallel()
+	authNow := time.Now().UTC().Truncate(time.Second)
+	configDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(configDir, "app-catalog.json"), []byte(`{"version":1,"entries":[{"id":"terminal","label":"Terminal","enabled":true,"command":"foot","role":"toplevel","wait_surface":true}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	compSock := startSchemaServer(t, func(req schema.Request) schema.Response {
+		if req.Method != schema.MethodLaunchApp {
+			t.Fatalf("unexpected method %q", req.Method)
+		}
+		return schema.Response{OK: false, ErrorClass: schema.ErrorAppNotReady, ErrorMessage: "launch did not map a surface"}
+	})
+	secret := []byte("01234567890123456789012345678901")
+	server := New(Config{Secret: secret, Now: func() time.Time { return authNow }, CompositorSocket: compSock, ShellConfigDir: configDir})
+	req := httptest.NewRequest(http.MethodPost, "/api/shell/app/launch", strings.NewReader(`{"catalog_id":"terminal"}`))
+	req.Header.Set("Authorization", "Bearer "+mustMintHumanToken(t, secret))
+	resp := httptest.NewRecorder()
+	server.ServeHTTP(resp, req)
+	if resp.Code != http.StatusGatewayTimeout {
+		t.Fatalf("got status %d body %q, want 504", resp.Code, resp.Body.String())
+	}
+	if !strings.Contains(resp.Body.String(), schema.ErrorAppNotReady) || !strings.Contains(resp.Body.String(), "app.launch") || !strings.Contains(resp.Body.String(), "denied") {
+		t.Fatalf("bridge failure response missing structured denial: %s", resp.Body.String())
+	}
+}
+
+func TestAppLaunchEndpointDeniesUnknownAndDisabledCatalogEntries(t *testing.T) {
+	t.Parallel()
+	authNow := time.Now().UTC().Truncate(time.Second)
+	configDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(configDir, "app-catalog.json"), []byte(`{"version":1,"entries":[{"id":"browser","label":"Browser","enabled":false,"reason":"not installed (#3037)"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	secret := []byte("01234567890123456789012345678901")
+	server := New(Config{Secret: secret, Now: func() time.Time { return authNow }, ShellConfigDir: configDir})
+	for _, tc := range []struct {
+		id     string
+		status int
+		class  string
+	}{{"missing", http.StatusNotFound, "app_not_found"}, {"browser", http.StatusConflict, "app_disabled"}} {
+		req := httptest.NewRequest(http.MethodPost, "/api/shell/app/launch", strings.NewReader(`{"catalog_id":"`+tc.id+`"}`))
+		req.Header.Set("Authorization", "Bearer "+mustMintHumanToken(t, secret))
+		resp := httptest.NewRecorder()
+		server.ServeHTTP(resp, req)
+		if resp.Code != tc.status {
+			t.Fatalf("%s got status %d body %q, want %d", tc.id, resp.Code, resp.Body.String(), tc.status)
+		}
+		if !strings.Contains(resp.Body.String(), tc.class) || !strings.Contains(resp.Body.String(), "app.launch") {
+			t.Fatalf("%s body missing class/action: %s", tc.id, resp.Body.String())
+		}
+	}
+}
+
 func TestSurfaceFocusEndpointCallsCanonicalCompositorAction(t *testing.T) {
 	t.Parallel()
 
