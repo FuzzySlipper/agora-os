@@ -781,6 +781,27 @@ func buildAlwaysOnTopRequest(args []string) (schema.AlwaysOnTopRequest, error) {
 	return schema.AlwaysOnTopRequest{SurfaceID: *surfaceID, Enabled: value, WaitTimeoutMs: *timeout}, nil
 }
 
+func buildFullscreenSurfaceRequest(args []string) (schema.FullscreenSurfaceRequest, error) {
+	fs := flag.NewFlagSet("surface fullscreen", flag.ExitOnError)
+	surfaceID := fs.String("surface", "", "surface id")
+	enabled := fs.Bool("enabled", true, "set fullscreen enabled")
+	state := fs.String("state", "", "set fullscreen state: true or false")
+	timeout := fs.Int("timeout-ms", 4000, "fullscreen acknowledgement/readback timeout in milliseconds")
+	fs.Parse(args)
+	if *surfaceID == "" {
+		return schema.FullscreenSurfaceRequest{}, fmt.Errorf("--surface is required")
+	}
+	value := *enabled
+	if *state != "" {
+		parsed, err := strconv.ParseBool(*state)
+		if err != nil {
+			return schema.FullscreenSurfaceRequest{}, fmt.Errorf("--state must be true or false")
+		}
+		value = parsed
+	}
+	return schema.FullscreenSurfaceRequest{SurfaceID: *surfaceID, Enabled: value, WaitTimeoutMs: *timeout}, nil
+}
+
 func buildCloseSurfaceRequest(args []string) (schema.CloseSurfaceRequest, error) {
 	fs := flag.NewFlagSet("surface close", flag.ExitOnError)
 	surfaceID := fs.String("surface", "", "surface id to close")
@@ -794,7 +815,7 @@ func buildCloseSurfaceRequest(args []string) (schema.CloseSurfaceRequest, error)
 
 func cmdSurface(args []string, pretty bool) error {
 	if len(args) == 0 {
-		return fmt.Errorf("surface subcommand is required: focus, debug-raise, move, tile, resize, always-on-top, close (canonical raise/minimize/maximize are deferred until compositor support is explicit)")
+		return fmt.Errorf("surface subcommand is required: focus, debug-raise, move, tile, resize, always-on-top, fullscreen, close (canonical raise/minimize/maximize are deferred until compositor support is explicit)")
 	}
 	switch args[0] {
 	case "focus":
@@ -833,6 +854,12 @@ func cmdSurface(args []string, pretty bool) error {
 			return err
 		}
 		return callAndPrint(schema.MethodAlwaysOnTop, req, pretty)
+	case "fullscreen":
+		req, err := buildFullscreenSurfaceRequest(args[1:])
+		if err != nil {
+			return err
+		}
+		return callAndPrint(schema.MethodFullscreenSurface, req, pretty)
 	case "close":
 		req, err := buildCloseSurfaceRequest(args[1:])
 		if err != nil {

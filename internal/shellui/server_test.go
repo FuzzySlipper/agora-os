@@ -596,6 +596,91 @@ func TestSurfaceDebugRaiseEndpointRejectsMalformedRequests(t *testing.T) {
 	}
 }
 
+func TestSurfaceFullscreenEndpointCallsCanonicalCompositorAction(t *testing.T) {
+	t.Parallel()
+	secret := []byte("01234567890123456789012345678901")
+	compSock := startSchemaServer(t, func(req schema.Request) schema.Response {
+		if req.Method != schema.MethodFullscreenSurface {
+			t.Fatalf("unexpected method %q", req.Method)
+		}
+		var body schema.FullscreenSurfaceRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		if body.SurfaceID != "view-full" || !body.Enabled {
+			t.Fatalf("unexpected fullscreen body: %+v", body)
+		}
+		value := true
+		return okSchemaResponse(schema.SurfaceActionResponse{
+			Action:      "surface.fullscreen",
+			SurfaceID:   "view-full",
+			Decision:    schema.SurfaceActionAccepted,
+			TargetState: &schema.SurfaceState{Fullscreen: &value},
+			ResultState: &schema.SurfaceState{Fullscreen: &value},
+			Fullscreen:  &value,
+			Surface:     &schema.CompositorTrackedSurface{Surface: schema.CompositorSurface{ID: "view-full", Fullscreen: &value}},
+		})
+	})
+	server := New(Config{Secret: secret, Now: func() time.Time { return time.Now().UTC() }, CompositorSocket: compSock})
+	req := httptest.NewRequest(http.MethodPost, "/api/shell/surface/fullscreen", bytes.NewBufferString(`{"surface_id":"view-full","enabled":true}`))
+	req.Header.Set("Authorization", "Bearer "+mustMintHumanToken(t, secret))
+	resp := httptest.NewRecorder()
+	server.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("got status %d body %q, want 200", resp.Code, resp.Body.String())
+	}
+	var result schema.SurfaceActionResponse
+	if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if result.Action != "surface.fullscreen" || result.Decision != schema.SurfaceActionAccepted || result.ResultState == nil || result.ResultState.Fullscreen == nil || !*result.ResultState.Fullscreen || result.Surface == nil || result.Surface.Surface.Fullscreen == nil || !*result.Surface.Surface.Fullscreen {
+		t.Fatalf("unexpected response: %+v", result)
+	}
+}
+
+func TestSurfaceFullscreenEndpointReturnsStructuredDeniedResults(t *testing.T) {
+	t.Parallel()
+	secret := []byte("01234567890123456789012345678901")
+	value := true
+	compSock := startSchemaServer(t, func(req schema.Request) schema.Response {
+		if req.Method != schema.MethodFullscreenSurface {
+			t.Fatalf("unexpected method %q", req.Method)
+		}
+		body, _ := json.Marshal(schema.SurfaceActionResponse{Action: "surface.fullscreen", SurfaceID: "layer-full", Decision: schema.SurfaceActionDenied, Error: "not a toplevel", TargetState: &schema.SurfaceState{Fullscreen: &value}, Fullscreen: &value})
+		return schema.Response{OK: false, ErrorClass: schema.ErrorBackendUnsupported, ErrorMessage: "not a toplevel", Body: body}
+	})
+	server := New(Config{Secret: secret, Now: func() time.Time { return time.Now().UTC() }, CompositorSocket: compSock})
+	req := httptest.NewRequest(http.MethodPost, "/api/shell/surface/fullscreen", bytes.NewBufferString(`{"surface_id":"layer-full","enabled":true}`))
+	req.Header.Set("Authorization", "Bearer "+mustMintHumanToken(t, secret))
+	resp := httptest.NewRecorder()
+	server.ServeHTTP(resp, req)
+	if resp.Code != http.StatusConflict {
+		t.Fatalf("got status %d body %q, want 409", resp.Code, resp.Body.String())
+	}
+	var result surfaceActionHTTPError
+	if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if result.ErrorClass != schema.ErrorBackendUnsupported || result.Result.Action != "surface.fullscreen" || result.Result.Decision != schema.SurfaceActionDenied || result.Result.TargetState == nil || result.Result.TargetState.Fullscreen == nil || !*result.Result.TargetState.Fullscreen {
+		t.Fatalf("unexpected denied envelope: %+v", result)
+	}
+}
+
+func TestSurfaceFullscreenEndpointRejectsMalformedRequests(t *testing.T) {
+	t.Parallel()
+	secret := []byte("01234567890123456789012345678901")
+	server := New(Config{Secret: secret, Now: func() time.Time { return time.Now().UTC() }})
+	for _, body := range []string{`{`, `{"enabled":true}`} {
+		req := httptest.NewRequest(http.MethodPost, "/api/shell/surface/fullscreen", bytes.NewBufferString(body))
+		req.Header.Set("Authorization", "Bearer "+mustMintHumanToken(t, secret))
+		resp := httptest.NewRecorder()
+		server.ServeHTTP(resp, req)
+		if resp.Code != http.StatusBadRequest {
+			t.Fatalf("body %q got status %d body %q, want 400", body, resp.Code, resp.Body.String())
+		}
+	}
+}
+
 func TestSurfaceAlwaysOnTopEndpointCallsCanonicalCompositorAction(t *testing.T) {
 	t.Parallel()
 	authNow := time.Now().UTC().Truncate(time.Second)

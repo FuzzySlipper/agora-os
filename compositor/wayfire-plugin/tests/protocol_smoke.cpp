@@ -57,6 +57,16 @@ int main()
     assert(property_msg.surface_id == "view-10");
     assert(property_msg.always_on_top.has_value() && (*property_msg.always_on_top == true));
 
+    auto state_msg = parse_bridge_message(
+        "{\"type\":\"set_surface_state\",\"request_id\":\"state-1\",\"surface_id\":\"view-10\",\"fullscreen\":true}");
+    assert(state_msg.kind == bridge_message_kind::set_surface_state);
+    assert(state_msg.request_id == "state-1");
+    assert(state_msg.surface_id == "view-10");
+    assert(state_msg.fullscreen.has_value() && (*state_msg.fullscreen == true));
+    auto state_response = encode_surface_state_response("state-1", "view-10", true, "");
+    assert(state_response.find("\"type\":\"surface_state_response\"") != std::string::npos);
+    assert(state_response.find("\"ok\":true") != std::string::npos);
+
     auto focus_msg = parse_bridge_message(
         "{\"type\":\"focus_surface\",\"request_id\":\"focus-1\",\"surface_id\":\"view-10\"}");
     assert(focus_msg.kind == bridge_message_kind::focus_surface);

@@ -91,6 +91,18 @@ applySurfaceActionEvent(state, {
 });
 assert.deepEqual(state.surfaces.find((surface) => surface.id === "view-6").geometry, { x: 960, y: 0, width: 960, height: 540 }, "tile completion updates geometry from readback result");
 
+state.surfaces.push({ id: "view-7", title: "Fullscreenable", focused: false, fullscreen: false });
+applySurfaceActionEvent(state, {
+  topic: "shell.action.completed",
+  body: { action: "surface.fullscreen", surface_id: "view-7", decision: "accepted", target_state: { fullscreen: true }, result_state: { fullscreen: true }, fullscreen: true, surface: { surface: { id: "view-7", title: "Fullscreenable", fullscreen: true } } },
+});
+assert.equal(state.surfaces.find((surface) => surface.id === "view-7").fullscreen, true, "fullscreen completion updates state from authoritative readback");
+applySurfaceActionEvent(state, {
+  topic: "shell.action.denied",
+  body: { action: "surface.fullscreen", surface_id: "view-7", decision: "denied", error: "surface view-7 is not a toplevel" },
+});
+assert.equal(state.surfaces.find((surface) => surface.id === "view-7").disabled, true, "non-stale fullscreen denial disables entry");
+
 const snapshotState = {
   surfaces: [
     { id: "view-old", title: "Stale" },

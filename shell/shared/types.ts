@@ -16,12 +16,14 @@ export interface SurfaceEvent {
     status?: string;
     action_error?: string;
     always_on_top?: boolean;
+    fullscreen?: boolean;
 }
 
 export type SurfaceActionDecision = "accepted" | "denied" | string;
 
 export interface SurfaceState {
     always_on_top?: boolean;
+    fullscreen?: boolean;
 }
 
 export interface SurfaceActionResponse {
@@ -37,6 +39,7 @@ export interface SurfaceActionResponse {
     target_state?: SurfaceState;
     result_state?: SurfaceState;
     always_on_top?: boolean;
+    fullscreen?: boolean;
     queued?: boolean;
     actor?: string;
     actor_uid?: number;

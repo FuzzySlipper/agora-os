@@ -74,6 +74,7 @@ const (
 	MethodTileSurface         = "tile_surface"
 	MethodSetViewProperty     = "set_view_property"
 	MethodAlwaysOnTop         = "always_on_top"
+	MethodFullscreenSurface   = "fullscreen_surface"
 	MethodCloseSurface        = "close_surface"
 	MethodCloseSurfacesByUID  = "close_surfaces_by_uid"
 	MethodGrantViewport       = "grant_viewport"
@@ -101,25 +102,27 @@ const (
 type CompositorPluginMessageType string
 
 const (
-	PluginMessageSurfaceEvent       CompositorPluginMessageType = "surface_event"
-	PluginMessageCaptureSurface     CompositorPluginMessageType = "capture_surface"
-	PluginMessageCaptureResponse    CompositorPluginMessageType = "capture_response"
-	PluginMessageInjectInput        CompositorPluginMessageType = "inject_input"
-	PluginMessageInputResponse      CompositorPluginMessageType = "input_response"
-	PluginMessagePlaceSurface       CompositorPluginMessageType = "place_surface"
-	PluginMessagePlaceResponse      CompositorPluginMessageType = "place_response"
-	PluginMessagePolicyReplace      CompositorPluginMessageType = "policy_replace"
-	PluginMessagePolicyUpsert       CompositorPluginMessageType = "policy_upsert"
-	PluginMessagePolicyRemove       CompositorPluginMessageType = "policy_remove"
-	PluginMessageInputContext       CompositorPluginMessageType = "input_context"
-	PluginMessageFocusSurface       CompositorPluginMessageType = "focus_surface"
-	PluginMessageFocusResponse      CompositorPluginMessageType = "focus_response"
-	PluginMessageRaiseSurface       CompositorPluginMessageType = "raise_surface"
-	PluginMessageRaiseResponse      CompositorPluginMessageType = "raise_response"
-	PluginMessageSetViewProperty    CompositorPluginMessageType = "set_view_property"
-	PluginMessagePropertyResponse   CompositorPluginMessageType = "property_response"
-	PluginMessageCloseSurface       CompositorPluginMessageType = "close_surface"
-	PluginMessageCloseSurfacesByUID CompositorPluginMessageType = "close_surfaces_by_uid"
+	PluginMessageSurfaceEvent         CompositorPluginMessageType = "surface_event"
+	PluginMessageCaptureSurface       CompositorPluginMessageType = "capture_surface"
+	PluginMessageCaptureResponse      CompositorPluginMessageType = "capture_response"
+	PluginMessageInjectInput          CompositorPluginMessageType = "inject_input"
+	PluginMessageInputResponse        CompositorPluginMessageType = "input_response"
+	PluginMessagePlaceSurface         CompositorPluginMessageType = "place_surface"
+	PluginMessagePlaceResponse        CompositorPluginMessageType = "place_response"
+	PluginMessagePolicyReplace        CompositorPluginMessageType = "policy_replace"
+	PluginMessagePolicyUpsert         CompositorPluginMessageType = "policy_upsert"
+	PluginMessagePolicyRemove         CompositorPluginMessageType = "policy_remove"
+	PluginMessageInputContext         CompositorPluginMessageType = "input_context"
+	PluginMessageFocusSurface         CompositorPluginMessageType = "focus_surface"
+	PluginMessageFocusResponse        CompositorPluginMessageType = "focus_response"
+	PluginMessageRaiseSurface         CompositorPluginMessageType = "raise_surface"
+	PluginMessageRaiseResponse        CompositorPluginMessageType = "raise_response"
+	PluginMessageSetViewProperty      CompositorPluginMessageType = "set_view_property"
+	PluginMessagePropertyResponse     CompositorPluginMessageType = "property_response"
+	PluginMessageSetSurfaceState      CompositorPluginMessageType = "set_surface_state"
+	PluginMessageSurfaceStateResponse CompositorPluginMessageType = "surface_state_response"
+	PluginMessageCloseSurface         CompositorPluginMessageType = "close_surface"
+	PluginMessageCloseSurfacesByUID   CompositorPluginMessageType = "close_surfaces_by_uid"
 )
 
 type CompositorSurfaceEventName string
@@ -188,6 +191,7 @@ type CompositorSurface struct {
 	IsTopInStack     *bool                      `json:"is_top_in_stack,omitempty"`
 	ZOrderGeneration uint64                     `json:"z_order_generation,omitempty"`
 	AlwaysOnTop      *bool                      `json:"always_on_top,omitempty"`
+	Fullscreen       *bool                      `json:"fullscreen,omitempty"`
 }
 
 type CompositorClientIdentity struct {
@@ -328,6 +332,21 @@ type CompositorSetViewProperty struct {
 }
 
 type CompositorPropertyPluginResponse struct {
+	Type      CompositorPluginMessageType `json:"type"`
+	RequestID string                      `json:"request_id"`
+	SurfaceID string                      `json:"surface_id"`
+	OK        bool                        `json:"ok"`
+	Error     string                      `json:"error,omitempty"`
+}
+
+type CompositorSetSurfaceState struct {
+	Type       CompositorPluginMessageType `json:"type"`
+	RequestID  string                      `json:"request_id,omitempty"`
+	SurfaceID  string                      `json:"surface_id"`
+	Fullscreen *bool                       `json:"fullscreen,omitempty"`
+}
+
+type CompositorSurfaceStatePluginResponse struct {
 	Type      CompositorPluginMessageType `json:"type"`
 	RequestID string                      `json:"request_id"`
 	SurfaceID string                      `json:"surface_id"`
@@ -519,6 +538,7 @@ type TileSurfaceRequest struct {
 
 type SurfaceState struct {
 	AlwaysOnTop *bool                 `json:"always_on_top,omitempty"`
+	Fullscreen  *bool                 `json:"fullscreen,omitempty"`
 	Stack       *CompositorStackState `json:"stack,omitempty"`
 }
 
@@ -535,6 +555,7 @@ type SurfaceActionResponse struct {
 	TargetState      *SurfaceState             `json:"target_state,omitempty"`
 	ResultState      *SurfaceState             `json:"result_state,omitempty"`
 	AlwaysOnTop      *bool                     `json:"always_on_top,omitempty"`
+	Fullscreen       *bool                     `json:"fullscreen,omitempty"`
 	Queued           bool                      `json:"queued,omitempty"`
 	Actor            string                    `json:"actor,omitempty"`
 	ActorUID         *uint32                   `json:"actor_uid,omitempty"`
@@ -548,6 +569,12 @@ type SetViewPropertyRequest struct {
 }
 
 type AlwaysOnTopRequest struct {
+	SurfaceID     string `json:"surface_id"`
+	Enabled       bool   `json:"enabled"`
+	WaitTimeoutMs int    `json:"wait_timeout_ms,omitempty"`
+}
+
+type FullscreenSurfaceRequest struct {
 	SurfaceID     string `json:"surface_id"`
 	Enabled       bool   `json:"enabled"`
 	WaitTimeoutMs int    `json:"wait_timeout_ms,omitempty"`

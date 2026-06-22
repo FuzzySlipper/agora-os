@@ -903,6 +903,289 @@ func TestDebugRaiseDeniesLayerShell(t *testing.T) {
 	}
 }
 
+func TestDispatchFullscreenRoutesToPluginAndPublishesAction(t *testing.T) {
+	pub := &fakePublisher{}
+	bridge, err := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	server, client, cleanup := unixSocketPair(t)
+	defer cleanup()
+
+	go bridge.HandlePluginConn(server)
+	dec := json.NewDecoder(client)
+	readInitialSync(t, dec)
+
+	visible := true
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventMapped, Surface: schema.CompositorSurface{ID: "view-fullscreen", WayfireViewID: 62, Role: "toplevel", Visible: &visible, OutputID: "HDMI-A-1"}, Client: schema.CompositorClientIdentity{UID: 60001}})
+	var discard schema.CompositorPolicyUpsert
+	_ = dec.Decode(&discard)
+
+	body, err := json.Marshal(schema.FullscreenSurfaceRequest{SurfaceID: "view-fullscreen", Enabled: true, WaitTimeoutMs: 500})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	respCh := make(chan schema.Response, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		resp, err := bridge.dispatch(60002, schema.Request{Method: schema.MethodFullscreenSurface, Body: body})
+		if err != nil {
+			errCh <- err
+			return
+		}
+		respCh <- resp
+	}()
+
+	var msg schema.CompositorSetSurfaceState
+	if err := dec.Decode(&msg); err != nil {
+		t.Fatalf("decode set_surface_state: %v", err)
+	}
+	if msg.Type != schema.PluginMessageSetSurfaceState || msg.SurfaceID != "view-fullscreen" || msg.RequestID == "" || msg.Fullscreen == nil || !*msg.Fullscreen {
+		t.Fatalf("unexpected set_surface_state message: %+v", msg)
+	}
+	if err := json.NewEncoder(client).Encode(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceStateResponse, RequestID: msg.RequestID, SurfaceID: "view-fullscreen", OK: true}); err != nil {
+		t.Fatalf("encode surface state response: %v", err)
+	}
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventFocused, Surface: schema.CompositorSurface{ID: "view-fullscreen", WayfireViewID: 62, Role: "toplevel", Visible: &visible, OutputID: "HDMI-A-1", Fullscreen: &visible}, Client: schema.CompositorClientIdentity{UID: 60001}})
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("dispatch returned error: %v", err)
+	case resp := <-respCh:
+		if !resp.OK {
+			t.Fatalf("dispatch response not OK: %+v", resp)
+		}
+		var action schema.SurfaceActionResponse
+		if err := json.Unmarshal(resp.Body, &action); err != nil {
+			t.Fatalf("unmarshal response: %v", err)
+		}
+		if action.Action != "surface.fullscreen" || action.Decision != schema.SurfaceActionAccepted || action.TargetState == nil || action.TargetState.Fullscreen == nil || !*action.TargetState.Fullscreen || action.ResultState == nil || action.ResultState.Fullscreen == nil || !*action.ResultState.Fullscreen || action.Fullscreen == nil || !*action.Fullscreen || action.Surface == nil || action.Surface.Surface.Fullscreen == nil || !*action.Surface.Surface.Fullscreen {
+			t.Fatalf("unexpected action response: %+v", action)
+		}
+	case <-time.After(700 * time.Millisecond):
+		t.Fatal("timed out waiting for dispatch response")
+	}
+	if len(pub.events) == 0 || pub.events[len(pub.events)-1].topic != schema.TopicShellActionCompleted {
+		t.Fatalf("shell action completion was not published: %+v", pub.events)
+	}
+}
+
+func TestDispatchFullscreenDeniesPluginAckTimeout(t *testing.T) {
+	pub := &fakePublisher{}
+	bridge, err := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	server, client, cleanup := unixSocketPair(t)
+	defer cleanup()
+	go bridge.HandlePluginConn(server)
+	dec := json.NewDecoder(client)
+	readInitialSync(t, dec)
+
+	visible := true
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventMapped, Surface: schema.CompositorSurface{ID: "view-full-timeout", WayfireViewID: 62, Role: "toplevel", Visible: &visible, OutputID: "HDMI-A-1", Fullscreen: boolPtr(false)}, Client: schema.CompositorClientIdentity{UID: 60001}})
+	var discard schema.CompositorPolicyUpsert
+	_ = dec.Decode(&discard)
+
+	body, err := json.Marshal(schema.FullscreenSurfaceRequest{SurfaceID: "view-full-timeout", Enabled: true, WaitTimeoutMs: 25})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := bridge.dispatch(60002, schema.Request{Method: schema.MethodFullscreenSurface, Body: body})
+		errCh <- err
+	}()
+	var msg schema.CompositorSetSurfaceState
+	if err := dec.Decode(&msg); err != nil {
+		t.Fatalf("decode set_surface_state: %v", err)
+	}
+	if msg.Type != schema.PluginMessageSetSurfaceState || msg.SurfaceID != "view-full-timeout" || msg.RequestID == "" || msg.Fullscreen == nil || !*msg.Fullscreen {
+		t.Fatalf("unexpected set_surface_state message: %+v", msg)
+	}
+	select {
+	case err := <-errCh:
+		assertFullscreenDenied(t, pub, err, schema.ErrorFrameTimeout, "fullscreen plugin acknowledgement timed out", true, false)
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("timed out waiting for fullscreen ack timeout")
+	}
+}
+
+func TestDispatchFullscreenDeniesReadbackTimeoutAfterPluginAck(t *testing.T) {
+	pub := &fakePublisher{}
+	bridge, err := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	server, client, cleanup := unixSocketPair(t)
+	defer cleanup()
+	go bridge.HandlePluginConn(server)
+	dec := json.NewDecoder(client)
+	readInitialSync(t, dec)
+
+	visible := true
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventMapped, Surface: schema.CompositorSurface{ID: "view-full-readback-timeout", WayfireViewID: 62, Role: "toplevel", Visible: &visible, OutputID: "HDMI-A-1", Fullscreen: boolPtr(false)}, Client: schema.CompositorClientIdentity{UID: 60001}})
+	var discard schema.CompositorPolicyUpsert
+	_ = dec.Decode(&discard)
+
+	body, err := json.Marshal(schema.FullscreenSurfaceRequest{SurfaceID: "view-full-readback-timeout", Enabled: true, WaitTimeoutMs: 30})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := bridge.dispatch(60002, schema.Request{Method: schema.MethodFullscreenSurface, Body: body})
+		errCh <- err
+	}()
+	var msg schema.CompositorSetSurfaceState
+	if err := dec.Decode(&msg); err != nil {
+		t.Fatalf("decode set_surface_state: %v", err)
+	}
+	if err := json.NewEncoder(client).Encode(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceStateResponse, RequestID: msg.RequestID, SurfaceID: "view-full-readback-timeout", OK: true}); err != nil {
+		t.Fatalf("encode surface state response: %v", err)
+	}
+	select {
+	case err := <-errCh:
+		assertFullscreenDenied(t, pub, err, schema.ErrorFrameTimeout, "fullscreen readback timed out after plugin ack", true, false)
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("timed out waiting for fullscreen readback timeout")
+	}
+}
+
+func TestDispatchFullscreenDeniesPluginNegativeAck(t *testing.T) {
+	pub := &fakePublisher{}
+	bridge, err := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	server, client, cleanup := unixSocketPair(t)
+	defer cleanup()
+	go bridge.HandlePluginConn(server)
+	dec := json.NewDecoder(client)
+	readInitialSync(t, dec)
+
+	visible := true
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventMapped, Surface: schema.CompositorSurface{ID: "view-full-negative-ack", WayfireViewID: 62, Role: "toplevel", Visible: &visible, OutputID: "HDMI-A-1", Fullscreen: boolPtr(false)}, Client: schema.CompositorClientIdentity{UID: 60001}})
+	var discard schema.CompositorPolicyUpsert
+	_ = dec.Decode(&discard)
+
+	body, err := json.Marshal(schema.FullscreenSurfaceRequest{SurfaceID: "view-full-negative-ack", Enabled: true, WaitTimeoutMs: 250})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := bridge.dispatch(60002, schema.Request{Method: schema.MethodFullscreenSurface, Body: body})
+		errCh <- err
+	}()
+	var msg schema.CompositorSetSurfaceState
+	if err := dec.Decode(&msg); err != nil {
+		t.Fatalf("decode set_surface_state: %v", err)
+	}
+	if err := json.NewEncoder(client).Encode(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceStateResponse, RequestID: msg.RequestID, SurfaceID: "view-full-negative-ack", OK: false, Error: "backend refused fullscreen"}); err != nil {
+		t.Fatalf("encode surface state response: %v", err)
+	}
+	select {
+	case err := <-errCh:
+		assertFullscreenDenied(t, pub, err, schema.ErrorProtocolError, "backend refused fullscreen", true, false)
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("timed out waiting for fullscreen negative ack denial")
+	}
+}
+
+func assertFullscreenDenied(t *testing.T, pub *fakePublisher, err error, wantClass, wantMessage string, wantTarget, wantReadback bool) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("expected fullscreen denial error")
+	}
+	if class, _ := classifyError(err); class != wantClass {
+		t.Fatalf("got error class %q (%v), want %q", class, err, wantClass)
+	}
+	if !strings.Contains(err.Error(), wantMessage) {
+		t.Fatalf("error %q does not contain %q", err.Error(), wantMessage)
+	}
+	if len(pub.events) == 0 || pub.events[len(pub.events)-1].topic != schema.TopicShellActionDenied {
+		t.Fatalf("shell action denial was not published: %+v", pub.events)
+	}
+	action, ok := pub.events[len(pub.events)-1].body.(schema.SurfaceActionResponse)
+	if !ok || action.Action != "surface.fullscreen" || action.Decision != schema.SurfaceActionDenied || action.TargetState == nil || action.TargetState.Fullscreen == nil || *action.TargetState.Fullscreen != wantTarget {
+		t.Fatalf("unexpected denied action %+v", pub.events[len(pub.events)-1].body)
+	}
+	if action.Surface == nil || action.Surface.Surface.Fullscreen == nil || *action.Surface.Surface.Fullscreen != wantReadback {
+		t.Fatalf("denied action missing readback fullscreen=%v: %+v", wantReadback, action)
+	}
+}
+
+func TestDispatchFullscreenDeniesMissingStaleAndNoOutput(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(*Bridge)
+		class string
+	}{
+		{name: "missing", class: schema.ErrorSurfaceNotFound},
+		{name: "stale", class: schema.ErrorSurfaceStale, setup: func(bridge *Bridge) {
+			bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventMapped, Surface: schema.CompositorSurface{ID: "view-full", Role: "toplevel", WayfireViewID: 52, Visible: boolPtr(true), OutputID: "HDMI-A-1"}, Client: schema.CompositorClientIdentity{UID: 60001}})
+			bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventUnmapped, Surface: schema.CompositorSurface{ID: "view-full", WayfireViewID: 52}, Client: schema.CompositorClientIdentity{UID: 60001}})
+		}},
+		{name: "no output", class: schema.ErrorBackendUnsupported, setup: func(bridge *Bridge) {
+			bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventMapped, Surface: schema.CompositorSurface{ID: "view-full", Role: "toplevel", WayfireViewID: 52, Visible: boolPtr(true)}, Client: schema.CompositorClientIdentity{UID: 60001}})
+		}},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			pub := &fakePublisher{}
+			bridge, err := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			if tc.setup != nil {
+				tc.setup(bridge)
+			}
+			body, err := json.Marshal(schema.FullscreenSurfaceRequest{SurfaceID: "view-full", Enabled: true, WaitTimeoutMs: 20})
+			if err != nil {
+				t.Fatalf("marshal request: %v", err)
+			}
+			if _, err := bridge.dispatch(60002, schema.Request{Method: schema.MethodFullscreenSurface, Body: body}); err == nil {
+				t.Fatal("expected fullscreen denial")
+			} else if class, _ := classifyError(err); class != tc.class {
+				t.Fatalf("got error class %q (%v), want %q", class, err, tc.class)
+			}
+			if len(pub.events) == 0 || pub.events[len(pub.events)-1].topic != schema.TopicShellActionDenied {
+				t.Fatalf("shell action denial was not published: %+v", pub.events)
+			}
+			action, ok := pub.events[len(pub.events)-1].body.(schema.SurfaceActionResponse)
+			if !ok || action.Action != "surface.fullscreen" || action.Decision != schema.SurfaceActionDenied || action.TargetState == nil || action.TargetState.Fullscreen == nil || !*action.TargetState.Fullscreen {
+				t.Fatalf("unexpected denied action %+v", pub.events[len(pub.events)-1].body)
+			}
+		})
+	}
+}
+
+func TestDispatchFullscreenRejectsLayerShell(t *testing.T) {
+	pub := &fakePublisher{}
+	bridge, err := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventMapped, Surface: schema.CompositorSurface{ID: "layer-full", SurfaceKind: schema.SurfaceKindLayerShell, Visible: boolPtr(true), OutputID: "HDMI-A-1"}, Client: schema.CompositorClientIdentity{UID: 60001}})
+	body, err := json.Marshal(schema.FullscreenSurfaceRequest{SurfaceID: "layer-full", Enabled: true, WaitTimeoutMs: 20})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	if _, err := bridge.dispatch(60002, schema.Request{Method: schema.MethodFullscreenSurface, Body: body}); err == nil {
+		t.Fatal("expected layer-shell fullscreen denial")
+	} else if class, _ := classifyError(err); class != schema.ErrorBackendUnsupported {
+		t.Fatalf("got error class %q (%v), want %q", class, err, schema.ErrorBackendUnsupported)
+	}
+	if len(pub.events) == 0 || pub.events[len(pub.events)-1].topic != schema.TopicShellActionDenied {
+		t.Fatalf("shell action denial was not published: %+v", pub.events)
+	}
+	action, ok := pub.events[len(pub.events)-1].body.(schema.SurfaceActionResponse)
+	if !ok || action.Action != "surface.fullscreen" || action.Decision != schema.SurfaceActionDenied || action.TargetState == nil || action.TargetState.Fullscreen == nil || !*action.TargetState.Fullscreen {
+		t.Fatalf("unexpected denied action %+v", pub.events[len(pub.events)-1].body)
+	}
+}
+
 func TestDispatchAlwaysOnTopRoutesToPluginAndPublishesAction(t *testing.T) {
 	pub := &fakePublisher{}
 	bridge, err := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})

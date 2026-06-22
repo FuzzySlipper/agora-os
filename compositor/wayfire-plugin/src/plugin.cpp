@@ -40,6 +40,7 @@
 #include <wayfire/view-helpers.hpp>
 #include <wayfire/workspace-set.hpp>
 #include <wayfire/toplevel-view.hpp>
+#include <wayfire/window-manager.hpp>
 #include <wayfire/view.hpp>
 
 namespace
@@ -629,6 +630,13 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         std::optional<bool> always_on_top;
     };
 
+    struct pending_surface_state_request_t
+    {
+        std::string request_id;
+        std::string surface_id;
+        std::optional<bool> fullscreen;
+    };
+
     struct pending_focus_request_t
     {
         std::string request_id;
@@ -790,6 +798,7 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         pending_input_requests_.clear();
         pending_place_requests_.clear();
         pending_property_requests_.clear();
+            pending_surface_state_requests_.clear();
         pending_focus_requests_.clear();
         pending_surface_resync_ = false;
     }
@@ -933,6 +942,7 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         std::vector<pending_input_request_t> input_requests;
         std::vector<pending_place_request_t> place_requests;
         std::vector<pending_property_request_t> property_requests;
+        std::vector<pending_surface_state_request_t> state_requests;
         std::vector<pending_focus_request_t> focus_requests;
         std::vector<pending_raise_request_t> raise_requests;
         bool should_resync = false;
@@ -945,6 +955,7 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
             input_requests.swap(pending_input_requests_);
             place_requests.swap(pending_place_requests_);
             property_requests.swap(pending_property_requests_);
+            state_requests.swap(pending_surface_state_requests_);
             focus_requests.swap(pending_focus_requests_);
             raise_requests.swap(pending_raise_requests_);
             should_resync = pending_surface_resync_;
@@ -960,6 +971,10 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         for (const auto& request : property_requests)
         {
             process_property_request(request, views);
+        }
+        for (const auto& request : state_requests)
+        {
+            process_surface_state_request(request, views);
         }
         for (const auto& request : focus_requests)
         {
@@ -1160,6 +1175,25 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         {
             std::lock_guard lock(state_mutex_);
             pending_property_requests_.push_back({std::move(request_id), std::move(surface_id), always_on_top});
+        }
+
+        notify_close_wake();
+    }
+
+    void queue_surface_state_request(std::string request_id, std::string surface_id, std::optional<bool> fullscreen)
+    {
+        if (request_id.empty())
+        {
+            request_id = surface_id;
+        }
+        if (surface_id.empty())
+        {
+            return;
+        }
+
+        {
+            std::lock_guard lock(state_mutex_);
+            pending_surface_state_requests_.push_back({std::move(request_id), std::move(surface_id), fullscreen});
         }
 
         notify_close_wake();
@@ -1535,6 +1569,76 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         send_raise_response(request, true, "");
     }
 
+    void send_surface_state_response(const pending_surface_state_request_t& request, bool ok, std::string_view error)
+    {
+        if (!bridge_)
+        {
+            return;
+        }
+        bridge_->send_line(agora::protocol::encode_surface_state_response(request.request_id, request.surface_id, ok, error));
+    }
+
+    bool set_view_fullscreen(wayfire_view view, wf::toplevel_view_interface_t *toplevel, bool fullscreen)
+    {
+        if (!view || !toplevel)
+        {
+            return false;
+        }
+        auto *output = view->get_output();
+        if (!output || !wf::get_core().default_wm)
+        {
+            return false;
+        }
+        if (toplevel->pending_fullscreen() == fullscreen)
+        {
+            return true;
+        }
+        bool observed = false;
+        wf::signal::connection_t<wf::view_fullscreen_signal> on_fullscreen = [&] (wf::view_fullscreen_signal *ev)
+        {
+            if (ev && (ev->view.get() == toplevel) && (ev->state == fullscreen))
+            {
+                observed = true;
+            }
+        };
+        view->connect(&on_fullscreen);
+        wf::get_core().default_wm->fullscreen_request(wayfire_toplevel_view{toplevel}, output, fullscreen);
+        on_fullscreen.disconnect();
+        return observed || (toplevel->pending_fullscreen() == fullscreen);
+    }
+
+    void process_surface_state_request(const pending_surface_state_request_t& request,
+        const std::unordered_map<std::string, wayfire_view>& views)
+    {
+        auto it = views.find(request.surface_id);
+        if ((it == views.end()) || !it->second)
+        {
+            LOGW("agora-bridge: state target not found: ", request.surface_id);
+            send_surface_state_response(request, false, "surface not found");
+            return;
+        }
+        auto view = it->second;
+        auto *toplevel = dynamic_cast<wf::toplevel_view_interface_t*>(view.get());
+        if (!toplevel)
+        {
+            send_surface_state_response(request, false, "surface is not a toplevel");
+            return;
+        }
+        if (!request.fullscreen.has_value())
+        {
+            send_surface_state_response(request, false, "no supported state requested");
+            return;
+        }
+        if (!set_view_fullscreen(view, toplevel, *request.fullscreen))
+        {
+            send_surface_state_response(request, false, "fullscreen state change was not observed");
+            return;
+        }
+        track_view(view);
+        emit_surface_event("focused", view);
+        send_surface_state_response(request, true, "");
+    }
+
     void send_property_response(const pending_property_request_t& request, bool ok, std::string_view error)
     {
         if (!bridge_)
@@ -1732,6 +1836,10 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         {
             snapshot.always_on_top = state_it->second;
         }
+        if (auto *toplevel = dynamic_cast<wf::toplevel_view_interface_t*>(view.get()))
+        {
+            snapshot.fullscreen = toplevel->pending_fullscreen();
+        }
         annotate_stack_readback(snapshot, view);
         return snapshot;
     }
@@ -1808,6 +1916,9 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
           case agora::protocol::bridge_message_kind::set_view_property:
             queue_property_request(message.request_id, message.surface_id, message.always_on_top);
             break;
+          case agora::protocol::bridge_message_kind::set_surface_state:
+            queue_surface_state_request(message.request_id, message.surface_id, message.fullscreen);
+            break;
           case agora::protocol::bridge_message_kind::invalid:
             break;
         }
@@ -1863,6 +1974,7 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
     std::vector<pending_input_request_t> pending_input_requests_;
     std::vector<pending_place_request_t> pending_place_requests_;
     std::vector<pending_property_request_t> pending_property_requests_;
+    std::vector<pending_surface_state_request_t> pending_surface_state_requests_;
     std::vector<pending_focus_request_t> pending_focus_requests_;
     std::vector<pending_raise_request_t> pending_raise_requests_;
     bool pending_surface_resync_ = false;

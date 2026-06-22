@@ -43,6 +43,7 @@ struct surface_snapshot_t
     double scale_factor = 1.0;
     std::string output_id;
     std::optional<bool> always_on_top;
+    std::optional<bool> fullscreen;
     int32_t workspace_x = 0;
     int32_t workspace_y = 0;
     std::string stack_layer;
@@ -67,6 +68,7 @@ enum class bridge_message_kind
     focus_surface,
     raise_surface,
     set_view_property,
+    set_surface_state,
 };
 
 enum class input_event_kind
@@ -109,6 +111,7 @@ struct bridge_message_t
     std::optional<uint32_t> actor_uid;
     std::optional<uint32_t> owner_uid;
     std::optional<bool> always_on_top;
+    std::optional<bool> fullscreen;
     std::string mode;
 };
 
@@ -295,6 +298,10 @@ inline std::string encode_surface_event(std::string_view event_name, const surfa
     {
         out << ",\"always_on_top\":" << (*surface.always_on_top ? "true" : "false");
     }
+    if (surface.fullscreen.has_value())
+    {
+        out << ",\"fullscreen\":" << (*surface.fullscreen ? "true" : "false");
+    }
     append_layer_shell_metadata(out, surface);
     out << "},"
         << "\"client\":{" << "\"pid\":" << client.pid << ","
@@ -381,6 +388,22 @@ inline std::string encode_property_response(std::string_view request_id, std::st
 {
     std::ostringstream out;
     out << "{\"type\":\"property_response\","
+        << "\"request_id\":\"" << json_escape(request_id) << "\","
+        << "\"surface_id\":\"" << json_escape(surface_id) << "\","
+        << "\"ok\":" << (ok ? "true" : "false");
+    if (!ok || !error.empty())
+    {
+        out << ",\"error\":\"" << json_escape(error) << "\"";
+    }
+    out << "}";
+    return out.str();
+}
+
+inline std::string encode_surface_state_response(std::string_view request_id, std::string_view surface_id,
+    bool ok, std::string_view error = "")
+{
+    std::ostringstream out;
+    out << "{\"type\":\"surface_state_response\","
         << "\"request_id\":\"" << json_escape(request_id) << "\","
         << "\"surface_id\":\"" << json_escape(surface_id) << "\","
         << "\"ok\":" << (ok ? "true" : "false");
@@ -807,6 +830,15 @@ inline bridge_message_t parse_bridge_message(const std::string& line)
         {
             message.always_on_top = find_bool_field(line, "always_on_top");
         }
+        return message;
+    }
+
+    if (*type == "set_surface_state")
+    {
+        message.kind = bridge_message_kind::set_surface_state;
+        message.request_id = find_string_field(line, "request_id").value_or("");
+        message.surface_id = find_string_field(line, "surface_id").value_or("");
+        message.fullscreen = find_bool_field(line, "fullscreen");
         return message;
     }
 

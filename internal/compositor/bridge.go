@@ -144,6 +144,8 @@ type Bridge struct {
 	raiseWaiters      map[string]chan schema.CompositorRaisePluginResponse
 	propertySeq       uint64
 	propertyWaiters   map[string]chan schema.CompositorPropertyPluginResponse
+	stateSeq          uint64
+	stateWaiters      map[string]chan schema.CompositorSurfaceStatePluginResponse
 	sessionSeq        uint64
 	launchSeq         uint64
 	sessions          map[string]schema.CompositorSession
@@ -175,6 +177,7 @@ func New(bus publisher, cfg Config) (*Bridge, error) {
 		focusWaiters:      make(map[string]chan schema.CompositorFocusPluginResponse),
 		raiseWaiters:      make(map[string]chan schema.CompositorRaisePluginResponse),
 		propertyWaiters:   make(map[string]chan schema.CompositorPropertyPluginResponse),
+		stateWaiters:      make(map[string]chan schema.CompositorSurfaceStatePluginResponse),
 		sessions:          make(map[string]schema.CompositorSession),
 		launches:          make(map[string]*launchRecord),
 		surfaceLaunch:     make(map[string]string),
@@ -239,6 +242,8 @@ func (b *Bridge) HandlePluginConn(conn net.Conn) {
 			b.handleRaiseResponse(schema.CompositorRaisePluginResponse{Type: msg.Type, RequestID: msg.RequestID, SurfaceID: msg.SurfaceID, OK: msg.OK, Error: msg.Error})
 		case schema.PluginMessagePropertyResponse:
 			b.handlePropertyResponse(schema.CompositorPropertyPluginResponse{Type: msg.Type, RequestID: msg.RequestID, SurfaceID: msg.SurfaceID, OK: msg.OK, Error: msg.Error})
+		case schema.PluginMessageSurfaceStateResponse:
+			b.handleSurfaceStateResponse(schema.CompositorSurfaceStatePluginResponse{Type: msg.Type, RequestID: msg.RequestID, SurfaceID: msg.SurfaceID, OK: msg.OK, Error: msg.Error})
 		case schema.PluginMessageInputResponse:
 			b.handleInputResponse(schema.CompositorInputPluginResponse{
 				Type:      msg.Type,
@@ -1957,6 +1962,150 @@ func (b *Bridge) surfaceAlwaysOnTopMatches(surfaceID string, want bool) bool {
 	return ok && tracked.Surface.AlwaysOnTop != nil && *tracked.Surface.AlwaysOnTop == want
 }
 
+func (b *Bridge) FullscreenSurfaceAction(actorUID uint32, req schema.FullscreenSurfaceRequest) (schema.SurfaceActionResponse, error) {
+	if req.SurfaceID == "" {
+		err := fmt.Errorf("surface_id is required")
+		b.publishFullscreenDenied(actorUID, req, err, nil)
+		return schema.SurfaceActionResponse{}, err
+	}
+	b.mu.RLock()
+	tracked, ok := b.surfaces[req.SurfaceID]
+	b.mu.RUnlock()
+	if !ok {
+		b.mu.RLock()
+		_, stale := b.staleSurfaces[req.SurfaceID]
+		b.mu.RUnlock()
+		var err error
+		if stale {
+			err = compositorError(schema.ErrorSurfaceStale, "surface %s is unmapped/stale", req.SurfaceID)
+		} else {
+			err = compositorError(schema.ErrorSurfaceNotFound, "surface %s not found", req.SurfaceID)
+		}
+		b.publishFullscreenDenied(actorUID, req, err, nil)
+		return schema.SurfaceActionResponse{}, err
+	}
+	if tracked.Surface.SurfaceKind == schema.SurfaceKindLayerShell || (tracked.Surface.Role != "" && tracked.Surface.Role != "toplevel") {
+		err := compositorError(schema.ErrorBackendUnsupported, "surface %s is not an xdg toplevel and cannot be fullscreened", req.SurfaceID)
+		b.publishFullscreenDenied(actorUID, req, err, &tracked)
+		return schema.SurfaceActionResponse{}, err
+	}
+	if !tracked.Visible {
+		err := compositorError(schema.ErrorSurfaceStale, "surface %s is not visible", req.SurfaceID)
+		b.publishFullscreenDenied(actorUID, req, err, &tracked)
+		return schema.SurfaceActionResponse{}, err
+	}
+	if tracked.OutputID == "" && tracked.Surface.OutputID == "" {
+		err := compositorError(schema.ErrorBackendUnsupported, "surface %s has no output for fullscreen", req.SurfaceID)
+		b.publishFullscreenDenied(actorUID, req, err, &tracked)
+		return schema.SurfaceActionResponse{}, err
+	}
+	if err := b.setSurfaceFullscreen(req.SurfaceID, req.Enabled, time.Duration(req.WaitTimeoutMs)*time.Millisecond); err != nil {
+		b.publishFullscreenDenied(actorUID, req, err, &tracked)
+		return schema.SurfaceActionResponse{}, err
+	}
+	b.mu.RLock()
+	updated, ok := b.surfaces[req.SurfaceID]
+	if ok {
+		updated = b.decorateSurfaceLocked(updated)
+	}
+	b.mu.RUnlock()
+	if !ok {
+		err := compositorError(schema.ErrorSurfaceStale, "surface %s disappeared after fullscreen", req.SurfaceID)
+		b.publishFullscreenDenied(actorUID, req, err, &tracked)
+		return schema.SurfaceActionResponse{}, err
+	}
+	if updated.Surface.Fullscreen == nil || *updated.Surface.Fullscreen != req.Enabled {
+		err := compositorError(schema.ErrorFrameTimeout, "surface %s fullscreen readback did not converge", req.SurfaceID)
+		b.publishFullscreenDenied(actorUID, req, err, &updated)
+		return schema.SurfaceActionResponse{}, err
+	}
+	actor, uid := b.surfaceActionActor(actorUID)
+	value := req.Enabled
+	state := schema.SurfaceState{Fullscreen: &value}
+	result := schema.SurfaceActionResponse{Action: "surface.fullscreen", SurfaceID: req.SurfaceID, Decision: schema.SurfaceActionAccepted, Reason: "fullscreen updated via compositor plugin", Actor: actor, ActorUID: uid, TargetState: &state, ResultState: &state, Fullscreen: &value, Surface: &updated}
+	if b.bus != nil {
+		if err := b.bus.Publish(schema.TopicShellActionCompleted, result); err != nil {
+			log.Printf("publish shell action completed: %v", err)
+		}
+	}
+	return result, nil
+}
+
+func (b *Bridge) publishFullscreenDenied(actorUID uint32, req schema.FullscreenSurfaceRequest, err error, surface *schema.CompositorTrackedSurface) {
+	actor, uid := b.surfaceActionActor(actorUID)
+	value := req.Enabled
+	state := schema.SurfaceState{Fullscreen: &value}
+	result := schema.SurfaceActionResponse{Action: "surface.fullscreen", SurfaceID: req.SurfaceID, Decision: schema.SurfaceActionDenied, Reason: err.Error(), Error: err.Error(), Actor: actor, ActorUID: uid, TargetState: &state, Fullscreen: &value, Surface: surface}
+	if b.bus != nil {
+		if publishErr := b.bus.Publish(schema.TopicShellActionDenied, result); publishErr != nil {
+			log.Printf("publish shell action denied: %v", publishErr)
+		}
+	}
+}
+
+func (b *Bridge) setSurfaceFullscreen(surfaceID string, enabled bool, timeout time.Duration) error {
+	if b.surfaceFullscreenMatches(surfaceID, enabled) {
+		return nil
+	}
+	b.mu.Lock()
+	if b.plugin == nil {
+		b.mu.Unlock()
+		return compositorError(schema.ErrorCompositorUnavailable, "no plugin connected")
+	}
+	b.stateSeq++
+	requestID := fmt.Sprintf("state-%d-%d", time.Now().UnixNano(), b.stateSeq)
+	ch := make(chan schema.CompositorSurfaceStatePluginResponse, 1)
+	b.stateWaiters[requestID] = ch
+	session := b.plugin
+	b.mu.Unlock()
+	defer func() {
+		b.mu.Lock()
+		delete(b.stateWaiters, requestID)
+		b.mu.Unlock()
+	}()
+	if err := session.Send(schema.CompositorSetSurfaceState{Type: schema.PluginMessageSetSurfaceState, RequestID: requestID, SurfaceID: surfaceID, Fullscreen: &enabled}); err != nil {
+		return err
+	}
+	if timeout <= 0 {
+		timeout = 4 * time.Second
+	}
+	deadline := time.After(timeout)
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	pluginAcked := false
+	for {
+		select {
+		case resp := <-ch:
+			if !resp.OK {
+				if resp.Error == "" {
+					resp.Error = "surface state update failed"
+				}
+				return compositorError(schema.ErrorProtocolError, "set fullscreen failed: %s", resp.Error)
+			}
+			pluginAcked = true
+			if b.surfaceFullscreenMatches(surfaceID, enabled) {
+				return nil
+			}
+		case <-ticker.C:
+			if b.surfaceFullscreenMatches(surfaceID, enabled) {
+				return nil
+			}
+		case <-deadline:
+			if pluginAcked {
+				return compositorError(schema.ErrorFrameTimeout, "fullscreen readback timed out after plugin ack")
+			}
+			return compositorError(schema.ErrorFrameTimeout, "fullscreen plugin acknowledgement timed out")
+		}
+	}
+}
+
+func (b *Bridge) surfaceFullscreenMatches(surfaceID string, want bool) bool {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	tracked, ok := b.surfaces[surfaceID]
+	return ok && tracked.Surface.Fullscreen != nil && *tracked.Surface.Fullscreen == want
+}
+
 func (b *Bridge) CloseSurface(surfaceID string) error {
 	return b.sendToPlugin(schema.CompositorCloseSurface{
 		Type:      schema.PluginMessageCloseSurface,
@@ -3247,6 +3396,16 @@ func (b *Bridge) dispatch(peerUID uint32, req schema.Request) (schema.Response, 
 			return schema.Response{}, err
 		}
 		return okResponse(resp), nil
+	case schema.MethodFullscreenSurface:
+		var body schema.FullscreenSurfaceRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			return schema.Response{}, fmt.Errorf("bad body: %w", err)
+		}
+		resp, err := b.FullscreenSurfaceAction(peerUID, body)
+		if err != nil {
+			return schema.Response{}, err
+		}
+		return okResponse(resp), nil
 	case schema.MethodCloseSurface:
 		var body schema.CloseSurfaceRequest
 		if err := json.Unmarshal(req.Body, &body); err != nil {
@@ -3338,6 +3497,19 @@ func (b *Bridge) handleInputResponse(resp schema.CompositorInputPluginResponse) 
 func (b *Bridge) handlePropertyResponse(resp schema.CompositorPropertyPluginResponse) {
 	b.mu.RLock()
 	waiter := b.propertyWaiters[resp.RequestID]
+	b.mu.RUnlock()
+	if waiter == nil {
+		return
+	}
+	select {
+	case waiter <- resp:
+	default:
+	}
+}
+
+func (b *Bridge) handleSurfaceStateResponse(resp schema.CompositorSurfaceStatePluginResponse) {
+	b.mu.RLock()
+	waiter := b.stateWaiters[resp.RequestID]
 	b.mu.RUnlock()
 	if waiter == nil {
 		return

@@ -230,6 +230,30 @@ func TestBuildAlwaysOnTopRequest(t *testing.T) {
 	}
 }
 
+func TestBuildFullscreenSurfaceRequest(t *testing.T) {
+	t.Parallel()
+
+	req, err := buildFullscreenSurfaceRequest([]string{"--surface", "view-42", "--state", "false", "--timeout-ms", "1500"})
+	if err != nil {
+		t.Fatalf("buildFullscreenSurfaceRequest returned error: %v", err)
+	}
+	if req.SurfaceID != "view-42" || req.Enabled || req.WaitTimeoutMs != 1500 {
+		t.Fatalf("request = %+v, want surface view-42 enabled false timeout 1500", req)
+	}
+}
+
+func TestBuildFullscreenSurfaceRequestRejectsInvalidState(t *testing.T) {
+	t.Parallel()
+
+	_, err := buildFullscreenSurfaceRequest([]string{"--surface", "view-42", "--state", "maybe"})
+	if err == nil {
+		t.Fatal("expected invalid state error")
+	}
+	if !strings.Contains(err.Error(), "--state must be true or false") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestDefaultShellConfigDirUsesSharedDirWhenPresent(t *testing.T) {
 	sharedDir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "xdg"))
