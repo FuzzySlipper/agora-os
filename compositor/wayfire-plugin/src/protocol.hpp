@@ -43,6 +43,13 @@ struct surface_snapshot_t
     double scale_factor = 1.0;
     std::string output_id;
     std::optional<bool> always_on_top;
+    int32_t workspace_x = 0;
+    int32_t workspace_y = 0;
+    std::string stack_layer;
+    std::optional<int32_t> stack_index;
+    std::optional<int32_t> stack_count;
+    std::optional<bool> is_top_in_stack;
+    uint64_t z_order_generation = 0;
 };
 
 enum class bridge_message_kind
@@ -58,6 +65,7 @@ enum class bridge_message_kind
     inject_input,
     place_surface,
     focus_surface,
+    raise_surface,
     set_view_property,
 };
 
@@ -101,6 +109,7 @@ struct bridge_message_t
     std::optional<uint32_t> actor_uid;
     std::optional<uint32_t> owner_uid;
     std::optional<bool> always_on_top;
+    std::string mode;
 };
 
 inline void append_unicode_escape(std::string& out, unsigned char ch)
@@ -261,6 +270,27 @@ inline std::string encode_surface_event(std::string_view event_name, const surfa
         << "\"scale_factor\":" << surface.scale_factor << ","
         << "\"visible\":true,"
         << "\"output_id\":\"" << json_escape(surface.output_id) << "\"";
+    if (!surface.stack_layer.empty())
+    {
+        out << ",\"workspace\":{\"x\":" << surface.workspace_x << ",\"y\":" << surface.workspace_y << "}";
+        out << ",\"stack_layer\":\"" << json_escape(surface.stack_layer) << "\"";
+    }
+    if (surface.stack_index.has_value())
+    {
+        out << ",\"stack_index\":" << *surface.stack_index;
+    }
+    if (surface.stack_count.has_value())
+    {
+        out << ",\"stack_count\":" << *surface.stack_count;
+    }
+    if (surface.is_top_in_stack.has_value())
+    {
+        out << ",\"is_top_in_stack\":" << (*surface.is_top_in_stack ? "true" : "false");
+    }
+    if (surface.z_order_generation > 0)
+    {
+        out << ",\"z_order_generation\":" << surface.z_order_generation;
+    }
     if (surface.always_on_top.has_value())
     {
         out << ",\"always_on_top\":" << (*surface.always_on_top ? "true" : "false");
@@ -319,6 +349,22 @@ inline std::string encode_focus_response(std::string_view request_id, std::strin
 {
     std::ostringstream out;
     out << "{\"type\":\"focus_response\","
+        << "\"request_id\":\"" << json_escape(request_id) << "\","
+        << "\"surface_id\":\"" << json_escape(surface_id) << "\","
+        << "\"ok\":" << (ok ? "true" : "false");
+    if (!ok || !error.empty())
+    {
+        out << ",\"error\":\"" << json_escape(error) << "\"";
+    }
+    out << "}";
+    return out.str();
+}
+
+inline std::string encode_raise_response(std::string_view request_id, std::string_view surface_id,
+    bool ok, std::string_view error = "")
+{
+    std::ostringstream out;
+    out << "{\"type\":\"raise_response\","
         << "\"request_id\":\"" << json_escape(request_id) << "\","
         << "\"surface_id\":\"" << json_escape(surface_id) << "\","
         << "\"ok\":" << (ok ? "true" : "false");
@@ -736,6 +782,15 @@ inline bridge_message_t parse_bridge_message(const std::string& line)
         message.kind = bridge_message_kind::focus_surface;
         message.request_id = find_string_field(line, "request_id").value_or("");
         message.surface_id = find_string_field(line, "surface_id").value_or("");
+        return message;
+    }
+
+    if (*type == "raise_surface")
+    {
+        message.kind = bridge_message_kind::raise_surface;
+        message.request_id = find_string_field(line, "request_id").value_or("");
+        message.surface_id = find_string_field(line, "surface_id").value_or("");
+        message.mode = find_string_field(line, "mode").value_or("no-focus");
         return message;
     }
 

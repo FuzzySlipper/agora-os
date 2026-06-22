@@ -63,6 +63,17 @@ int main()
     assert(focus_msg.request_id == "focus-1");
     assert(focus_msg.surface_id == "view-10");
 
+    auto raise_msg = parse_bridge_message(
+        "{\"type\":\"raise_surface\",\"request_id\":\"raise-1\",\"surface_id\":\"view-10\",\"mode\":\"no-focus\"}");
+    assert(raise_msg.kind == bridge_message_kind::raise_surface);
+    assert(raise_msg.request_id == "raise-1");
+    assert(raise_msg.surface_id == "view-10");
+    assert(raise_msg.mode == "no-focus");
+
+    auto raise_response = encode_raise_response("raise-1", "view-10", true, "");
+    assert(raise_response.find("\"type\":\"raise_response\"") != std::string::npos);
+    assert(raise_response.find("\"ok\":true") != std::string::npos);
+
     auto focus_response = encode_focus_response("focus-1", "view-10", true, "");
     assert(focus_response.find("\"type\":\"focus_response\"") != std::string::npos);
     assert(focus_response.find("\"ok\":true") != std::string::npos);
@@ -118,8 +129,14 @@ int main()
     layer_surface.layer_name = "top";
     layer_surface.anchors = {"top"};
     layer_surface.exclusive_zone = 48;
-    layer_surface.width = 1280;
-    layer_surface.height = 48;
+    layer_surface.output_id = "HDMI-A-1";
+    layer_surface.workspace_x = 1;
+    layer_surface.workspace_y = 2;
+    layer_surface.stack_layer = "top";
+    layer_surface.stack_index = 3;
+    layer_surface.stack_count = 4;
+    layer_surface.is_top_in_stack = true;
+    layer_surface.z_order_generation = 9;
 
     client_identity_t layer_client;
     layer_client.pid = 4242;
@@ -136,6 +153,12 @@ int main()
     assert(layer_mapped.find("\"namespace\":\"agora-webview\"") != std::string::npos);
     assert(layer_mapped.find("\"anchors\":[\"top\"]") != std::string::npos);
     assert(layer_mapped.find("\"exclusive_zone\":true") != std::string::npos);
+    assert(layer_mapped.find("\"workspace\":{\"x\":1,\"y\":2}") != std::string::npos);
+    assert(layer_mapped.find("\"stack_layer\":\"top\"") != std::string::npos);
+    assert(layer_mapped.find("\"stack_index\":3") != std::string::npos);
+    assert(layer_mapped.find("\"stack_count\":4") != std::string::npos);
+    assert(layer_mapped.find("\"is_top_in_stack\":true") != std::string::npos);
+    assert(layer_mapped.find("\"z_order_generation\":9") != std::string::npos);
     assert(layer_mapped.find("\"pid\":4242") != std::string::npos);
 
     auto layer_unmapped = encode_surface_event("unmapped", layer_surface, layer_client);

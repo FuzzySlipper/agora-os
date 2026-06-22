@@ -194,6 +194,30 @@ func TestBuildFocusSurfaceRequestRequiresSurface(t *testing.T) {
 	}
 }
 
+func TestBuildDebugRaiseSurfaceRequest(t *testing.T) {
+	t.Parallel()
+
+	req, err := buildDebugRaiseSurfaceRequest([]string{"--surface", "view-42", "--timeout-ms", "1500"})
+	if err != nil {
+		t.Fatalf("buildDebugRaiseSurfaceRequest returned error: %v", err)
+	}
+	if req.SurfaceID != "view-42" || req.Mode != "no-focus" || req.WaitTimeoutMs != 1500 {
+		t.Fatalf("request = %+v, want surface view-42 mode no-focus timeout 1500", req)
+	}
+}
+
+func TestBuildDebugRaiseSurfaceRequestRejectsUnsupportedMode(t *testing.T) {
+	t.Parallel()
+
+	_, err := buildDebugRaiseSurfaceRequest([]string{"--surface", "view-42", "--mode", "focus"})
+	if err == nil {
+		t.Fatal("expected unsupported mode error")
+	}
+	if !strings.Contains(err.Error(), "--mode must be no-focus") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestBuildAlwaysOnTopRequest(t *testing.T) {
 	t.Parallel()
 

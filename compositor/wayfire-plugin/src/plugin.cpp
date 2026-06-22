@@ -38,6 +38,7 @@
 #include <wayfire/signal-definitions.hpp>
 #include <wayfire/util/log.hpp>
 #include <wayfire/view-helpers.hpp>
+#include <wayfire/workspace-set.hpp>
 #include <wayfire/toplevel-view.hpp>
 #include <wayfire/view.hpp>
 
@@ -123,6 +124,13 @@ agora::protocol::surface_snapshot_t snapshot_view(wayfire_view view)
         snapshot.layer_name = "top";
         snapshot.anchors = {"top"};
         snapshot.exclusive_zone = true;
+    }
+    if (auto *output = view->get_output())
+    {
+        if (output->handle && output->handle->name)
+        {
+            snapshot.output_id = output->handle->name;
+        }
     }
     auto bbox = view->get_bounding_box();
     snapshot.x = bbox.x;
@@ -627,6 +635,13 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         std::string surface_id;
     };
 
+    struct pending_raise_request_t
+    {
+        std::string request_id;
+        std::string surface_id;
+        std::string mode;
+    };
+
     struct layer_surface_record_t
     {
         agora_bridge_plugin_t *owner = nullptr;
@@ -919,6 +934,7 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         std::vector<pending_place_request_t> place_requests;
         std::vector<pending_property_request_t> property_requests;
         std::vector<pending_focus_request_t> focus_requests;
+        std::vector<pending_raise_request_t> raise_requests;
         bool should_resync = false;
         std::unordered_map<std::string, wayfire_view> views;
         {
@@ -930,6 +946,7 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
             place_requests.swap(pending_place_requests_);
             property_requests.swap(pending_property_requests_);
             focus_requests.swap(pending_focus_requests_);
+            raise_requests.swap(pending_raise_requests_);
             should_resync = pending_surface_resync_;
             pending_surface_resync_ = false;
             views = views_by_surface_;
@@ -947,6 +964,10 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         for (const auto& request : focus_requests)
         {
             process_focus_request(request, views);
+        }
+        for (const auto& request : raise_requests)
+        {
+            process_raise_request(request, views);
         }
 
         for (const auto& request : capture_requests)
@@ -1097,6 +1118,29 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         {
             std::lock_guard lock(state_mutex_);
             pending_focus_requests_.push_back({std::move(request_id), std::move(surface_id)});
+        }
+
+        notify_close_wake();
+    }
+
+    void queue_raise_surface(std::string request_id, std::string surface_id, std::string mode)
+    {
+        if (request_id.empty())
+        {
+            request_id = surface_id;
+        }
+        if (surface_id.empty())
+        {
+            return;
+        }
+        if (mode.empty())
+        {
+            mode = "no-focus";
+        }
+
+        {
+            std::lock_guard lock(state_mutex_);
+            pending_raise_requests_.push_back({std::move(request_id), std::move(surface_id), std::move(mode)});
         }
 
         notify_close_wake();
@@ -1382,6 +1426,115 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         return observed;
     }
 
+
+    std::string scene_layer_name(wf::scene::layer layer) const
+    {
+        switch (layer)
+        {
+          case wf::scene::layer::BACKGROUND: return "background";
+          case wf::scene::layer::BOTTOM: return "bottom";
+          case wf::scene::layer::WORKSPACE: return "workspace";
+          case wf::scene::layer::TOP: return "top";
+          case wf::scene::layer::UNMANAGED: return "unmanaged";
+          case wf::scene::layer::OVERLAY: return "overlay";
+          case wf::scene::layer::LOCK: return "lock";
+          case wf::scene::layer::DWIDGET: return "dwidget";
+          default: return "unknown";
+        }
+    }
+
+    void annotate_stack_readback(agora::protocol::surface_snapshot_t& snapshot, wayfire_view view)
+    {
+        if (!view)
+        {
+            return;
+        }
+        auto *output = view->get_output();
+        if (!output)
+        {
+            return;
+        }
+        if (snapshot.output_id.empty() && output->handle && output->handle->name)
+        {
+            snapshot.output_id = output->handle->name;
+        }
+        auto layer = wf::get_view_layer(view);
+        if (!layer.has_value())
+        {
+            return;
+        }
+        snapshot.stack_layer = scene_layer_name(*layer);
+        if (auto wset = output->wset())
+        {
+            auto ws = wset->get_current_workspace();
+            snapshot.workspace_x = ws.x;
+            snapshot.workspace_y = ws.y;
+        }
+        auto stack = wf::collect_views_from_output(output, {*layer});
+        auto it = std::find(stack.begin(), stack.end(), view);
+        if (it == stack.end())
+        {
+            return;
+        }
+        int count = static_cast<int>(stack.size());
+        int front_index = static_cast<int>(std::distance(stack.begin(), it));
+        int bottom_to_top_index = count - 1 - front_index;
+        snapshot.stack_count = count;
+        snapshot.stack_index = bottom_to_top_index;
+        snapshot.is_top_in_stack = (front_index == 0);
+        snapshot.z_order_generation = z_order_generation_;
+    }
+
+    void send_raise_response(const pending_raise_request_t& request, bool ok, std::string_view error)
+    {
+        if (!bridge_)
+        {
+            return;
+        }
+        bridge_->send_line(agora::protocol::encode_raise_response(request.request_id, request.surface_id, ok, error));
+    }
+
+    void process_raise_request(const pending_raise_request_t& request,
+        const std::unordered_map<std::string, wayfire_view>& views)
+    {
+        if (!request.mode.empty() && (request.mode != "no-focus"))
+        {
+            send_raise_response(request, false, "unsupported raise mode");
+            return;
+        }
+        auto it = views.find(request.surface_id);
+        if ((it == views.end()) || !it->second)
+        {
+            LOGW("agora-bridge: raise target not found: ", request.surface_id);
+            send_raise_response(request, false, "surface not found");
+            return;
+        }
+        auto view = it->second;
+        auto toplevel = dynamic_cast<wf::toplevel_view_interface_t*>(view.get());
+        if (!toplevel)
+        {
+            send_raise_response(request, false, "surface is not a toplevel");
+            return;
+        }
+        auto focus_before = keyboard_focus_view_;
+        wf::view_bring_to_front(view);
+        z_order_generation_++;
+        resync_surfaces();
+        emit_surface_event("stacked", view);
+        if (keyboard_focus_view_ != focus_before)
+        {
+            send_raise_response(request, false, "raise changed keyboard focus");
+            return;
+        }
+        auto snapshot = snapshot_view_with_state(view);
+        if (!snapshot.is_top_in_stack.has_value() || !*snapshot.is_top_in_stack)
+        {
+            send_raise_response(request, false, "raise did not make target top in scoped stack");
+            return;
+        }
+        send_raise_response(request, true, "");
+    }
+
     void send_property_response(const pending_property_request_t& request, bool ok, std::string_view error)
     {
         if (!bridge_)
@@ -1579,6 +1732,7 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         {
             snapshot.always_on_top = state_it->second;
         }
+        annotate_stack_readback(snapshot, view);
         return snapshot;
     }
 
@@ -1648,6 +1802,9 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
           case agora::protocol::bridge_message_kind::focus_surface:
             queue_focus_surface(message.request_id, message.surface_id);
             break;
+          case agora::protocol::bridge_message_kind::raise_surface:
+            queue_raise_surface(message.request_id, message.surface_id, message.mode);
+            break;
           case agora::protocol::bridge_message_kind::set_view_property:
             queue_property_request(message.request_id, message.surface_id, message.always_on_top);
             break;
@@ -1707,7 +1864,9 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
     std::vector<pending_place_request_t> pending_place_requests_;
     std::vector<pending_property_request_t> pending_property_requests_;
     std::vector<pending_focus_request_t> pending_focus_requests_;
+    std::vector<pending_raise_request_t> pending_raise_requests_;
     bool pending_surface_resync_ = false;
+    uint64_t z_order_generation_ = 1;
     int close_wake_fd_ = -1;
     wl_event_source *close_wake_source_ = nullptr;
     wayfire_view keyboard_focus_view_;

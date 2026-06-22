@@ -76,6 +76,29 @@ process_present() {
   kill -0 "$pid" 2>/dev/null
 }
 
+find_existing_shell_surface() {
+  "$COMPOSITORCTL" --pretty list-surfaces | python3 -c '
+import json
+import sys
+expected_title = sys.argv[1]
+initial_title = sys.argv[2]
+data = json.load(sys.stdin)
+for item in data.get("surfaces", []):
+    surface = item.get("surface") or {}
+    title = surface.get("title") or ""
+    app_id = surface.get("app_id") or ""
+    if (expected_title and expected_title in title) or (initial_title and initial_title in title) or app_id == "io.agoraos.ShellPanel":
+        client = item.get("client") or {}
+        print(json.dumps({
+            "surface_id": surface.get("id") or "",
+            "title": title,
+            "client_pid": client.get("pid") or "",
+        }))
+        raise SystemExit(0)
+raise SystemExit(1)
+' "$EXPECTED_TITLE" "$SHELL_TITLE"
+}
+
 cleanup() {
   local status=${1:-0}
   trap - TERM INT EXIT
@@ -96,6 +119,30 @@ need() {
 need "$COMPOSITORCTL"
 need "$WEBVIEW_LAUNCHER"
 need python3
+
+existing_json=$(mktemp -t agora-shell-panel-existing.XXXXXX.json)
+if find_existing_shell_surface >"$existing_json"; then
+  surface_id=$(json_get surface_id "$existing_json")
+  client_pid=$(json_get client_pid "$existing_json")
+  existing_title=$(json_get title "$existing_json")
+  rm -f "$existing_json"
+  if [[ -n "$surface_id" ]]; then
+    log "adopting existing Agora shell panel surface_id=$surface_id title=${existing_title:-unknown} client_pid=${client_pid:-unknown}"
+    while true; do
+      if ! surface_present "$surface_id"; then
+        log "adopted shell panel surface disappeared: $surface_id"
+        exit 1
+      fi
+      if [[ -n "$client_pid" ]] && ! process_present "$client_pid"; then
+        log "adopted shell panel client process exited: $client_pid"
+        exit 1
+      fi
+      sleep "$POLL_INTERVAL_SECONDS"
+    done
+  fi
+else
+  rm -f "$existing_json"
+fi
 
 launch_json=$(mktemp -t agora-shell-panel-launch.XXXXXX.json)
 rm -f "$launch_json"

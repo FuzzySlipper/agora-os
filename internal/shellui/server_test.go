@@ -480,6 +480,122 @@ func TestSurfaceFocusEndpointReturnsStructuredDeniedResult(t *testing.T) {
 	}
 }
 
+func TestSurfaceDebugRaiseEndpointCallsCompositorAction(t *testing.T) {
+	t.Parallel()
+	authNow := time.Now().UTC().Truncate(time.Second)
+	compSock := startSchemaServer(t, func(req schema.Request) schema.Response {
+		if req.Method != schema.MethodDebugRaiseSurface {
+			t.Fatalf("unexpected method %q", req.Method)
+		}
+		var body schema.DebugRaiseSurfaceRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		if body.SurfaceID != "view-raise" || body.Mode != "no-focus" || body.WaitTimeoutMs != 1234 {
+			t.Fatalf("unexpected debug raise body %+v", body)
+		}
+		isTop := true
+		payload, _ := json.Marshal(schema.SurfaceActionResponse{
+			Action:           "surface.raise.debug",
+			SurfaceID:        "view-raise",
+			Decision:         schema.SurfaceActionAccepted,
+			FocusedSurfaceID: "view-focused",
+			ResultState:      &schema.SurfaceState{Stack: &schema.CompositorStackState{OutputID: "HDMI-A-1", StackLayer: "workspace", StackIndex: intPtr(2), StackCount: intPtr(3), IsTopInStack: &isTop}},
+			Surface:          &schema.CompositorTrackedSurface{Surface: schema.CompositorSurface{ID: "view-raise", IsTopInStack: &isTop}},
+		})
+		return schema.Response{OK: true, Body: payload}
+	})
+	secret := []byte("01234567890123456789012345678901")
+	server := New(Config{Secret: secret, Now: func() time.Time { return authNow }, CompositorSocket: compSock})
+	req := httptest.NewRequest(http.MethodPost, "/api/shell/surface/debug-raise", strings.NewReader(`{"surface_id":"view-raise","mode":"no-focus","wait_timeout_ms":1234}`))
+	req.Header.Set("Authorization", "Bearer "+mustMintHumanToken(t, secret))
+	resp := httptest.NewRecorder()
+	server.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("got status %d body %q, want 200", resp.Code, resp.Body.String())
+	}
+	var result schema.SurfaceActionResponse
+	if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Action != "surface.raise.debug" || result.Decision != schema.SurfaceActionAccepted || result.FocusedSurfaceID != "view-focused" || result.ResultState == nil || result.ResultState.Stack == nil || result.ResultState.Stack.IsTopInStack == nil || !*result.ResultState.Stack.IsTopInStack {
+		t.Fatalf("unexpected result %+v", result)
+	}
+}
+
+func TestSurfaceDebugRaiseEndpointReturnsStructuredDeniedResults(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		class   string
+		status  int
+		message string
+	}{
+		{name: "stale", class: schema.ErrorSurfaceStale, status: http.StatusConflict, message: "surface view-raise is unmapped/stale"},
+		{name: "unsupported", class: schema.ErrorBackendUnsupported, status: http.StatusConflict, message: "surface view-raise is a layer-shell surface and cannot be raised"},
+		{name: "timeout", class: schema.ErrorFrameTimeout, status: http.StatusBadGateway, message: "debug raise plugin acknowledgement timed out"},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			authNow := time.Now().UTC().Truncate(time.Second)
+			compSock := startSchemaServer(t, func(req schema.Request) schema.Response {
+				if req.Method != schema.MethodDebugRaiseSurface {
+					t.Fatalf("unexpected method %q", req.Method)
+				}
+				payload, _ := json.Marshal(schema.SurfaceActionResponse{Action: "surface.raise.debug", SurfaceID: "view-raise", Decision: schema.SurfaceActionDenied, Reason: tc.message, Error: tc.message})
+				return schema.Response{OK: false, Body: payload, ErrorClass: tc.class, ErrorMessage: tc.message}
+			})
+			secret := []byte("01234567890123456789012345678901")
+			server := New(Config{Secret: secret, Now: func() time.Time { return authNow }, CompositorSocket: compSock})
+			req := httptest.NewRequest(http.MethodPost, "/api/shell/surface/debug-raise", strings.NewReader(`{"surface_id":"view-raise","mode":"no-focus"}`))
+			req.Header.Set("Authorization", "Bearer "+mustMintHumanToken(t, secret))
+			resp := httptest.NewRecorder()
+			server.ServeHTTP(resp, req)
+			if resp.Code != tc.status {
+				t.Fatalf("got status %d body %q, want %d", resp.Code, resp.Body.String(), tc.status)
+			}
+			var result surfaceActionHTTPError
+			if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil {
+				t.Fatal(err)
+			}
+			if result.ErrorClass != tc.class || result.Result.Action != "surface.raise.debug" || result.Result.Decision != schema.SurfaceActionDenied || result.Result.SurfaceID != "view-raise" {
+				t.Fatalf("unexpected structured denial %+v", result)
+			}
+		})
+	}
+}
+
+func TestSurfaceDebugRaiseEndpointRejectsMalformedRequests(t *testing.T) {
+	t.Parallel()
+	authNow := time.Now().UTC().Truncate(time.Second)
+	secret := []byte("01234567890123456789012345678901")
+	server := New(Config{Secret: secret, Now: func() time.Time { return authNow }})
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "bad-timeout-type", body: `{"surface_id":"view-raise","wait_timeout_ms":"soon"}`, want: "decode debug raise request"},
+		{name: "missing-surface", body: `{"mode":"no-focus"}`, want: "surface_id is required"},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			req := httptest.NewRequest(http.MethodPost, "/api/shell/surface/debug-raise", strings.NewReader(tc.body))
+			req.Header.Set("Authorization", "Bearer "+mustMintHumanToken(t, secret))
+			resp := httptest.NewRecorder()
+			server.ServeHTTP(resp, req)
+			if resp.Code != http.StatusBadRequest {
+				t.Fatalf("got status %d body %q, want 400", resp.Code, resp.Body.String())
+			}
+			if !strings.Contains(resp.Body.String(), tc.want) {
+				t.Fatalf("body %q missing %q", resp.Body.String(), tc.want)
+			}
+		})
+	}
+}
+
 func TestSurfaceAlwaysOnTopEndpointCallsCanonicalCompositorAction(t *testing.T) {
 	t.Parallel()
 	authNow := time.Now().UTC().Truncate(time.Second)
@@ -1123,6 +1239,10 @@ func writeAdminLog(t *testing.T, path string, entry loggedEscalation) {
 	if err := os.WriteFile(path, payload, 0600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func intPtr(value int) *int {
+	return &value
 }
 
 func mustMintHumanToken(t *testing.T, secret []byte) string {

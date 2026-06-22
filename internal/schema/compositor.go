@@ -68,6 +68,7 @@ const (
 	MethodRemoveSurfacePolicy = "remove_surface_policy"
 	MethodSetInputContext     = "set_input_context"
 	MethodFocusSurface        = "focus_surface"
+	MethodDebugRaiseSurface   = "debug_raise_surface"
 	MethodMoveSurface         = "move_surface"
 	MethodResizeSurface       = "resize_surface"
 	MethodTileSurface         = "tile_surface"
@@ -113,6 +114,8 @@ const (
 	PluginMessageInputContext       CompositorPluginMessageType = "input_context"
 	PluginMessageFocusSurface       CompositorPluginMessageType = "focus_surface"
 	PluginMessageFocusResponse      CompositorPluginMessageType = "focus_response"
+	PluginMessageRaiseSurface       CompositorPluginMessageType = "raise_surface"
+	PluginMessageRaiseResponse      CompositorPluginMessageType = "raise_response"
 	PluginMessageSetViewProperty    CompositorPluginMessageType = "set_view_property"
 	PluginMessagePropertyResponse   CompositorPluginMessageType = "property_response"
 	PluginMessageCloseSurface       CompositorPluginMessageType = "close_surface"
@@ -125,6 +128,7 @@ const (
 	SurfaceEventMapped      CompositorSurfaceEventName = "mapped"
 	SurfaceEventUnmapped    CompositorSurfaceEventName = "unmapped"
 	SurfaceEventFocused     CompositorSurfaceEventName = "focused"
+	SurfaceEventStacked     CompositorSurfaceEventName = "stacked"
 	SurfaceEventFrameDone   CompositorSurfaceEventName = "frame_done"
 	SurfaceEventInputDenied CompositorSurfaceEventName = "input_denied"
 )
@@ -149,20 +153,41 @@ type LayerShellSurfaceMetadata struct {
 	ExclusiveZone *bool    `json:"exclusive_zone,omitempty"`
 }
 
+type SurfaceWorkspace struct {
+	X int `json:"x"`
+	Y int `json:"y"`
+}
+
+type CompositorStackState struct {
+	OutputID         string            `json:"output_id,omitempty"`
+	Workspace        *SurfaceWorkspace `json:"workspace,omitempty"`
+	StackLayer       string            `json:"stack_layer,omitempty"`
+	StackIndex       *int              `json:"stack_index,omitempty"`
+	StackCount       *int              `json:"stack_count,omitempty"`
+	IsTopInStack     *bool             `json:"is_top_in_stack,omitempty"`
+	ZOrderGeneration uint64            `json:"z_order_generation,omitempty"`
+}
+
 type CompositorSurface struct {
-	ID            string                     `json:"id"`
-	WayfireViewID uint32                     `json:"wayfire_view_id"`
-	SurfaceKind   string                     `json:"surface_kind,omitempty"`
-	AppID         string                     `json:"app_id,omitempty"`
-	Title         string                     `json:"title,omitempty"`
-	Role          string                     `json:"role,omitempty"`
-	LayerShell    *LayerShellSurfaceMetadata `json:"layer_shell,omitempty"`
-	Geometry      *SurfaceGeometry           `json:"geometry,omitempty"`
-	PixelSize     *SurfaceGeometry           `json:"pixel_size,omitempty"`
-	ScaleFactor   float64                    `json:"scale_factor,omitempty"`
-	Visible       *bool                      `json:"visible,omitempty"`
-	OutputID      string                     `json:"output_id,omitempty"`
-	AlwaysOnTop   *bool                      `json:"always_on_top,omitempty"`
+	ID               string                     `json:"id"`
+	WayfireViewID    uint32                     `json:"wayfire_view_id"`
+	SurfaceKind      string                     `json:"surface_kind,omitempty"`
+	AppID            string                     `json:"app_id,omitempty"`
+	Title            string                     `json:"title,omitempty"`
+	Role             string                     `json:"role,omitempty"`
+	LayerShell       *LayerShellSurfaceMetadata `json:"layer_shell,omitempty"`
+	Geometry         *SurfaceGeometry           `json:"geometry,omitempty"`
+	PixelSize        *SurfaceGeometry           `json:"pixel_size,omitempty"`
+	ScaleFactor      float64                    `json:"scale_factor,omitempty"`
+	Visible          *bool                      `json:"visible,omitempty"`
+	OutputID         string                     `json:"output_id,omitempty"`
+	Workspace        *SurfaceWorkspace          `json:"workspace,omitempty"`
+	StackLayer       string                     `json:"stack_layer,omitempty"`
+	StackIndex       *int                       `json:"stack_index,omitempty"`
+	StackCount       *int                       `json:"stack_count,omitempty"`
+	IsTopInStack     *bool                      `json:"is_top_in_stack,omitempty"`
+	ZOrderGeneration uint64                     `json:"z_order_generation,omitempty"`
+	AlwaysOnTop      *bool                      `json:"always_on_top,omitempty"`
 }
 
 type CompositorClientIdentity struct {
@@ -272,7 +297,22 @@ type CompositorFocusSurface struct {
 	SurfaceID string                      `json:"surface_id"`
 }
 
+type CompositorRaiseSurface struct {
+	Type      CompositorPluginMessageType `json:"type"`
+	RequestID string                      `json:"request_id"`
+	SurfaceID string                      `json:"surface_id"`
+	Mode      string                      `json:"mode,omitempty"`
+}
+
 type CompositorFocusPluginResponse struct {
+	Type      CompositorPluginMessageType `json:"type"`
+	RequestID string                      `json:"request_id"`
+	SurfaceID string                      `json:"surface_id"`
+	OK        bool                        `json:"ok"`
+	Error     string                      `json:"error,omitempty"`
+}
+
+type CompositorRaisePluginResponse struct {
 	Type      CompositorPluginMessageType `json:"type"`
 	RequestID string                      `json:"request_id"`
 	SurfaceID string                      `json:"surface_id"`
@@ -444,6 +484,12 @@ type FocusSurfaceRequest struct {
 	WaitTimeoutMs int    `json:"wait_timeout_ms,omitempty"`
 }
 
+type DebugRaiseSurfaceRequest struct {
+	SurfaceID     string `json:"surface_id"`
+	Mode          string `json:"mode,omitempty"`
+	WaitTimeoutMs int    `json:"wait_timeout_ms,omitempty"`
+}
+
 type MoveSurfaceRequest struct {
 	SurfaceID     string `json:"surface_id"`
 	X             int    `json:"x"`
@@ -472,7 +518,8 @@ type TileSurfaceRequest struct {
 }
 
 type SurfaceState struct {
-	AlwaysOnTop *bool `json:"always_on_top,omitempty"`
+	AlwaysOnTop *bool                 `json:"always_on_top,omitempty"`
+	Stack       *CompositorStackState `json:"stack,omitempty"`
 }
 
 type SurfaceActionResponse struct {

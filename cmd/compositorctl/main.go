@@ -697,6 +697,21 @@ func buildFocusSurfaceRequest(args []string) (schema.FocusSurfaceRequest, error)
 	return schema.FocusSurfaceRequest{SurfaceID: *surfaceID, WaitTimeoutMs: *timeout}, nil
 }
 
+func buildDebugRaiseSurfaceRequest(args []string) (schema.DebugRaiseSurfaceRequest, error) {
+	fs := flag.NewFlagSet("surface debug-raise", flag.ExitOnError)
+	surfaceID := fs.String("surface", "", "surface id to raise without focusing")
+	mode := fs.String("mode", "no-focus", "raise mode (only no-focus is supported in this spike)")
+	timeout := fs.Int("timeout-ms", 4000, "raise acknowledgement/readback timeout in milliseconds")
+	fs.Parse(args)
+	if *surfaceID == "" {
+		return schema.DebugRaiseSurfaceRequest{}, fmt.Errorf("--surface is required")
+	}
+	if *mode != "no-focus" {
+		return schema.DebugRaiseSurfaceRequest{}, fmt.Errorf("--mode must be no-focus")
+	}
+	return schema.DebugRaiseSurfaceRequest{SurfaceID: *surfaceID, Mode: *mode, WaitTimeoutMs: *timeout}, nil
+}
+
 func buildMoveSurfaceRequest(args []string) (schema.MoveSurfaceRequest, error) {
 	fs := flag.NewFlagSet("surface move", flag.ExitOnError)
 	surfaceID := fs.String("surface", "", "surface id to move")
@@ -779,7 +794,7 @@ func buildCloseSurfaceRequest(args []string) (schema.CloseSurfaceRequest, error)
 
 func cmdSurface(args []string, pretty bool) error {
 	if len(args) == 0 {
-		return fmt.Errorf("surface subcommand is required: focus, move, tile, resize, always-on-top, close (raise/minimize/maximize are deferred until compositor support is explicit)")
+		return fmt.Errorf("surface subcommand is required: focus, debug-raise, move, tile, resize, always-on-top, close (canonical raise/minimize/maximize are deferred until compositor support is explicit)")
 	}
 	switch args[0] {
 	case "focus":
@@ -788,6 +803,12 @@ func cmdSurface(args []string, pretty bool) error {
 			return err
 		}
 		return callAndPrint(schema.MethodFocusSurface, req, pretty)
+	case "debug-raise":
+		req, err := buildDebugRaiseSurfaceRequest(args[1:])
+		if err != nil {
+			return err
+		}
+		return callAndPrint(schema.MethodDebugRaiseSurface, req, pretty)
 	case "move", "place":
 		req, err := buildMoveSurfaceRequest(args[1:])
 		if err != nil {
