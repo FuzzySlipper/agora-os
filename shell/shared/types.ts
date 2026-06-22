@@ -5,6 +5,11 @@ export interface SurfaceGeometry {
     height: number;
 }
 
+export interface SurfaceTiledEdges {
+    bits: number;
+    edges?: string[];
+}
+
 export interface SurfaceEvent {
     id: string;
     title?: string;
@@ -17,6 +22,8 @@ export interface SurfaceEvent {
     action_error?: string;
     always_on_top?: boolean;
     fullscreen?: boolean;
+    tiled_edges?: SurfaceTiledEdges;
+    maximized?: boolean;
 }
 
 export type SurfaceActionDecision = "accepted" | "denied" | string;
@@ -24,6 +31,8 @@ export type SurfaceActionDecision = "accepted" | "denied" | string;
 export interface SurfaceState {
     always_on_top?: boolean;
     fullscreen?: boolean;
+    maximized?: boolean;
+    tiled_edges?: SurfaceTiledEdges;
 }
 
 export interface SurfaceActionResponse {
@@ -40,6 +49,8 @@ export interface SurfaceActionResponse {
     result_state?: SurfaceState;
     always_on_top?: boolean;
     fullscreen?: boolean;
+    maximized?: boolean;
+    tiled_edges?: SurfaceTiledEdges;
     queued?: boolean;
     actor?: string;
     actor_uid?: number;

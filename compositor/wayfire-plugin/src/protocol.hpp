@@ -15,6 +15,11 @@
 
 namespace agora::protocol
 {
+
+constexpr uint32_t tiled_edge_top = 1;
+constexpr uint32_t tiled_edge_bottom = 2;
+constexpr uint32_t tiled_edge_left = 4;
+constexpr uint32_t tiled_edge_right = 8;
 static constexpr const char *default_socket_path = "/run/agent-os/compositor-bridge.sock";
 
 struct client_identity_t
@@ -44,6 +49,8 @@ struct surface_snapshot_t
     std::string output_id;
     std::optional<bool> always_on_top;
     std::optional<bool> fullscreen;
+    std::optional<uint32_t> tiled_edges;
+    std::optional<bool> maximized;
     int32_t workspace_x = 0;
     int32_t workspace_y = 0;
     std::string stack_layer;
@@ -112,6 +119,8 @@ struct bridge_message_t
     std::optional<uint32_t> owner_uid;
     std::optional<bool> always_on_top;
     std::optional<bool> fullscreen;
+    std::optional<uint32_t> tiled_edges;
+    std::optional<bool> maximized;
     std::string mode;
 };
 
@@ -301,6 +310,32 @@ inline std::string encode_surface_event(std::string_view event_name, const surfa
     if (surface.fullscreen.has_value())
     {
         out << ",\"fullscreen\":" << (*surface.fullscreen ? "true" : "false");
+    }
+    if (surface.tiled_edges.has_value())
+    {
+        out << ",\"tiled_edges\":{\"bits\":" << *surface.tiled_edges << ",\"edges\":[";
+        bool first_edge = true;
+        auto append_edge = [&] (uint32_t bit, std::string_view name)
+        {
+            if ((*surface.tiled_edges & bit) != 0)
+            {
+                if (!first_edge)
+                {
+                    out << ",";
+                }
+                out << "\"" << name << "\"";
+                first_edge = false;
+            }
+        };
+        append_edge(tiled_edge_top, "top");
+        append_edge(tiled_edge_bottom, "bottom");
+        append_edge(tiled_edge_left, "left");
+        append_edge(tiled_edge_right, "right");
+        out << "]}";
+    }
+    if (surface.maximized.has_value())
+    {
+        out << ",\"maximized\":" << (*surface.maximized ? "true" : "false");
     }
     append_layer_shell_metadata(out, surface);
     out << "},"
@@ -839,6 +874,7 @@ inline bridge_message_t parse_bridge_message(const std::string& line)
         message.request_id = find_string_field(line, "request_id").value_or("");
         message.surface_id = find_string_field(line, "surface_id").value_or("");
         message.fullscreen = find_bool_field(line, "fullscreen");
+        message.maximized = find_bool_field(line, "maximized");
         return message;
     }
 

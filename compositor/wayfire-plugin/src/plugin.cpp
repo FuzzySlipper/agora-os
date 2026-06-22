@@ -635,6 +635,7 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         std::string request_id;
         std::string surface_id;
         std::optional<bool> fullscreen;
+        std::optional<bool> maximized;
     };
 
     struct pending_focus_request_t
@@ -1180,7 +1181,8 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         notify_close_wake();
     }
 
-    void queue_surface_state_request(std::string request_id, std::string surface_id, std::optional<bool> fullscreen)
+    void queue_surface_state_request(std::string request_id, std::string surface_id, std::optional<bool> fullscreen,
+        std::optional<bool> maximized)
     {
         if (request_id.empty())
         {
@@ -1193,7 +1195,7 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
 
         {
             std::lock_guard lock(state_mutex_);
-            pending_surface_state_requests_.push_back({std::move(request_id), std::move(surface_id), fullscreen});
+            pending_surface_state_requests_.push_back({std::move(request_id), std::move(surface_id), fullscreen, maximized});
         }
 
         notify_close_wake();
@@ -1607,6 +1609,31 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         return observed || (toplevel->pending_fullscreen() == fullscreen);
     }
 
+    bool set_view_maximized(wayfire_view view, wf::toplevel_view_interface_t *toplevel, bool maximized)
+    {
+        if (!view || !toplevel || !wf::get_core().default_wm)
+        {
+            return false;
+        }
+        const uint32_t target_edges = maximized ? wf::TILED_EDGES_ALL : 0;
+        if (toplevel->pending_tiled_edges() == target_edges)
+        {
+            return true;
+        }
+        bool observed = false;
+        wf::signal::connection_t<wf::view_tiled_signal> on_tiled = [&] (wf::view_tiled_signal *ev)
+        {
+            if (ev && (ev->view.get() == toplevel) && (ev->new_edges == target_edges))
+            {
+                observed = true;
+            }
+        };
+        view->connect(&on_tiled);
+        wf::get_core().default_wm->tile_request(wayfire_toplevel_view{toplevel}, target_edges);
+        on_tiled.disconnect();
+        return observed || (toplevel->pending_tiled_edges() == target_edges);
+    }
+
     void process_surface_state_request(const pending_surface_state_request_t& request,
         const std::unordered_map<std::string, wayfire_view>& views)
     {
@@ -1624,15 +1651,31 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
             send_surface_state_response(request, false, "surface is not a toplevel");
             return;
         }
-        if (!request.fullscreen.has_value())
+        const int requested_states = (request.fullscreen.has_value() ? 1 : 0) + (request.maximized.has_value() ? 1 : 0);
+        if (requested_states == 0)
         {
             send_surface_state_response(request, false, "no supported state requested");
             return;
         }
-        if (!set_view_fullscreen(view, toplevel, *request.fullscreen))
+        if (requested_states > 1)
         {
-            send_surface_state_response(request, false, "fullscreen state change was not observed");
+            send_surface_state_response(request, false, "only one surface state may be requested");
             return;
+        }
+        if (request.fullscreen.has_value())
+        {
+            if (!set_view_fullscreen(view, toplevel, *request.fullscreen))
+            {
+                send_surface_state_response(request, false, "fullscreen state change was not observed");
+                return;
+            }
+        } else if (request.maximized.has_value())
+        {
+            if (!set_view_maximized(view, toplevel, *request.maximized))
+            {
+                send_surface_state_response(request, false, "maximize state change was not observed");
+                return;
+            }
         }
         track_view(view);
         emit_surface_event("focused", view);
@@ -1839,6 +1882,9 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
         if (auto *toplevel = dynamic_cast<wf::toplevel_view_interface_t*>(view.get()))
         {
             snapshot.fullscreen = toplevel->pending_fullscreen();
+            const uint32_t tiled_edges = toplevel->pending_tiled_edges();
+            snapshot.tiled_edges = tiled_edges;
+            snapshot.maximized = (tiled_edges == wf::TILED_EDGES_ALL);
         }
         annotate_stack_readback(snapshot, view);
         return snapshot;
@@ -1917,7 +1963,7 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
             queue_property_request(message.request_id, message.surface_id, message.always_on_top);
             break;
           case agora::protocol::bridge_message_kind::set_surface_state:
-            queue_surface_state_request(message.request_id, message.surface_id, message.fullscreen);
+            queue_surface_state_request(message.request_id, message.surface_id, message.fullscreen, message.maximized);
             break;
           case agora::protocol::bridge_message_kind::invalid:
             break;

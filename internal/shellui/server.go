@@ -186,6 +186,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleSurfaceAlwaysOnTop(w, r)
 	case "/surface/fullscreen":
 		s.handleSurfaceFullscreen(w, r)
+	case "/surface/maximize":
+		s.handleSurfaceMaximize(w, r)
 	case "/surface/debug-raise":
 		s.handleSurfaceDebugRaise(w, r)
 	case "/surface/close":
@@ -716,6 +718,59 @@ func (s *Server) handleSurfaceFullscreen(w http.ResponseWriter, r *http.Request)
 		value := req.Enabled
 		state := schema.SurfaceState{Fullscreen: &value}
 		result := schema.SurfaceActionResponse{Action: "surface.fullscreen", SurfaceID: req.SurfaceID, Decision: schema.SurfaceActionDenied, Reason: err.Error(), Error: err.Error(), Actor: "human-shell", TargetState: &state, Fullscreen: &value}
+		uid := uint32(identity.UID)
+		result.ActorUID = &uid
+		if resp != nil {
+			result.Reason = resp.ErrorMessage
+			result.Error = resp.ErrorMessage
+			var decoded schema.SurfaceActionResponse
+			if decodeErr := json.Unmarshal(resp.Body, &decoded); decodeErr == nil && decoded.Action != "" {
+				result = decoded
+				if result.Actor == "" {
+					result.Actor = "human-shell"
+				}
+				if result.ActorUID == nil {
+					result.ActorUID = &uid
+				}
+			}
+		}
+		status := http.StatusBadGateway
+		if resp != nil && (resp.ErrorClass == schema.ErrorSurfaceNotFound || resp.ErrorClass == schema.ErrorSurfaceStale || resp.ErrorClass == schema.ErrorBackendUnsupported) {
+			status = http.StatusConflict
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_ = json.NewEncoder(w).Encode(surfaceActionHTTPError{ErrorClass: respErrorClass(resp), Result: result})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(body)
+}
+
+func (s *Server) handleSurfaceMaximize(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	identity, _, err := s.authenticateHuman(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	var req schema.MaximizeSurfaceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("decode maximize request: %v", err), http.StatusBadRequest)
+		return
+	}
+	if req.SurfaceID == "" {
+		http.Error(w, "surface_id is required", http.StatusBadRequest)
+		return
+	}
+	body, resp, err := callResponse(s.compositorSocket, schema.MethodMaximizeSurface, req)
+	if err != nil {
+		value := req.Enabled
+		state := schema.SurfaceState{Maximized: &value}
+		result := schema.SurfaceActionResponse{Action: "surface.maximize", SurfaceID: req.SurfaceID, Decision: schema.SurfaceActionDenied, Reason: err.Error(), Error: err.Error(), Actor: "human-shell", TargetState: &state, Maximized: &value}
 		uid := uint32(identity.UID)
 		result.ActorUID = &uid
 		if resp != nil {

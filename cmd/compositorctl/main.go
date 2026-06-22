@@ -802,6 +802,27 @@ func buildFullscreenSurfaceRequest(args []string) (schema.FullscreenSurfaceReque
 	return schema.FullscreenSurfaceRequest{SurfaceID: *surfaceID, Enabled: value, WaitTimeoutMs: *timeout}, nil
 }
 
+func buildMaximizeSurfaceRequest(args []string) (schema.MaximizeSurfaceRequest, error) {
+	fs := flag.NewFlagSet("surface maximize", flag.ExitOnError)
+	surfaceID := fs.String("surface", "", "surface id")
+	enabled := fs.Bool("enabled", true, "set maximized enabled")
+	state := fs.String("state", "", "set maximized state: true or false")
+	timeout := fs.Int("timeout-ms", 4000, "maximize acknowledgement/readback timeout in milliseconds")
+	fs.Parse(args)
+	if *surfaceID == "" {
+		return schema.MaximizeSurfaceRequest{}, fmt.Errorf("--surface is required")
+	}
+	value := *enabled
+	if *state != "" {
+		parsed, err := strconv.ParseBool(*state)
+		if err != nil {
+			return schema.MaximizeSurfaceRequest{}, fmt.Errorf("--state must be true or false")
+		}
+		value = parsed
+	}
+	return schema.MaximizeSurfaceRequest{SurfaceID: *surfaceID, Enabled: value, WaitTimeoutMs: *timeout}, nil
+}
+
 func buildCloseSurfaceRequest(args []string) (schema.CloseSurfaceRequest, error) {
 	fs := flag.NewFlagSet("surface close", flag.ExitOnError)
 	surfaceID := fs.String("surface", "", "surface id to close")
@@ -815,7 +836,7 @@ func buildCloseSurfaceRequest(args []string) (schema.CloseSurfaceRequest, error)
 
 func cmdSurface(args []string, pretty bool) error {
 	if len(args) == 0 {
-		return fmt.Errorf("surface subcommand is required: focus, debug-raise, move, tile, resize, always-on-top, fullscreen, close (canonical raise/minimize/maximize are deferred until compositor support is explicit)")
+		return fmt.Errorf("surface subcommand is required: focus, debug-raise, move, tile, resize, always-on-top, fullscreen, maximize, close (canonical raise/minimize are deferred until compositor support is explicit)")
 	}
 	switch args[0] {
 	case "focus":
@@ -860,6 +881,12 @@ func cmdSurface(args []string, pretty bool) error {
 			return err
 		}
 		return callAndPrint(schema.MethodFullscreenSurface, req, pretty)
+	case "maximize":
+		req, err := buildMaximizeSurfaceRequest(args[1:])
+		if err != nil {
+			return err
+		}
+		return callAndPrint(schema.MethodMaximizeSurface, req, pretty)
 	case "close":
 		req, err := buildCloseSurfaceRequest(args[1:])
 		if err != nil {

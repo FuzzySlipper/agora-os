@@ -681,6 +681,94 @@ func TestSurfaceFullscreenEndpointRejectsMalformedRequests(t *testing.T) {
 	}
 }
 
+func TestSurfaceMaximizeEndpointCallsCanonicalCompositorAction(t *testing.T) {
+	t.Parallel()
+	secret := []byte("01234567890123456789012345678901")
+	compSock := startSchemaServer(t, func(req schema.Request) schema.Response {
+		if req.Method != schema.MethodMaximizeSurface {
+			t.Fatalf("unexpected method %q", req.Method)
+		}
+		var body schema.MaximizeSurfaceRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		if body.SurfaceID != "view-max" || !body.Enabled {
+			t.Fatalf("unexpected maximize body: %+v", body)
+		}
+		value := true
+		edges := &schema.SurfaceTiledEdges{Bits: 15, Edges: []string{"top", "bottom", "left", "right"}}
+		return okSchemaResponse(schema.SurfaceActionResponse{
+			Action:      "surface.maximize",
+			SurfaceID:   "view-max",
+			Decision:    schema.SurfaceActionAccepted,
+			TargetState: &schema.SurfaceState{Maximized: &value, TiledEdges: edges},
+			ResultState: &schema.SurfaceState{Maximized: &value, TiledEdges: edges},
+			Maximized:   &value,
+			TiledEdges:  edges,
+			Surface:     &schema.CompositorTrackedSurface{Surface: schema.CompositorSurface{ID: "view-max", Maximized: &value, TiledEdges: edges}},
+		})
+	})
+	server := New(Config{Secret: secret, Now: func() time.Time { return time.Now().UTC() }, CompositorSocket: compSock})
+	req := httptest.NewRequest(http.MethodPost, "/api/shell/surface/maximize", bytes.NewBufferString(`{"surface_id":"view-max","enabled":true}`))
+	req.Header.Set("Authorization", "Bearer "+mustMintHumanToken(t, secret))
+	resp := httptest.NewRecorder()
+	server.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("got status %d body %q, want 200", resp.Code, resp.Body.String())
+	}
+	var result schema.SurfaceActionResponse
+	if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if result.Action != "surface.maximize" || result.Decision != schema.SurfaceActionAccepted || result.ResultState == nil || result.ResultState.Maximized == nil || !*result.ResultState.Maximized || result.ResultState.TiledEdges == nil || result.ResultState.TiledEdges.Bits != 15 || result.Surface == nil || result.Surface.Surface.Maximized == nil || !*result.Surface.Surface.Maximized {
+		t.Fatalf("unexpected response: %+v", result)
+	}
+}
+
+func TestSurfaceMaximizeEndpointReturnsStructuredDeniedResults(t *testing.T) {
+	t.Parallel()
+	secret := []byte("01234567890123456789012345678901")
+	value := true
+	edges := &schema.SurfaceTiledEdges{Bits: 15, Edges: []string{"top", "bottom", "left", "right"}}
+	compSock := startSchemaServer(t, func(req schema.Request) schema.Response {
+		if req.Method != schema.MethodMaximizeSurface {
+			t.Fatalf("unexpected method %q", req.Method)
+		}
+		body, _ := json.Marshal(schema.SurfaceActionResponse{Action: "surface.maximize", SurfaceID: "layer-max", Decision: schema.SurfaceActionDenied, Error: "not a toplevel", TargetState: &schema.SurfaceState{Maximized: &value, TiledEdges: edges}, Maximized: &value, TiledEdges: edges})
+		return schema.Response{OK: false, ErrorClass: schema.ErrorBackendUnsupported, ErrorMessage: "not a toplevel", Body: body}
+	})
+	server := New(Config{Secret: secret, Now: func() time.Time { return time.Now().UTC() }, CompositorSocket: compSock})
+	req := httptest.NewRequest(http.MethodPost, "/api/shell/surface/maximize", bytes.NewBufferString(`{"surface_id":"layer-max","enabled":true}`))
+	req.Header.Set("Authorization", "Bearer "+mustMintHumanToken(t, secret))
+	resp := httptest.NewRecorder()
+	server.ServeHTTP(resp, req)
+	if resp.Code != http.StatusConflict {
+		t.Fatalf("got status %d body %q, want 409", resp.Code, resp.Body.String())
+	}
+	var result surfaceActionHTTPError
+	if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if result.ErrorClass != schema.ErrorBackendUnsupported || result.Result.Action != "surface.maximize" || result.Result.Decision != schema.SurfaceActionDenied || result.Result.TargetState == nil || result.Result.TargetState.Maximized == nil || !*result.Result.TargetState.Maximized || result.Result.TargetState.TiledEdges == nil || result.Result.TargetState.TiledEdges.Bits != 15 {
+		t.Fatalf("unexpected denied envelope: %+v", result)
+	}
+}
+
+func TestSurfaceMaximizeEndpointRejectsMalformedRequests(t *testing.T) {
+	t.Parallel()
+	secret := []byte("01234567890123456789012345678901")
+	server := New(Config{Secret: secret, Now: func() time.Time { return time.Now().UTC() }})
+	for _, body := range []string{`{`, `{"enabled":true}`} {
+		req := httptest.NewRequest(http.MethodPost, "/api/shell/surface/maximize", bytes.NewBufferString(body))
+		req.Header.Set("Authorization", "Bearer "+mustMintHumanToken(t, secret))
+		resp := httptest.NewRecorder()
+		server.ServeHTTP(resp, req)
+		if resp.Code != http.StatusBadRequest {
+			t.Fatalf("body %q got status %d body %q, want 400", body, resp.Code, resp.Body.String())
+		}
+	}
+}
+
 func TestSurfaceAlwaysOnTopEndpointCallsCanonicalCompositorAction(t *testing.T) {
 	t.Parallel()
 	authNow := time.Now().UTC().Truncate(time.Second)

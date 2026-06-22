@@ -103,6 +103,19 @@ applySurfaceActionEvent(state, {
 });
 assert.equal(state.surfaces.find((surface) => surface.id === "view-7").disabled, true, "non-stale fullscreen denial disables entry");
 
+state.surfaces.push({ id: "view-8", title: "Maximizable", focused: false, maximized: false, tiled_edges: { bits: 0 } });
+applySurfaceActionEvent(state, {
+  topic: "shell.action.completed",
+  body: { action: "surface.maximize", surface_id: "view-8", decision: "accepted", target_state: { maximized: true, tiled_edges: { bits: 15, edges: ["top", "bottom", "left", "right"] } }, result_state: { maximized: true, tiled_edges: { bits: 15, edges: ["top", "bottom", "left", "right"] } }, maximized: true, surface: { surface: { id: "view-8", title: "Maximizable", maximized: true, tiled_edges: { bits: 15, edges: ["top", "bottom", "left", "right"] } } } },
+});
+assert.equal(state.surfaces.find((surface) => surface.id === "view-8").maximized, true, "maximize completion updates state from authoritative readback");
+assert.equal(state.surfaces.find((surface) => surface.id === "view-8").tiled_edges.bits, 15, "maximize completion updates tiled edge readback");
+applySurfaceActionEvent(state, {
+  topic: "shell.action.denied",
+  body: { action: "surface.maximize", surface_id: "view-8", decision: "denied", error: "surface view-8 is not a toplevel" },
+});
+assert.equal(state.surfaces.find((surface) => surface.id === "view-8").disabled, true, "non-stale maximize denial disables entry");
+
 const snapshotState = {
   surfaces: [
     { id: "view-old", title: "Stale" },

@@ -63,6 +63,18 @@ int main()
     assert(state_msg.request_id == "state-1");
     assert(state_msg.surface_id == "view-10");
     assert(state_msg.fullscreen.has_value() && (*state_msg.fullscreen == true));
+    auto maximize_state_msg = parse_bridge_message(
+        "{\"type\":\"set_surface_state\",\"request_id\":\"state-2\",\"surface_id\":\"view-10\",\"maximized\":true}");
+    assert(maximize_state_msg.kind == bridge_message_kind::set_surface_state);
+    assert(maximize_state_msg.request_id == "state-2");
+    assert(maximize_state_msg.surface_id == "view-10");
+    assert(maximize_state_msg.maximized.has_value() && (*maximize_state_msg.maximized == true));
+    assert(!maximize_state_msg.fullscreen.has_value());
+    auto invalid_multi_state_msg = parse_bridge_message(
+        "{\"type\":\"set_surface_state\",\"request_id\":\"state-3\",\"surface_id\":\"view-10\",\"fullscreen\":true,\"maximized\":true}");
+    assert(invalid_multi_state_msg.kind == bridge_message_kind::set_surface_state);
+    assert(invalid_multi_state_msg.fullscreen.has_value() && (*invalid_multi_state_msg.fullscreen == true));
+    assert(invalid_multi_state_msg.maximized.has_value() && (*invalid_multi_state_msg.maximized == true));
     auto state_response = encode_surface_state_response("state-1", "view-10", true, "");
     assert(state_response.find("\"type\":\"surface_state_response\"") != std::string::npos);
     assert(state_response.find("\"ok\":true") != std::string::npos);

@@ -903,6 +903,328 @@ func TestDebugRaiseDeniesLayerShell(t *testing.T) {
 	}
 }
 
+func TestDispatchMaximizeRoutesToPluginAndPublishesAction(t *testing.T) {
+	pub := &fakePublisher{}
+	bridge, err := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	server, client, cleanup := unixSocketPair(t)
+	defer cleanup()
+
+	go bridge.HandlePluginConn(server)
+	dec := json.NewDecoder(client)
+	readInitialSync(t, dec)
+
+	visible := true
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventMapped, Surface: schema.CompositorSurface{ID: "view-maximize", WayfireViewID: 63, Role: "toplevel", Visible: &visible, OutputID: "HDMI-A-1", Maximized: boolPtr(false), TiledEdges: &schema.SurfaceTiledEdges{Bits: 0}}, Client: schema.CompositorClientIdentity{UID: 60001}})
+	var discard schema.CompositorPolicyUpsert
+	_ = dec.Decode(&discard)
+
+	body, err := json.Marshal(schema.MaximizeSurfaceRequest{SurfaceID: "view-maximize", Enabled: true, WaitTimeoutMs: 500})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	respCh := make(chan schema.Response, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		resp, err := bridge.dispatch(60002, schema.Request{Method: schema.MethodMaximizeSurface, Body: body})
+		if err != nil {
+			errCh <- err
+			return
+		}
+		respCh <- resp
+	}()
+
+	var msg schema.CompositorSetSurfaceState
+	if err := dec.Decode(&msg); err != nil {
+		t.Fatalf("decode set_surface_state: %v", err)
+	}
+	if msg.Type != schema.PluginMessageSetSurfaceState || msg.SurfaceID != "view-maximize" || msg.RequestID == "" || msg.Maximized == nil || !*msg.Maximized || msg.Fullscreen != nil {
+		t.Fatalf("unexpected set_surface_state message: %+v", msg)
+	}
+	if err := json.NewEncoder(client).Encode(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceStateResponse, RequestID: msg.RequestID, SurfaceID: "view-maximize", OK: true}); err != nil {
+		t.Fatalf("encode surface state response: %v", err)
+	}
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventFocused, Surface: schema.CompositorSurface{ID: "view-maximize", WayfireViewID: 63, Role: "toplevel", Visible: &visible, OutputID: "HDMI-A-1", Maximized: &visible, TiledEdges: &schema.SurfaceTiledEdges{Bits: 15, Edges: []string{"top", "bottom", "left", "right"}}}, Client: schema.CompositorClientIdentity{UID: 60001}})
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("dispatch returned error: %v", err)
+	case resp := <-respCh:
+		if !resp.OK {
+			t.Fatalf("dispatch response not OK: %+v", resp)
+		}
+		var action schema.SurfaceActionResponse
+		if err := json.Unmarshal(resp.Body, &action); err != nil {
+			t.Fatalf("unmarshal response: %v", err)
+		}
+		if action.Action != "surface.maximize" || action.Decision != schema.SurfaceActionAccepted || action.TargetState == nil || action.TargetState.Maximized == nil || !*action.TargetState.Maximized || action.TargetState.TiledEdges == nil || action.TargetState.TiledEdges.Bits != 15 || action.ResultState == nil || action.ResultState.Maximized == nil || !*action.ResultState.Maximized || action.Maximized == nil || !*action.Maximized || action.Surface == nil || action.Surface.Surface.Maximized == nil || !*action.Surface.Surface.Maximized {
+			t.Fatalf("unexpected action response: %+v", action)
+		}
+	case <-time.After(700 * time.Millisecond):
+		t.Fatal("timed out waiting for dispatch response")
+	}
+	if len(pub.events) == 0 || pub.events[len(pub.events)-1].topic != schema.TopicShellActionCompleted {
+		t.Fatalf("shell action completion was not published: %+v", pub.events)
+	}
+}
+
+func TestDispatchMaximizeRestoreRoutesToPluginAndPublishesAction(t *testing.T) {
+	pub := &fakePublisher{}
+	bridge, err := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	server, client, cleanup := unixSocketPair(t)
+	defer cleanup()
+
+	go bridge.HandlePluginConn(server)
+	dec := json.NewDecoder(client)
+	readInitialSync(t, dec)
+
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventMapped, Surface: schema.CompositorSurface{ID: "view-maximize-restore", WayfireViewID: 64, Role: "toplevel", Visible: boolPtr(true), OutputID: "HDMI-A-1", Maximized: boolPtr(true), TiledEdges: &schema.SurfaceTiledEdges{Bits: 15, Edges: []string{"top", "bottom", "left", "right"}}}, Client: schema.CompositorClientIdentity{UID: 60001}})
+	var discard schema.CompositorPolicyUpsert
+	_ = dec.Decode(&discard)
+
+	body, err := json.Marshal(schema.MaximizeSurfaceRequest{SurfaceID: "view-maximize-restore", Enabled: false, WaitTimeoutMs: 500})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	respCh := make(chan schema.Response, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		resp, err := bridge.dispatch(60002, schema.Request{Method: schema.MethodMaximizeSurface, Body: body})
+		if err != nil {
+			errCh <- err
+			return
+		}
+		respCh <- resp
+	}()
+
+	var msg schema.CompositorSetSurfaceState
+	if err := dec.Decode(&msg); err != nil {
+		t.Fatalf("decode set_surface_state: %v", err)
+	}
+	if msg.Type != schema.PluginMessageSetSurfaceState || msg.SurfaceID != "view-maximize-restore" || msg.RequestID == "" || msg.Maximized == nil || *msg.Maximized || msg.Fullscreen != nil {
+		t.Fatalf("unexpected set_surface_state message: %+v", msg)
+	}
+	if err := json.NewEncoder(client).Encode(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceStateResponse, RequestID: msg.RequestID, SurfaceID: "view-maximize-restore", OK: true}); err != nil {
+		t.Fatalf("encode surface state response: %v", err)
+	}
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventFocused, Surface: schema.CompositorSurface{ID: "view-maximize-restore", WayfireViewID: 64, Role: "toplevel", Visible: boolPtr(true), OutputID: "HDMI-A-1", Maximized: boolPtr(false), TiledEdges: &schema.SurfaceTiledEdges{Bits: 0}}, Client: schema.CompositorClientIdentity{UID: 60001}})
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("dispatch returned error: %v", err)
+	case resp := <-respCh:
+		if !resp.OK {
+			t.Fatalf("dispatch response not OK: %+v", resp)
+		}
+		var action schema.SurfaceActionResponse
+		if err := json.Unmarshal(resp.Body, &action); err != nil {
+			t.Fatalf("unmarshal response: %v", err)
+		}
+		if action.Action != "surface.maximize" || action.Decision != schema.SurfaceActionAccepted || action.TargetState == nil || action.TargetState.Maximized == nil || *action.TargetState.Maximized || action.TargetState.TiledEdges == nil || action.TargetState.TiledEdges.Bits != 0 || action.ResultState == nil || action.ResultState.Maximized == nil || *action.ResultState.Maximized || action.ResultState.TiledEdges == nil || action.ResultState.TiledEdges.Bits != 0 || action.Maximized == nil || *action.Maximized || action.Surface == nil || action.Surface.Surface.Maximized == nil || *action.Surface.Surface.Maximized || action.Surface.Surface.TiledEdges == nil || action.Surface.Surface.TiledEdges.Bits != 0 {
+			t.Fatalf("unexpected action response: %+v", action)
+		}
+	case <-time.After(700 * time.Millisecond):
+		t.Fatal("timed out waiting for dispatch response")
+	}
+	if len(pub.events) == 0 || pub.events[len(pub.events)-1].topic != schema.TopicShellActionCompleted {
+		t.Fatalf("shell action completion was not published: %+v", pub.events)
+	}
+	action, ok := pub.events[len(pub.events)-1].body.(schema.SurfaceActionResponse)
+	if !ok || action.Action != "surface.maximize" || action.ResultState == nil || action.ResultState.Maximized == nil || *action.ResultState.Maximized || action.ResultState.TiledEdges == nil || action.ResultState.TiledEdges.Bits != 0 {
+		t.Fatalf("unexpected completion event: %+v", pub.events[len(pub.events)-1].body)
+	}
+}
+
+func TestDispatchMaximizeDeniesMissingStaleAndLayerShell(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(*Bridge)
+		class string
+	}{
+		{name: "missing", class: schema.ErrorSurfaceNotFound},
+		{name: "stale", class: schema.ErrorSurfaceStale, setup: func(bridge *Bridge) {
+			bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventMapped, Surface: schema.CompositorSurface{ID: "view-max-denied", Role: "toplevel", WayfireViewID: 65, Visible: boolPtr(true), OutputID: "HDMI-A-1", Maximized: boolPtr(false), TiledEdges: &schema.SurfaceTiledEdges{Bits: 0}}, Client: schema.CompositorClientIdentity{UID: 60001}})
+			bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventUnmapped, Surface: schema.CompositorSurface{ID: "view-max-denied", WayfireViewID: 65}, Client: schema.CompositorClientIdentity{UID: 60001}})
+		}},
+		{name: "layer-shell", class: schema.ErrorBackendUnsupported, setup: func(bridge *Bridge) {
+			bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventMapped, Surface: schema.CompositorSurface{ID: "view-max-denied", SurfaceKind: schema.SurfaceKindLayerShell, Visible: boolPtr(true), OutputID: "HDMI-A-1", Maximized: boolPtr(false), TiledEdges: &schema.SurfaceTiledEdges{Bits: 0}}, Client: schema.CompositorClientIdentity{UID: 60001}})
+		}},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			pub := &fakePublisher{}
+			bridge, err := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			if tc.setup != nil {
+				tc.setup(bridge)
+			}
+			body, err := json.Marshal(schema.MaximizeSurfaceRequest{SurfaceID: "view-max-denied", Enabled: true, WaitTimeoutMs: 20})
+			if err != nil {
+				t.Fatalf("marshal request: %v", err)
+			}
+			_, err = bridge.dispatch(60002, schema.Request{Method: schema.MethodMaximizeSurface, Body: body})
+			assertMaximizeDenied(t, pub, err, tc.class, "", true, nil, nil)
+		})
+	}
+}
+
+func TestDispatchMaximizeDeniesPluginAckTimeout(t *testing.T) {
+	pub := &fakePublisher{}
+	bridge, err := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	server, client, cleanup := unixSocketPair(t)
+	defer cleanup()
+	go bridge.HandlePluginConn(server)
+	dec := json.NewDecoder(client)
+	readInitialSync(t, dec)
+
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventMapped, Surface: schema.CompositorSurface{ID: "view-max-timeout", WayfireViewID: 66, Role: "toplevel", Visible: boolPtr(true), OutputID: "HDMI-A-1", Maximized: boolPtr(false), TiledEdges: &schema.SurfaceTiledEdges{Bits: 0}}, Client: schema.CompositorClientIdentity{UID: 60001}})
+	var discard schema.CompositorPolicyUpsert
+	_ = dec.Decode(&discard)
+
+	body, err := json.Marshal(schema.MaximizeSurfaceRequest{SurfaceID: "view-max-timeout", Enabled: true, WaitTimeoutMs: 25})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := bridge.dispatch(60002, schema.Request{Method: schema.MethodMaximizeSurface, Body: body})
+		errCh <- err
+	}()
+	var msg schema.CompositorSetSurfaceState
+	if err := dec.Decode(&msg); err != nil {
+		t.Fatalf("decode set_surface_state: %v", err)
+	}
+	if msg.Type != schema.PluginMessageSetSurfaceState || msg.SurfaceID != "view-max-timeout" || msg.RequestID == "" || msg.Maximized == nil || !*msg.Maximized || msg.Fullscreen != nil {
+		t.Fatalf("unexpected set_surface_state message: %+v", msg)
+	}
+	select {
+	case err := <-errCh:
+		assertMaximizeDenied(t, pub, err, schema.ErrorFrameTimeout, "maximize plugin acknowledgement timed out", true, boolPtr(false), &schema.SurfaceTiledEdges{Bits: 0})
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("timed out waiting for maximize ack timeout")
+	}
+}
+
+func TestDispatchMaximizeDeniesReadbackTimeoutAfterPluginAck(t *testing.T) {
+	pub := &fakePublisher{}
+	bridge, err := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	server, client, cleanup := unixSocketPair(t)
+	defer cleanup()
+	go bridge.HandlePluginConn(server)
+	dec := json.NewDecoder(client)
+	readInitialSync(t, dec)
+
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventMapped, Surface: schema.CompositorSurface{ID: "view-max-readback-timeout", WayfireViewID: 67, Role: "toplevel", Visible: boolPtr(true), OutputID: "HDMI-A-1", Maximized: boolPtr(false), TiledEdges: &schema.SurfaceTiledEdges{Bits: 0}}, Client: schema.CompositorClientIdentity{UID: 60001}})
+	var discard schema.CompositorPolicyUpsert
+	_ = dec.Decode(&discard)
+
+	body, err := json.Marshal(schema.MaximizeSurfaceRequest{SurfaceID: "view-max-readback-timeout", Enabled: true, WaitTimeoutMs: 30})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := bridge.dispatch(60002, schema.Request{Method: schema.MethodMaximizeSurface, Body: body})
+		errCh <- err
+	}()
+	var msg schema.CompositorSetSurfaceState
+	if err := dec.Decode(&msg); err != nil {
+		t.Fatalf("decode set_surface_state: %v", err)
+	}
+	if err := json.NewEncoder(client).Encode(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceStateResponse, RequestID: msg.RequestID, SurfaceID: "view-max-readback-timeout", OK: true}); err != nil {
+		t.Fatalf("encode surface state response: %v", err)
+	}
+	select {
+	case err := <-errCh:
+		assertMaximizeDenied(t, pub, err, schema.ErrorFrameTimeout, "maximize readback timed out after plugin ack", true, boolPtr(false), &schema.SurfaceTiledEdges{Bits: 0})
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("timed out waiting for maximize readback timeout")
+	}
+}
+
+func TestDispatchMaximizeDeniesPluginNegativeAck(t *testing.T) {
+	pub := &fakePublisher{}
+	bridge, err := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	server, client, cleanup := unixSocketPair(t)
+	defer cleanup()
+	go bridge.HandlePluginConn(server)
+	dec := json.NewDecoder(client)
+	readInitialSync(t, dec)
+
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventMapped, Surface: schema.CompositorSurface{ID: "view-max-negative-ack", WayfireViewID: 68, Role: "toplevel", Visible: boolPtr(true), OutputID: "HDMI-A-1", Maximized: boolPtr(false), TiledEdges: &schema.SurfaceTiledEdges{Bits: 0}}, Client: schema.CompositorClientIdentity{UID: 60001}})
+	var discard schema.CompositorPolicyUpsert
+	_ = dec.Decode(&discard)
+
+	body, err := json.Marshal(schema.MaximizeSurfaceRequest{SurfaceID: "view-max-negative-ack", Enabled: true, WaitTimeoutMs: 250})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := bridge.dispatch(60002, schema.Request{Method: schema.MethodMaximizeSurface, Body: body})
+		errCh <- err
+	}()
+	var msg schema.CompositorSetSurfaceState
+	if err := dec.Decode(&msg); err != nil {
+		t.Fatalf("decode set_surface_state: %v", err)
+	}
+	if err := json.NewEncoder(client).Encode(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceStateResponse, RequestID: msg.RequestID, SurfaceID: "view-max-negative-ack", OK: false, Error: "backend refused maximize"}); err != nil {
+		t.Fatalf("encode surface state response: %v", err)
+	}
+	select {
+	case err := <-errCh:
+		assertMaximizeDenied(t, pub, err, schema.ErrorProtocolError, "backend refused maximize", true, boolPtr(false), &schema.SurfaceTiledEdges{Bits: 0})
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("timed out waiting for maximize negative ack denial")
+	}
+}
+
+func assertMaximizeDenied(t *testing.T, pub *fakePublisher, err error, wantClass, wantMessage string, wantTarget bool, wantReadback *bool, wantEdges *schema.SurfaceTiledEdges) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("expected maximize denial error")
+	}
+	if class, _ := classifyError(err); class != wantClass {
+		t.Fatalf("got error class %q (%v), want %q", class, err, wantClass)
+	}
+	if wantMessage != "" && !strings.Contains(err.Error(), wantMessage) {
+		t.Fatalf("error %q does not contain %q", err.Error(), wantMessage)
+	}
+	if len(pub.events) == 0 || pub.events[len(pub.events)-1].topic != schema.TopicShellActionDenied {
+		t.Fatalf("shell action denial was not published: %+v", pub.events)
+	}
+	action, ok := pub.events[len(pub.events)-1].body.(schema.SurfaceActionResponse)
+	if !ok || action.Action != "surface.maximize" || action.Decision != schema.SurfaceActionDenied || action.TargetState == nil || action.TargetState.Maximized == nil || *action.TargetState.Maximized != wantTarget || action.TargetState.TiledEdges == nil || action.TargetState.TiledEdges.Bits != tiledEdgesForMaximized(wantTarget).Bits {
+		t.Fatalf("unexpected denied action %+v", pub.events[len(pub.events)-1].body)
+	}
+	if wantReadback != nil {
+		if action.Surface == nil || action.Surface.Surface.Maximized == nil || *action.Surface.Surface.Maximized != *wantReadback {
+			t.Fatalf("denied action missing readback maximized=%v: %+v", *wantReadback, action)
+		}
+	}
+	if wantEdges != nil {
+		if action.Surface == nil || action.Surface.Surface.TiledEdges == nil || action.Surface.Surface.TiledEdges.Bits != wantEdges.Bits {
+			t.Fatalf("denied action missing readback tiled_edges=%+v: %+v", wantEdges, action)
+		}
+	}
+}
+
 func TestDispatchFullscreenRoutesToPluginAndPublishesAction(t *testing.T) {
 	pub := &fakePublisher{}
 	bridge, err := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})

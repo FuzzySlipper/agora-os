@@ -73,6 +73,7 @@ const moveCalls = [];
 const tileCalls = [];
 const alwaysOnTopCalls = [];
 const fullscreenCalls = [];
+const maximizeCalls = [];
 const widget = new WindowChromeWidget({
   onActionResult: (result) => results.push(result),
   focusSurface: async (surfaceId) => {
@@ -99,6 +100,10 @@ const widget = new WindowChromeWidget({
   fullscreenSurface: async (surfaceId, enabled) => {
     fullscreenCalls.push({ surfaceId, enabled });
     return { action: "surface.fullscreen", surface_id: surfaceId, decision: "accepted", target_state: { fullscreen: enabled }, result_state: { fullscreen: enabled }, fullscreen: enabled, surface: { surface: { id: surfaceId, title: "ASHA Studio", fullscreen: enabled } } };
+  },
+  maximizeSurface: async (surfaceId, enabled) => {
+    maximizeCalls.push({ surfaceId, enabled });
+    return { action: "surface.maximize", surface_id: surfaceId, decision: "accepted", target_state: { maximized: enabled, tiled_edges: { bits: 15, edges: ["top", "bottom", "left", "right"] } }, result_state: { maximized: enabled, tiled_edges: { bits: 15, edges: ["top", "bottom", "left", "right"] } }, maximized: enabled, surface: { surface: { id: surfaceId, title: "ASHA Studio", maximized: enabled } } };
   },
 });
 widget.mount(new FakeElement("section"));
@@ -146,6 +151,12 @@ await Promise.resolve();
 assert.deepEqual(fullscreenCalls, [{ surfaceId: "view-1", enabled: true }]);
 assert.equal(results.at(-1).action, "surface.fullscreen");
 assert.equal(results.at(-1).fullscreen, true);
+
+widget.querySelectorAll("[data-action=\"surface.maximize\"]")[0].click();
+await Promise.resolve();
+assert.deepEqual(maximizeCalls, [{ surfaceId: "view-1", enabled: true }]);
+assert.equal(results.at(-1).action, "surface.maximize");
+assert.equal(results.at(-1).maximized, true);
 
 widget.querySelectorAll("[data-action=\"surface.close\"]")[0].click();
 await Promise.resolve();

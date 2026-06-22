@@ -2106,6 +2106,164 @@ func (b *Bridge) surfaceFullscreenMatches(surfaceID string, want bool) bool {
 	return ok && tracked.Surface.Fullscreen != nil && *tracked.Surface.Fullscreen == want
 }
 
+const wayfireTiledEdgesAll uint32 = 15
+
+var wayfireAllTiledEdges = []string{"top", "bottom", "left", "right"}
+
+func maximizeTargetState(enabled bool) schema.SurfaceState {
+	maximized := enabled
+	return schema.SurfaceState{Maximized: &maximized, TiledEdges: tiledEdgesForMaximized(enabled)}
+}
+
+func tiledEdgesForMaximized(enabled bool) *schema.SurfaceTiledEdges {
+	if enabled {
+		return &schema.SurfaceTiledEdges{Bits: wayfireTiledEdgesAll, Edges: append([]string(nil), wayfireAllTiledEdges...)}
+	}
+	return &schema.SurfaceTiledEdges{Bits: 0}
+}
+
+func (b *Bridge) MaximizeSurfaceAction(actorUID uint32, req schema.MaximizeSurfaceRequest) (schema.SurfaceActionResponse, error) {
+	if req.SurfaceID == "" {
+		err := fmt.Errorf("surface_id is required")
+		b.publishMaximizeDenied(actorUID, req, err, nil)
+		return schema.SurfaceActionResponse{}, err
+	}
+	b.mu.RLock()
+	tracked, ok := b.surfaces[req.SurfaceID]
+	b.mu.RUnlock()
+	if !ok {
+		b.mu.RLock()
+		_, stale := b.staleSurfaces[req.SurfaceID]
+		b.mu.RUnlock()
+		var err error
+		if stale {
+			err = compositorError(schema.ErrorSurfaceStale, "surface %s is unmapped/stale", req.SurfaceID)
+		} else {
+			err = compositorError(schema.ErrorSurfaceNotFound, "surface %s not found", req.SurfaceID)
+		}
+		b.publishMaximizeDenied(actorUID, req, err, nil)
+		return schema.SurfaceActionResponse{}, err
+	}
+	if tracked.Surface.SurfaceKind == schema.SurfaceKindLayerShell || (tracked.Surface.Role != "" && tracked.Surface.Role != "toplevel") {
+		err := compositorError(schema.ErrorBackendUnsupported, "surface %s is not an xdg toplevel and cannot be maximized", req.SurfaceID)
+		b.publishMaximizeDenied(actorUID, req, err, &tracked)
+		return schema.SurfaceActionResponse{}, err
+	}
+	if !tracked.Visible {
+		err := compositorError(schema.ErrorSurfaceStale, "surface %s is not visible", req.SurfaceID)
+		b.publishMaximizeDenied(actorUID, req, err, &tracked)
+		return schema.SurfaceActionResponse{}, err
+	}
+	if err := b.setSurfaceMaximized(req.SurfaceID, req.Enabled, time.Duration(req.WaitTimeoutMs)*time.Millisecond); err != nil {
+		b.publishMaximizeDenied(actorUID, req, err, &tracked)
+		return schema.SurfaceActionResponse{}, err
+	}
+	b.mu.RLock()
+	updated, ok := b.surfaces[req.SurfaceID]
+	if ok {
+		updated = b.decorateSurfaceLocked(updated)
+	}
+	b.mu.RUnlock()
+	if !ok {
+		err := compositorError(schema.ErrorSurfaceStale, "surface %s disappeared after maximize", req.SurfaceID)
+		b.publishMaximizeDenied(actorUID, req, err, &tracked)
+		return schema.SurfaceActionResponse{}, err
+	}
+	if updated.Surface.Maximized == nil || *updated.Surface.Maximized != req.Enabled || updated.Surface.TiledEdges == nil || updated.Surface.TiledEdges.Bits != tiledEdgesForMaximized(req.Enabled).Bits {
+		err := compositorError(schema.ErrorFrameTimeout, "surface %s maximize readback did not converge", req.SurfaceID)
+		b.publishMaximizeDenied(actorUID, req, err, &updated)
+		return schema.SurfaceActionResponse{}, err
+	}
+	actor, uid := b.surfaceActionActor(actorUID)
+	value := req.Enabled
+	state := maximizeTargetState(value)
+	result := schema.SurfaceActionResponse{Action: "surface.maximize", SurfaceID: req.SurfaceID, Decision: schema.SurfaceActionAccepted, Reason: "maximize updated via compositor plugin", Actor: actor, ActorUID: uid, TargetState: &state, ResultState: &state, Maximized: &value, TiledEdges: updated.Surface.TiledEdges, Surface: &updated}
+	if b.bus != nil {
+		if err := b.bus.Publish(schema.TopicShellActionCompleted, result); err != nil {
+			log.Printf("publish shell action completed: %v", err)
+		}
+	}
+	return result, nil
+}
+
+func (b *Bridge) publishMaximizeDenied(actorUID uint32, req schema.MaximizeSurfaceRequest, err error, surface *schema.CompositorTrackedSurface) {
+	actor, uid := b.surfaceActionActor(actorUID)
+	value := req.Enabled
+	state := maximizeTargetState(value)
+	result := schema.SurfaceActionResponse{Action: "surface.maximize", SurfaceID: req.SurfaceID, Decision: schema.SurfaceActionDenied, Reason: err.Error(), Error: err.Error(), Actor: actor, ActorUID: uid, TargetState: &state, Maximized: &value, TiledEdges: state.TiledEdges, Surface: surface}
+	if b.bus != nil {
+		if publishErr := b.bus.Publish(schema.TopicShellActionDenied, result); publishErr != nil {
+			log.Printf("publish shell action denied: %v", publishErr)
+		}
+	}
+}
+
+func (b *Bridge) setSurfaceMaximized(surfaceID string, enabled bool, timeout time.Duration) error {
+	if b.surfaceMaximizedMatches(surfaceID, enabled) {
+		return nil
+	}
+	b.mu.Lock()
+	if b.plugin == nil {
+		b.mu.Unlock()
+		return compositorError(schema.ErrorCompositorUnavailable, "no plugin connected")
+	}
+	b.stateSeq++
+	requestID := fmt.Sprintf("state-%d-%d", time.Now().UnixNano(), b.stateSeq)
+	ch := make(chan schema.CompositorSurfaceStatePluginResponse, 1)
+	b.stateWaiters[requestID] = ch
+	session := b.plugin
+	b.mu.Unlock()
+	defer func() {
+		b.mu.Lock()
+		delete(b.stateWaiters, requestID)
+		b.mu.Unlock()
+	}()
+	if err := session.Send(schema.CompositorSetSurfaceState{Type: schema.PluginMessageSetSurfaceState, RequestID: requestID, SurfaceID: surfaceID, Maximized: &enabled}); err != nil {
+		return err
+	}
+	if timeout <= 0 {
+		timeout = 4 * time.Second
+	}
+	deadline := time.After(timeout)
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	pluginAcked := false
+	for {
+		select {
+		case resp := <-ch:
+			if !resp.OK {
+				if resp.Error == "" {
+					resp.Error = "surface state update failed"
+				}
+				return compositorError(schema.ErrorProtocolError, "set maximize failed: %s", resp.Error)
+			}
+			pluginAcked = true
+			if b.surfaceMaximizedMatches(surfaceID, enabled) {
+				return nil
+			}
+		case <-ticker.C:
+			if b.surfaceMaximizedMatches(surfaceID, enabled) {
+				return nil
+			}
+		case <-deadline:
+			if pluginAcked {
+				return compositorError(schema.ErrorFrameTimeout, "maximize readback timed out after plugin ack")
+			}
+			return compositorError(schema.ErrorFrameTimeout, "maximize plugin acknowledgement timed out")
+		}
+	}
+}
+
+func (b *Bridge) surfaceMaximizedMatches(surfaceID string, want bool) bool {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	tracked, ok := b.surfaces[surfaceID]
+	if !ok || tracked.Surface.Maximized == nil || *tracked.Surface.Maximized != want || tracked.Surface.TiledEdges == nil {
+		return false
+	}
+	return tracked.Surface.TiledEdges.Bits == tiledEdgesForMaximized(want).Bits
+}
+
 func (b *Bridge) CloseSurface(surfaceID string) error {
 	return b.sendToPlugin(schema.CompositorCloseSurface{
 		Type:      schema.PluginMessageCloseSurface,
@@ -3402,6 +3560,16 @@ func (b *Bridge) dispatch(peerUID uint32, req schema.Request) (schema.Response, 
 			return schema.Response{}, fmt.Errorf("bad body: %w", err)
 		}
 		resp, err := b.FullscreenSurfaceAction(peerUID, body)
+		if err != nil {
+			return schema.Response{}, err
+		}
+		return okResponse(resp), nil
+	case schema.MethodMaximizeSurface:
+		var body schema.MaximizeSurfaceRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			return schema.Response{}, fmt.Errorf("bad body: %w", err)
+		}
+		resp, err := b.MaximizeSurfaceAction(peerUID, body)
 		if err != nil {
 			return schema.Response{}, err
 		}

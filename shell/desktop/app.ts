@@ -366,8 +366,13 @@ export function applySurfaceActionEvent(state: DesktopShellState, event: BusEnve
             mergeActionReadback(state, body);
             return;
         }
+        if (body.action === "surface.maximize") {
+            state.surfaces = state.surfaces.map((entry) => entry.id === body.surface_id ? { ...entry, maximized: body.result_state?.maximized ?? body.maximized ?? entry.maximized, tiled_edges: body.result_state?.tiled_edges ?? body.tiled_edges ?? entry.tiled_edges, action_error: undefined, disabled: false } : entry);
+            mergeActionReadback(state, body);
+            return;
+        }
     }
-    if (body.action !== "surface.focus" && body.action !== "surface.close" && body.action !== "surface.move" && body.action !== "surface.resize" && body.action !== "surface.tile" && body.action !== "surface.always_on_top" && body.action !== "surface.fullscreen") {
+    if (body.action !== "surface.focus" && body.action !== "surface.close" && body.action !== "surface.move" && body.action !== "surface.resize" && body.action !== "surface.tile" && body.action !== "surface.always_on_top" && body.action !== "surface.fullscreen" && body.action !== "surface.maximize") {
         return;
     }
     const message = body.error || body.reason || `${body.action} denied`;
