@@ -3,6 +3,7 @@ import type { DesktopShellState, ShellWidget, SurfaceActionResponse, SurfaceEven
 export type ShellPublisher = (topic: string, body: unknown) => void;
 export type SurfaceFocusAction = (surfaceId: string) => Promise<SurfaceActionResponse>;
 export type SurfaceMinimizeAction = (surfaceId: string, enabled: boolean) => Promise<SurfaceActionResponse>;
+export type SurfaceRaiseAction = (surfaceId: string) => Promise<SurfaceActionResponse>;
 
 export interface TaskbarWidgetOptions {
     publish?: ShellPublisher;
@@ -269,6 +270,27 @@ export function createSurfaceMinimizeAction(fetcher: typeof fetch = fetch, token
         if (!response.ok) {
             const result = body && "result" in body ? body.result : undefined;
             throw new SurfaceFocusError(result, result?.error || result?.reason || `surface.minimize failed (${response.status})`);
+        }
+        return body as SurfaceActionResponse;
+    };
+}
+
+export function createSurfaceRaiseAction(fetcher: typeof fetch = fetch, tokenProvider: () => string | null = shellToken): SurfaceRaiseAction {
+    return async (surfaceId: string): Promise<SurfaceActionResponse> => {
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        const token = tokenProvider();
+        if (token) {
+            headers.Authorization = `Bearer ${token}`;
+        }
+        const response = await fetcher("/api/shell/surface/raise", {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ surface_id: surfaceId, mode: "no-focus" }),
+        });
+        const body = await response.json().catch(() => undefined) as SurfaceActionResponse | { result?: SurfaceActionResponse; error_class?: string } | undefined;
+        if (!response.ok) {
+            const result = body && "result" in body ? body.result : undefined;
+            throw new SurfaceFocusError(result, result?.error || result?.reason || `surface.raise failed (${response.status})`);
         }
         return body as SurfaceActionResponse;
     };

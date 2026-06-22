@@ -72,6 +72,7 @@ const { SurfaceFocusError } = await import("../dist/desktop/widgets/taskbar.js")
 
 const published = [];
 const focusCalls = [];
+const raiseCalls = [];
 const focusResults = [];
 const appLaunchResults = [];
 const promptRequests = [];
@@ -96,6 +97,10 @@ const widget = new CommandCenterWidget({
   focusSurface: async (surfaceId) => {
     focusCalls.push(surfaceId);
     return { action: "surface.focus", surface_id: surfaceId, decision: "accepted", focused_surface_id: surfaceId };
+  },
+  raiseSurface: async (surfaceId) => {
+    raiseCalls.push(surfaceId);
+    return { action: "surface.raise", surface_id: surfaceId, decision: "accepted", focused_surface_id: "view-1", result_state: { stack: { is_top_in_stack: true } } };
   },
 });
 const container = new FakeElement("section");
@@ -127,11 +132,17 @@ assert.deepEqual(launchedApps, ["terminal"], "ready app row launches by catalog 
 assert.equal(appLaunchResults.at(-1).action, "app.launch");
 assert.equal(appLaunchResults.at(-1).launch_id, "launch-test");
 
-const surfaceRow = widget.querySelectorAll('[data-surface-id="view-2"]')[0];
-surfaceRow.click();
+const focusSurfaceRow = widget.querySelectorAll('[data-action="surface.focus"]').find((row) => row.dataset.surfaceId === "view-2");
+focusSurfaceRow.click();
 await Promise.resolve();
 assert.deepEqual(focusCalls, ["view-2"], "surface row invokes canonical focus action");
 assert.equal(focusResults.at(-1).action, "surface.focus");
+
+const raiseSurfaceRow = widget.querySelectorAll('[data-action="surface.raise"]').find((row) => row.dataset.surfaceId === "view-2");
+raiseSurfaceRow.click();
+await Promise.resolve();
+assert.deepEqual(raiseCalls, ["view-2"], "surface raise row invokes canonical no-focus raise action");
+assert.equal(focusResults.at(-1).action, "surface.raise");
 
 const deniedResults = [];
 const staleResult = { action: "surface.focus", surface_id: "view-stale", decision: "denied", reason: "surface_stale", error: "surface is stale" };

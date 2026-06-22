@@ -68,6 +68,7 @@ const (
 	MethodRemoveSurfacePolicy = "remove_surface_policy"
 	MethodSetInputContext     = "set_input_context"
 	MethodFocusSurface        = "focus_surface"
+	MethodRaiseSurface        = "raise_surface"
 	MethodDebugRaiseSurface   = "debug_raise_surface"
 	MethodMoveSurface         = "move_surface"
 	MethodResizeSurface       = "resize_surface"
@@ -519,11 +520,14 @@ type FocusSurfaceRequest struct {
 	WaitTimeoutMs int    `json:"wait_timeout_ms,omitempty"`
 }
 
-type DebugRaiseSurfaceRequest struct {
+type RaiseSurfaceRequest struct {
 	SurfaceID     string `json:"surface_id"`
 	Mode          string `json:"mode,omitempty"`
 	WaitTimeoutMs int    `json:"wait_timeout_ms,omitempty"`
 }
+
+// DebugRaiseSurfaceRequest is retained for the #3122 spike/debug endpoint alias.
+type DebugRaiseSurfaceRequest = RaiseSurfaceRequest
 
 type MoveSurfaceRequest struct {
 	SurfaceID     string `json:"surface_id"`

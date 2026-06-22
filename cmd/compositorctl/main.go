@@ -697,19 +697,19 @@ func buildFocusSurfaceRequest(args []string) (schema.FocusSurfaceRequest, error)
 	return schema.FocusSurfaceRequest{SurfaceID: *surfaceID, WaitTimeoutMs: *timeout}, nil
 }
 
-func buildDebugRaiseSurfaceRequest(args []string) (schema.DebugRaiseSurfaceRequest, error) {
-	fs := flag.NewFlagSet("surface debug-raise", flag.ExitOnError)
+func buildRaiseSurfaceRequest(args []string) (schema.RaiseSurfaceRequest, error) {
+	fs := flag.NewFlagSet("surface raise", flag.ExitOnError)
 	surfaceID := fs.String("surface", "", "surface id to raise without focusing")
-	mode := fs.String("mode", "no-focus", "raise mode (only no-focus is supported in this spike)")
+	mode := fs.String("mode", "no-focus", "raise mode (only no-focus is supported)")
 	timeout := fs.Int("timeout-ms", 4000, "raise acknowledgement/readback timeout in milliseconds")
 	fs.Parse(args)
 	if *surfaceID == "" {
-		return schema.DebugRaiseSurfaceRequest{}, fmt.Errorf("--surface is required")
+		return schema.RaiseSurfaceRequest{}, fmt.Errorf("--surface is required")
 	}
 	if *mode != "no-focus" {
-		return schema.DebugRaiseSurfaceRequest{}, fmt.Errorf("--mode must be no-focus")
+		return schema.RaiseSurfaceRequest{}, fmt.Errorf("--mode must be no-focus")
 	}
-	return schema.DebugRaiseSurfaceRequest{SurfaceID: *surfaceID, Mode: *mode, WaitTimeoutMs: *timeout}, nil
+	return schema.RaiseSurfaceRequest{SurfaceID: *surfaceID, Mode: *mode, WaitTimeoutMs: *timeout}, nil
 }
 
 func buildMoveSurfaceRequest(args []string) (schema.MoveSurfaceRequest, error) {
@@ -857,7 +857,7 @@ func buildCloseSurfaceRequest(args []string) (schema.CloseSurfaceRequest, error)
 
 func cmdSurface(args []string, pretty bool) error {
 	if len(args) == 0 {
-		return fmt.Errorf("surface subcommand is required: focus, debug-raise, move, tile, resize, always-on-top, fullscreen, maximize, minimize, close (canonical raise is deferred until compositor support is explicit)")
+		return fmt.Errorf("surface subcommand is required: focus, raise, move, tile, resize, always-on-top, fullscreen, maximize, minimize, close")
 	}
 	switch args[0] {
 	case "focus":
@@ -866,12 +866,12 @@ func cmdSurface(args []string, pretty bool) error {
 			return err
 		}
 		return callAndPrint(schema.MethodFocusSurface, req, pretty)
-	case "debug-raise":
-		req, err := buildDebugRaiseSurfaceRequest(args[1:])
+	case "raise", "debug-raise":
+		req, err := buildRaiseSurfaceRequest(args[1:])
 		if err != nil {
 			return err
 		}
-		return callAndPrint(schema.MethodDebugRaiseSurface, req, pretty)
+		return callAndPrint(schema.MethodRaiseSurface, req, pretty)
 	case "move", "place":
 		req, err := buildMoveSurfaceRequest(args[1:])
 		if err != nil {

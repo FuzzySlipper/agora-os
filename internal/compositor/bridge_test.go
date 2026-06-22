@@ -805,7 +805,7 @@ func TestDispatchFocusSurfaceRoutesToPluginAndPublishesAction(t *testing.T) {
 	}
 }
 
-func TestDispatchDebugRaiseRoutesToPluginAndPreservesFocus(t *testing.T) {
+func TestDispatchRaiseRoutesToPluginAndPreservesFocus(t *testing.T) {
 	pub := &fakePublisher{}
 	bridge, err := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})
 	if err != nil {
@@ -824,22 +824,23 @@ func TestDispatchDebugRaiseRoutesToPluginAndPreservesFocus(t *testing.T) {
 	stackCount := 2
 	focusedTop := true
 	raiseTop := false
-	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventMapped, Surface: schema.CompositorSurface{ID: "view-focused", WayfireViewID: 50, Visible: &visible, IsTopInStack: &focusedTop, StackIndex: &focusedStackIndex, StackCount: &stackCount}, Client: schema.CompositorClientIdentity{UID: 60001}})
-	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventFocused, Surface: schema.CompositorSurface{ID: "view-focused", WayfireViewID: 50, Visible: &visible, IsTopInStack: &focusedTop, StackIndex: &focusedStackIndex, StackCount: &stackCount}, Client: schema.CompositorClientIdentity{UID: 60001}})
-	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventMapped, Surface: schema.CompositorSurface{ID: "view-raise", WayfireViewID: 52, Visible: &visible, IsTopInStack: &raiseTop, StackIndex: &raiseStackIndex, StackCount: &stackCount}, Client: schema.CompositorClientIdentity{UID: 60001}})
+	workspace := &schema.SurfaceWorkspace{X: 0, Y: 0}
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventMapped, Surface: schema.CompositorSurface{ID: "view-focused", WayfireViewID: 50, Role: "toplevel", Visible: &visible, OutputID: "HDMI-A-1", Workspace: workspace, IsTopInStack: &focusedTop, StackIndex: &focusedStackIndex, StackCount: &stackCount}, Client: schema.CompositorClientIdentity{UID: 60001}})
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventFocused, Surface: schema.CompositorSurface{ID: "view-focused", WayfireViewID: 50, Role: "toplevel", Visible: &visible, OutputID: "HDMI-A-1", Workspace: workspace, IsTopInStack: &focusedTop, StackIndex: &focusedStackIndex, StackCount: &stackCount}, Client: schema.CompositorClientIdentity{UID: 60001}})
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventMapped, Surface: schema.CompositorSurface{ID: "view-raise", WayfireViewID: 52, Role: "toplevel", Visible: &visible, OutputID: "HDMI-A-1", Workspace: workspace, IsTopInStack: &raiseTop, StackIndex: &raiseStackIndex, StackCount: &stackCount}, Client: schema.CompositorClientIdentity{UID: 60001}})
 	for i := 0; i < 2; i++ {
 		var discard schema.CompositorPolicyUpsert
 		_ = dec.Decode(&discard)
 	}
 
-	body, err := json.Marshal(schema.DebugRaiseSurfaceRequest{SurfaceID: "view-raise", Mode: "no-focus", WaitTimeoutMs: 500})
+	body, err := json.Marshal(schema.RaiseSurfaceRequest{SurfaceID: "view-raise", Mode: "no-focus", WaitTimeoutMs: 500})
 	if err != nil {
 		t.Fatalf("marshal request: %v", err)
 	}
 	respCh := make(chan schema.Response, 1)
 	errCh := make(chan error, 1)
 	go func() {
-		resp, err := bridge.dispatch(60002, schema.Request{Method: schema.MethodDebugRaiseSurface, Body: body})
+		resp, err := bridge.dispatch(60002, schema.Request{Method: schema.MethodRaiseSurface, Body: body})
 		if err != nil {
 			errCh <- err
 			return
@@ -859,7 +860,7 @@ func TestDispatchDebugRaiseRoutesToPluginAndPreservesFocus(t *testing.T) {
 	}
 	raiseTop = true
 	raiseStackIndex = 1
-	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventStacked, Surface: schema.CompositorSurface{ID: "view-raise", WayfireViewID: 52, Visible: &visible, IsTopInStack: &raiseTop, StackIndex: &raiseStackIndex, StackCount: &stackCount}, Client: schema.CompositorClientIdentity{UID: 60001}})
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventStacked, Surface: schema.CompositorSurface{ID: "view-raise", WayfireViewID: 52, Role: "toplevel", Visible: &visible, OutputID: "HDMI-A-1", Workspace: workspace, IsTopInStack: &raiseTop, StackIndex: &raiseStackIndex, StackCount: &stackCount}, Client: schema.CompositorClientIdentity{UID: 60001}})
 
 	select {
 	case err := <-errCh:
@@ -872,7 +873,7 @@ func TestDispatchDebugRaiseRoutesToPluginAndPreservesFocus(t *testing.T) {
 		if err := json.Unmarshal(resp.Body, &action); err != nil {
 			t.Fatalf("unmarshal response: %v", err)
 		}
-		if action.Action != "surface.raise.debug" || action.Decision != schema.SurfaceActionAccepted || action.FocusedSurfaceID != "view-focused" || action.ResultState == nil || action.ResultState.Stack == nil || action.ResultState.Stack.IsTopInStack == nil || !*action.ResultState.Stack.IsTopInStack {
+		if action.Action != "surface.raise" || action.Decision != schema.SurfaceActionAccepted || action.FocusedSurfaceID != "view-focused" || action.ResultState == nil || action.ResultState.Stack == nil || action.ResultState.Stack.IsTopInStack == nil || !*action.ResultState.Stack.IsTopInStack {
 			t.Fatalf("unexpected action response: %+v", action)
 		}
 	case <-time.After(700 * time.Millisecond):
@@ -883,23 +884,241 @@ func TestDispatchDebugRaiseRoutesToPluginAndPreservesFocus(t *testing.T) {
 	}
 }
 
-func TestDebugRaiseDeniesLayerShell(t *testing.T) {
+func TestDispatchRaiseDeniesFocusChangeAfterPluginAck(t *testing.T) {
 	pub := &fakePublisher{}
 	bridge, err := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventMapped, Surface: schema.CompositorSurface{ID: "layer-pin", SurfaceKind: schema.SurfaceKindLayerShell, Visible: boolPtr(true)}, Client: schema.CompositorClientIdentity{UID: 60001}})
-	body, err := json.Marshal(schema.DebugRaiseSurfaceRequest{SurfaceID: "layer-pin", Mode: "no-focus", WaitTimeoutMs: 20})
+	server, client, cleanup := unixSocketPair(t)
+	defer cleanup()
+
+	go bridge.HandlePluginConn(server)
+	dec := json.NewDecoder(client)
+	readInitialSync(t, dec)
+
+	visible := true
+	focusedStackIndex := 1
+	raiseStackIndex := 0
+	stackCount := 2
+	focusedTop := true
+	raiseTop := false
+	workspace := &schema.SurfaceWorkspace{X: 0, Y: 0}
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventMapped, Surface: schema.CompositorSurface{ID: "view-focused", WayfireViewID: 50, Role: "toplevel", Visible: &visible, OutputID: "HDMI-A-1", Workspace: workspace, IsTopInStack: &focusedTop, StackIndex: &focusedStackIndex, StackCount: &stackCount}, Client: schema.CompositorClientIdentity{UID: 60001}})
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventFocused, Surface: schema.CompositorSurface{ID: "view-focused", WayfireViewID: 50, Role: "toplevel", Visible: &visible, OutputID: "HDMI-A-1", Workspace: workspace, IsTopInStack: &focusedTop, StackIndex: &focusedStackIndex, StackCount: &stackCount}, Client: schema.CompositorClientIdentity{UID: 60001}})
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventMapped, Surface: schema.CompositorSurface{ID: "view-raise", WayfireViewID: 52, Role: "toplevel", Visible: &visible, OutputID: "HDMI-A-1", Workspace: workspace, IsTopInStack: &raiseTop, StackIndex: &raiseStackIndex, StackCount: &stackCount}, Client: schema.CompositorClientIdentity{UID: 60001}})
+	for i := 0; i < 2; i++ {
+		var discard schema.CompositorPolicyUpsert
+		_ = dec.Decode(&discard)
+	}
+
+	body, err := json.Marshal(schema.RaiseSurfaceRequest{SurfaceID: "view-raise", Mode: "no-focus", WaitTimeoutMs: 500})
 	if err != nil {
 		t.Fatalf("marshal request: %v", err)
 	}
-	_, err = bridge.dispatch(60002, schema.Request{Method: schema.MethodDebugRaiseSurface, Body: body})
-	if err == nil {
-		t.Fatal("expected debug raise denial")
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := bridge.dispatch(60002, schema.Request{Method: schema.MethodRaiseSurface, Body: body})
+		errCh <- err
+	}()
+
+	var msg schema.CompositorRaiseSurface
+	if err := dec.Decode(&msg); err != nil {
+		t.Fatalf("decode raise_surface: %v", err)
 	}
-	if class, _ := classifyError(err); class != schema.ErrorBackendUnsupported {
-		t.Fatalf("error class = %q, want %q (err=%v)", class, schema.ErrorBackendUnsupported, err)
+	if msg.Type != schema.PluginMessageRaiseSurface || msg.SurfaceID != "view-raise" || msg.RequestID == "" || msg.Mode != "no-focus" {
+		t.Fatalf("unexpected raise_surface message: %+v", msg)
+	}
+	if err := json.NewEncoder(client).Encode(schema.CompositorPluginEvent{Type: schema.PluginMessageRaiseResponse, RequestID: msg.RequestID, SurfaceID: "view-raise", OK: true}); err != nil {
+		t.Fatalf("encode raise response: %v", err)
+	}
+	raiseTop = true
+	raiseStackIndex = 1
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventFocused, Surface: schema.CompositorSurface{ID: "view-raise", WayfireViewID: 52, Role: "toplevel", Visible: &visible, OutputID: "HDMI-A-1", Workspace: workspace, IsTopInStack: &raiseTop, StackIndex: &raiseStackIndex, StackCount: &stackCount}, Client: schema.CompositorClientIdentity{UID: 60001}})
+
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatal("expected raise focus-change denial")
+		}
+		class, message := classifyError(err)
+		if class != schema.ErrorProtocolError {
+			t.Fatalf("error class = %q, want %q (err=%v)", class, schema.ErrorProtocolError, err)
+		}
+		if !strings.Contains(message, "surface raise changed focus from view-focused to view-raise") {
+			t.Fatalf("error message = %q", message)
+		}
+	case <-time.After(700 * time.Millisecond):
+		t.Fatal("timed out waiting for raise focus-change denial")
+	}
+	if len(pub.events) == 0 || pub.events[len(pub.events)-1].topic != schema.TopicShellActionDenied {
+		t.Fatalf("raise denial was not published: %+v", pub.events)
+	}
+	action, ok := pub.events[len(pub.events)-1].body.(schema.SurfaceActionResponse)
+	if !ok {
+		t.Fatalf("unexpected denial payload type: %#v", pub.events[len(pub.events)-1].body)
+	}
+	if action.Action != "surface.raise" || action.Decision != schema.SurfaceActionDenied || action.SurfaceID != "view-raise" {
+		t.Fatalf("unexpected action denial: %+v", action)
+	}
+	if action.Surface == nil || action.Surface.Surface.ID != "view-raise" || !action.Surface.Focused || action.Surface.Surface.IsTopInStack == nil || !*action.Surface.Surface.IsTopInStack {
+		t.Fatalf("denial missing diagnostic readback surface: %+v", action)
+	}
+}
+
+func TestRaiseDeniesInvalidSurfaces(t *testing.T) {
+	workspace := &schema.SurfaceWorkspace{X: 0, Y: 0}
+	cases := []struct {
+		name  string
+		setup func(*Bridge)
+		class string
+	}{
+		{name: "missing", class: schema.ErrorSurfaceNotFound},
+		{name: "stale", class: schema.ErrorSurfaceStale, setup: func(bridge *Bridge) {
+			bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventMapped, Surface: schema.CompositorSurface{ID: "view-raise-denied", Role: "toplevel", WayfireViewID: 80, Visible: boolPtr(true), OutputID: "HDMI-A-1", Workspace: workspace}, Client: schema.CompositorClientIdentity{UID: 60001}})
+			bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventUnmapped, Surface: schema.CompositorSurface{ID: "view-raise-denied", WayfireViewID: 80}, Client: schema.CompositorClientIdentity{UID: 60001}})
+		}},
+		{name: "layer-shell", class: schema.ErrorBackendUnsupported, setup: func(bridge *Bridge) {
+			bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventMapped, Surface: schema.CompositorSurface{ID: "view-raise-denied", SurfaceKind: schema.SurfaceKindLayerShell, Visible: boolPtr(true), OutputID: "HDMI-A-1", Workspace: workspace}, Client: schema.CompositorClientIdentity{UID: 60001}})
+		}},
+		{name: "minimized", class: schema.ErrorSurfaceStale, setup: func(bridge *Bridge) {
+			bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventMapped, Surface: schema.CompositorSurface{ID: "view-raise-denied", Role: "toplevel", WayfireViewID: 81, Visible: boolPtr(true), OutputID: "HDMI-A-1", Workspace: workspace, Minimized: boolPtr(true), VisibilityState: "minimized"}, Client: schema.CompositorClientIdentity{UID: 60001}})
+		}},
+		{name: "fullscreen", class: schema.ErrorBackendUnsupported, setup: func(bridge *Bridge) {
+			bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventMapped, Surface: schema.CompositorSurface{ID: "view-raise-denied", Role: "toplevel", WayfireViewID: 82, Visible: boolPtr(true), OutputID: "HDMI-A-1", Workspace: workspace, Fullscreen: boolPtr(true)}, Client: schema.CompositorClientIdentity{UID: 60001}})
+		}},
+		{name: "off-workspace", class: schema.ErrorBackendUnsupported, setup: func(bridge *Bridge) {
+			bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventMapped, Surface: schema.CompositorSurface{ID: "view-raise-denied", Role: "toplevel", WayfireViewID: 83, Visible: boolPtr(true), OutputID: "HDMI-A-1"}, Client: schema.CompositorClientIdentity{UID: 60001}})
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pub := &fakePublisher{}
+			bridge, err := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			if tc.setup != nil {
+				tc.setup(bridge)
+			}
+			body, err := json.Marshal(schema.RaiseSurfaceRequest{SurfaceID: "view-raise-denied", Mode: "no-focus", WaitTimeoutMs: 20})
+			if err != nil {
+				t.Fatalf("marshal request: %v", err)
+			}
+			_, err = bridge.dispatch(60002, schema.Request{Method: schema.MethodRaiseSurface, Body: body})
+			if err == nil {
+				t.Fatal("expected raise denial")
+			}
+			if class, _ := classifyError(err); class != tc.class {
+				t.Fatalf("error class = %q, want %q (err=%v)", class, tc.class, err)
+			}
+			if len(pub.events) == 0 || pub.events[len(pub.events)-1].topic != schema.TopicShellActionDenied {
+				t.Fatalf("raise denial was not published: %+v", pub.events)
+			}
+		})
+	}
+}
+
+func TestDispatchRaiseDeniesPluginAckTimeout(t *testing.T) {
+	pub := &fakePublisher{}
+	bridge, err := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	server, client, cleanup := unixSocketPair(t)
+	defer cleanup()
+	go bridge.HandlePluginConn(server)
+	dec := json.NewDecoder(client)
+	readInitialSync(t, dec)
+	workspace := &schema.SurfaceWorkspace{X: 0, Y: 0}
+	stackIndex := 0
+	stackCount := 2
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventMapped, Surface: schema.CompositorSurface{ID: "view-raise-timeout", WayfireViewID: 84, Role: "toplevel", Visible: boolPtr(true), OutputID: "HDMI-A-1", Workspace: workspace, IsTopInStack: boolPtr(false), StackIndex: &stackIndex, StackCount: &stackCount}, Client: schema.CompositorClientIdentity{UID: 60001}})
+	var discard schema.CompositorPolicyUpsert
+	_ = dec.Decode(&discard)
+	body, err := json.Marshal(schema.RaiseSurfaceRequest{SurfaceID: "view-raise-timeout", Mode: "no-focus", WaitTimeoutMs: 25})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := bridge.dispatch(60002, schema.Request{Method: schema.MethodRaiseSurface, Body: body})
+		errCh <- err
+	}()
+	var msg schema.CompositorRaiseSurface
+	if err := dec.Decode(&msg); err != nil {
+		t.Fatalf("decode raise_surface: %v", err)
+	}
+	if msg.Type != schema.PluginMessageRaiseSurface || msg.SurfaceID != "view-raise-timeout" || msg.RequestID == "" || msg.Mode != "no-focus" {
+		t.Fatalf("unexpected raise_surface message: %+v", msg)
+	}
+	select {
+	case err := <-errCh:
+		assertRaiseDenied(t, pub, err, schema.ErrorFrameTimeout, "surface raise plugin acknowledgement timed out")
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("timed out waiting for raise ack timeout")
+	}
+}
+
+func TestDispatchRaiseDeniesReadbackTimeoutAfterPluginAck(t *testing.T) {
+	pub := &fakePublisher{}
+	bridge, err := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	server, client, cleanup := unixSocketPair(t)
+	defer cleanup()
+	go bridge.HandlePluginConn(server)
+	dec := json.NewDecoder(client)
+	readInitialSync(t, dec)
+	workspace := &schema.SurfaceWorkspace{X: 0, Y: 0}
+	stackIndex := 0
+	stackCount := 2
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventMapped, Surface: schema.CompositorSurface{ID: "view-raise-readback-timeout", WayfireViewID: 85, Role: "toplevel", Visible: boolPtr(true), OutputID: "HDMI-A-1", Workspace: workspace, IsTopInStack: boolPtr(false), StackIndex: &stackIndex, StackCount: &stackCount}, Client: schema.CompositorClientIdentity{UID: 60001}})
+	var discard schema.CompositorPolicyUpsert
+	_ = dec.Decode(&discard)
+	body, err := json.Marshal(schema.RaiseSurfaceRequest{SurfaceID: "view-raise-readback-timeout", Mode: "no-focus", WaitTimeoutMs: 30})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := bridge.dispatch(60002, schema.Request{Method: schema.MethodRaiseSurface, Body: body})
+		errCh <- err
+	}()
+	var msg schema.CompositorRaiseSurface
+	if err := dec.Decode(&msg); err != nil {
+		t.Fatalf("decode raise_surface: %v", err)
+	}
+	if err := json.NewEncoder(client).Encode(schema.CompositorPluginEvent{Type: schema.PluginMessageRaiseResponse, RequestID: msg.RequestID, SurfaceID: "view-raise-readback-timeout", OK: true}); err != nil {
+		t.Fatalf("encode raise response: %v", err)
+	}
+	select {
+	case err := <-errCh:
+		assertRaiseDenied(t, pub, err, schema.ErrorFrameTimeout, "surface raise stack readback timed out after plugin ack")
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("timed out waiting for raise readback timeout")
+	}
+}
+
+func assertRaiseDenied(t *testing.T, pub *fakePublisher, err error, wantClass, wantMessage string) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("expected raise denial")
+	}
+	class, message := classifyError(err)
+	if class != wantClass {
+		t.Fatalf("error class = %q, want %q (err=%v)", class, wantClass, err)
+	}
+	if wantMessage != "" && !strings.Contains(message, wantMessage) {
+		t.Fatalf("error message = %q, want substring %q", message, wantMessage)
+	}
+	if len(pub.events) == 0 || pub.events[len(pub.events)-1].topic != schema.TopicShellActionDenied {
+		t.Fatalf("raise denial was not published: %+v", pub.events)
+	}
+	result, ok := pub.events[len(pub.events)-1].body.(schema.SurfaceActionResponse)
+	if !ok || result.Action != "surface.raise" || result.Decision != schema.SurfaceActionDenied {
+		t.Fatalf("unexpected raise denial payload: %#v", pub.events[len(pub.events)-1].body)
 	}
 }
 

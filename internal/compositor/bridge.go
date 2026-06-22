@@ -1323,15 +1323,15 @@ func (b *Bridge) FocusSurface(actorUID uint32, req schema.FocusSurfaceRequest) (
 	return result, nil
 }
 
-func (b *Bridge) DebugRaiseSurfaceAction(actorUID uint32, req schema.DebugRaiseSurfaceRequest) (schema.SurfaceActionResponse, error) {
+func (b *Bridge) RaiseSurfaceAction(actorUID uint32, req schema.RaiseSurfaceRequest) (schema.SurfaceActionResponse, error) {
 	if req.SurfaceID == "" {
 		err := fmt.Errorf("surface_id is required")
-		b.publishDebugRaiseDenied(actorUID, req, err, nil)
+		b.publishRaiseDenied(actorUID, req, err, nil)
 		return schema.SurfaceActionResponse{}, err
 	}
 	if req.Mode != "" && req.Mode != "no-focus" {
-		err := fmt.Errorf("debug raise only supports mode no-focus")
-		b.publishDebugRaiseDenied(actorUID, req, err, nil)
+		err := fmt.Errorf("surface raise only supports mode no-focus")
+		b.publishRaiseDenied(actorUID, req, err, nil)
 		return schema.SurfaceActionResponse{}, err
 	}
 	b.mu.RLock()
@@ -1354,22 +1354,42 @@ func (b *Bridge) DebugRaiseSurfaceAction(actorUID uint32, req schema.DebugRaiseS
 		} else {
 			err = compositorError(schema.ErrorSurfaceNotFound, "surface %s not found", req.SurfaceID)
 		}
-		b.publishDebugRaiseDenied(actorUID, req, err, nil)
+		b.publishRaiseDenied(actorUID, req, err, nil)
 		return schema.SurfaceActionResponse{}, err
 	}
-	if tracked.Surface.SurfaceKind == schema.SurfaceKindLayerShell {
-		err := compositorError(schema.ErrorBackendUnsupported, "surface %s is a layer-shell surface and cannot be raised as a work surface", req.SurfaceID)
-		b.publishDebugRaiseDenied(actorUID, req, err, &tracked)
+	if tracked.Surface.SurfaceKind == schema.SurfaceKindLayerShell || (tracked.Surface.SurfaceKind != "" && tracked.Surface.SurfaceKind != schema.SurfaceKindXDGView) || (tracked.Surface.Role != "" && tracked.Surface.Role != "toplevel") {
+		err := compositorError(schema.ErrorBackendUnsupported, "surface %s is not an xdg toplevel and cannot be raised as a work surface", req.SurfaceID)
+		b.publishRaiseDenied(actorUID, req, err, &tracked)
 		return schema.SurfaceActionResponse{}, err
 	}
 	if !tracked.Visible {
 		err := compositorError(schema.ErrorSurfaceStale, "surface %s is not visible", req.SurfaceID)
-		b.publishDebugRaiseDenied(actorUID, req, err, &tracked)
+		b.publishRaiseDenied(actorUID, req, err, &tracked)
+		return schema.SurfaceActionResponse{}, err
+	}
+	if (tracked.Surface.Minimized != nil && *tracked.Surface.Minimized) || tracked.Surface.VisibilityState == "minimized" {
+		err := compositorError(schema.ErrorSurfaceStale, "surface %s is minimized and must be restored before it can be raised", req.SurfaceID)
+		b.publishRaiseDenied(actorUID, req, err, &tracked)
+		return schema.SurfaceActionResponse{}, err
+	}
+	if tracked.Surface.Fullscreen != nil && *tracked.Surface.Fullscreen {
+		err := compositorError(schema.ErrorBackendUnsupported, "surface %s is fullscreen and has no meaningful scoped stack raise", req.SurfaceID)
+		b.publishRaiseDenied(actorUID, req, err, &tracked)
+		return schema.SurfaceActionResponse{}, err
+	}
+	if tracked.OutputID == "" && tracked.Surface.OutputID == "" {
+		err := compositorError(schema.ErrorBackendUnsupported, "surface %s has no output for scoped stack raise", req.SurfaceID)
+		b.publishRaiseDenied(actorUID, req, err, &tracked)
+		return schema.SurfaceActionResponse{}, err
+	}
+	if tracked.Surface.Workspace == nil {
+		err := compositorError(schema.ErrorBackendUnsupported, "surface %s has no workspace for scoped stack raise", req.SurfaceID)
+		b.publishRaiseDenied(actorUID, req, err, &tracked)
 		return schema.SurfaceActionResponse{}, err
 	}
 	beforeStack := stackStateFromSurface(tracked.Surface)
-	if err := b.debugRaiseSurfaceNoFocus(req.SurfaceID, time.Duration(req.WaitTimeoutMs)*time.Millisecond); err != nil {
-		b.publishDebugRaiseDenied(actorUID, req, err, &tracked)
+	if err := b.raiseSurfaceNoFocus(req.SurfaceID, time.Duration(req.WaitTimeoutMs)*time.Millisecond); err != nil {
+		b.publishRaiseDenied(actorUID, req, err, &tracked)
 		return schema.SurfaceActionResponse{}, err
 	}
 	b.mu.RLock()
@@ -1386,23 +1406,23 @@ func (b *Bridge) DebugRaiseSurfaceAction(actorUID uint32, req schema.DebugRaiseS
 	}
 	b.mu.RUnlock()
 	if !ok {
-		err := compositorError(schema.ErrorSurfaceStale, "surface %s disappeared after debug raise", req.SurfaceID)
-		b.publishDebugRaiseDenied(actorUID, req, err, &tracked)
+		err := compositorError(schema.ErrorSurfaceStale, "surface %s disappeared after raise", req.SurfaceID)
+		b.publishRaiseDenied(actorUID, req, err, &tracked)
 		return schema.SurfaceActionResponse{}, err
 	}
 	if focusedBefore != focusedAfter {
-		err := compositorError(schema.ErrorProtocolError, "debug raise changed focus from %s to %s", focusedBefore, focusedAfter)
-		b.publishDebugRaiseDenied(actorUID, req, err, &updated)
+		err := compositorError(schema.ErrorProtocolError, "surface raise changed focus from %s to %s", focusedBefore, focusedAfter)
+		b.publishRaiseDenied(actorUID, req, err, &updated)
 		return schema.SurfaceActionResponse{}, err
 	}
 	if updated.Surface.IsTopInStack == nil || !*updated.Surface.IsTopInStack {
 		err := compositorError(schema.ErrorFrameTimeout, "surface %s raise readback did not become top in scoped stack", req.SurfaceID)
-		b.publishDebugRaiseDenied(actorUID, req, err, &updated)
+		b.publishRaiseDenied(actorUID, req, err, &updated)
 		return schema.SurfaceActionResponse{}, err
 	}
 	actor, uid := b.surfaceActionActor(actorUID)
 	resultStack := stackStateFromSurface(updated.Surface)
-	result := schema.SurfaceActionResponse{Action: "surface.raise.debug", SurfaceID: req.SurfaceID, Decision: schema.SurfaceActionAccepted, Reason: "debug no-focus raise accepted via Wayfire view_bring_to_front", Actor: actor, ActorUID: uid, FocusedSurfaceID: focusedAfter, TargetState: &schema.SurfaceState{Stack: beforeStack}, ResultState: &schema.SurfaceState{Stack: resultStack}, Surface: &updated}
+	result := schema.SurfaceActionResponse{Action: "surface.raise", SurfaceID: req.SurfaceID, Decision: schema.SurfaceActionAccepted, Reason: "no-focus raise accepted via Wayfire view_bring_to_front", Actor: actor, ActorUID: uid, FocusedSurfaceID: focusedAfter, TargetState: &schema.SurfaceState{Stack: beforeStack}, ResultState: &schema.SurfaceState{Stack: resultStack}, Surface: &updated}
 	if b.bus != nil {
 		if err := b.bus.Publish(schema.TopicShellActionCompleted, result); err != nil {
 			log.Printf("publish shell action completed: %v", err)
@@ -1415,9 +1435,9 @@ func stackStateFromSurface(surface schema.CompositorSurface) *schema.CompositorS
 	return &schema.CompositorStackState{OutputID: surface.OutputID, Workspace: surface.Workspace, StackLayer: surface.StackLayer, StackIndex: surface.StackIndex, StackCount: surface.StackCount, IsTopInStack: surface.IsTopInStack, ZOrderGeneration: surface.ZOrderGeneration}
 }
 
-func (b *Bridge) publishDebugRaiseDenied(actorUID uint32, req schema.DebugRaiseSurfaceRequest, err error, surface *schema.CompositorTrackedSurface) {
+func (b *Bridge) publishRaiseDenied(actorUID uint32, req schema.RaiseSurfaceRequest, err error, surface *schema.CompositorTrackedSurface) {
 	actor, uid := b.surfaceActionActor(actorUID)
-	result := schema.SurfaceActionResponse{Action: "surface.raise.debug", SurfaceID: req.SurfaceID, Decision: schema.SurfaceActionDenied, Reason: err.Error(), Error: err.Error(), Actor: actor, ActorUID: uid, Surface: surface}
+	result := schema.SurfaceActionResponse{Action: "surface.raise", SurfaceID: req.SurfaceID, Decision: schema.SurfaceActionDenied, Reason: err.Error(), Error: err.Error(), Actor: actor, ActorUID: uid, Surface: surface}
 	if b.bus != nil {
 		if publishErr := b.bus.Publish(schema.TopicShellActionDenied, result); publishErr != nil {
 			log.Printf("publish shell action denied: %v", publishErr)
@@ -1425,7 +1445,7 @@ func (b *Bridge) publishDebugRaiseDenied(actorUID uint32, req schema.DebugRaiseS
 	}
 }
 
-func (b *Bridge) debugRaiseSurfaceNoFocus(surfaceID string, timeout time.Duration) error {
+func (b *Bridge) raiseSurfaceNoFocus(surfaceID string, timeout time.Duration) error {
 	b.mu.Lock()
 	if b.plugin == nil {
 		b.mu.Unlock()
@@ -1459,7 +1479,7 @@ func (b *Bridge) debugRaiseSurfaceNoFocus(surfaceID string, timeout time.Duratio
 				if resp.Error == "" {
 					resp.Error = "raise failed"
 				}
-				return compositorError(schema.ErrorProtocolError, "debug raise failed: %s", resp.Error)
+				return compositorError(schema.ErrorProtocolError, "surface raise failed: %s", resp.Error)
 			}
 			pluginAcked = true
 			if b.surfaceIsTopInScopedStack(surfaceID) {
@@ -1471,9 +1491,9 @@ func (b *Bridge) debugRaiseSurfaceNoFocus(surfaceID string, timeout time.Duratio
 			}
 		case <-deadline:
 			if pluginAcked {
-				return compositorError(schema.ErrorFrameTimeout, "debug raise stack readback timed out after plugin ack")
+				return compositorError(schema.ErrorFrameTimeout, "surface raise stack readback timed out after plugin ack")
 			}
-			return compositorError(schema.ErrorFrameTimeout, "debug raise plugin acknowledgement timed out")
+			return compositorError(schema.ErrorFrameTimeout, "surface raise plugin acknowledgement timed out")
 		}
 	}
 }
@@ -3641,12 +3661,12 @@ func (b *Bridge) dispatch(peerUID uint32, req schema.Request) (schema.Response, 
 			return schema.Response{}, err
 		}
 		return okResponse(resp), nil
-	case schema.MethodDebugRaiseSurface:
-		var body schema.DebugRaiseSurfaceRequest
+	case schema.MethodRaiseSurface, schema.MethodDebugRaiseSurface:
+		var body schema.RaiseSurfaceRequest
 		if err := json.Unmarshal(req.Body, &body); err != nil {
 			return schema.Response{}, fmt.Errorf("bad body: %w", err)
 		}
-		resp, err := b.DebugRaiseSurfaceAction(peerUID, body)
+		resp, err := b.RaiseSurfaceAction(peerUID, body)
 		if err != nil {
 			return schema.Response{}, err
 		}

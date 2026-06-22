@@ -517,23 +517,23 @@ func TestSurfaceFocusEndpointReturnsStructuredDeniedResult(t *testing.T) {
 	}
 }
 
-func TestSurfaceDebugRaiseEndpointCallsCompositorAction(t *testing.T) {
+func TestSurfaceRaiseEndpointCallsCompositorAction(t *testing.T) {
 	t.Parallel()
 	authNow := time.Now().UTC().Truncate(time.Second)
 	compSock := startSchemaServer(t, func(req schema.Request) schema.Response {
-		if req.Method != schema.MethodDebugRaiseSurface {
+		if req.Method != schema.MethodRaiseSurface {
 			t.Fatalf("unexpected method %q", req.Method)
 		}
-		var body schema.DebugRaiseSurfaceRequest
+		var body schema.RaiseSurfaceRequest
 		if err := json.Unmarshal(req.Body, &body); err != nil {
 			t.Fatalf("decode body: %v", err)
 		}
 		if body.SurfaceID != "view-raise" || body.Mode != "no-focus" || body.WaitTimeoutMs != 1234 {
-			t.Fatalf("unexpected debug raise body %+v", body)
+			t.Fatalf("unexpected raise body %+v", body)
 		}
 		isTop := true
 		payload, _ := json.Marshal(schema.SurfaceActionResponse{
-			Action:           "surface.raise.debug",
+			Action:           "surface.raise",
 			SurfaceID:        "view-raise",
 			Decision:         schema.SurfaceActionAccepted,
 			FocusedSurfaceID: "view-focused",
@@ -544,7 +544,7 @@ func TestSurfaceDebugRaiseEndpointCallsCompositorAction(t *testing.T) {
 	})
 	secret := []byte("01234567890123456789012345678901")
 	server := New(Config{Secret: secret, Now: func() time.Time { return authNow }, CompositorSocket: compSock})
-	req := httptest.NewRequest(http.MethodPost, "/api/shell/surface/debug-raise", strings.NewReader(`{"surface_id":"view-raise","mode":"no-focus","wait_timeout_ms":1234}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/shell/surface/raise", strings.NewReader(`{"surface_id":"view-raise","mode":"no-focus","wait_timeout_ms":1234}`))
 	req.Header.Set("Authorization", "Bearer "+mustMintHumanToken(t, secret))
 	resp := httptest.NewRecorder()
 	server.ServeHTTP(resp, req)
@@ -555,12 +555,12 @@ func TestSurfaceDebugRaiseEndpointCallsCompositorAction(t *testing.T) {
 	if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.Action != "surface.raise.debug" || result.Decision != schema.SurfaceActionAccepted || result.FocusedSurfaceID != "view-focused" || result.ResultState == nil || result.ResultState.Stack == nil || result.ResultState.Stack.IsTopInStack == nil || !*result.ResultState.Stack.IsTopInStack {
+	if result.Action != "surface.raise" || result.Decision != schema.SurfaceActionAccepted || result.FocusedSurfaceID != "view-focused" || result.ResultState == nil || result.ResultState.Stack == nil || result.ResultState.Stack.IsTopInStack == nil || !*result.ResultState.Stack.IsTopInStack {
 		t.Fatalf("unexpected result %+v", result)
 	}
 }
 
-func TestSurfaceDebugRaiseEndpointReturnsStructuredDeniedResults(t *testing.T) {
+func TestSurfaceRaiseEndpointReturnsStructuredDeniedResults(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name    string
@@ -570,22 +570,22 @@ func TestSurfaceDebugRaiseEndpointReturnsStructuredDeniedResults(t *testing.T) {
 	}{
 		{name: "stale", class: schema.ErrorSurfaceStale, status: http.StatusConflict, message: "surface view-raise is unmapped/stale"},
 		{name: "unsupported", class: schema.ErrorBackendUnsupported, status: http.StatusConflict, message: "surface view-raise is a layer-shell surface and cannot be raised"},
-		{name: "timeout", class: schema.ErrorFrameTimeout, status: http.StatusBadGateway, message: "debug raise plugin acknowledgement timed out"},
+		{name: "timeout", class: schema.ErrorFrameTimeout, status: http.StatusBadGateway, message: "raise plugin acknowledgement timed out"},
 	} {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			authNow := time.Now().UTC().Truncate(time.Second)
 			compSock := startSchemaServer(t, func(req schema.Request) schema.Response {
-				if req.Method != schema.MethodDebugRaiseSurface {
+				if req.Method != schema.MethodRaiseSurface {
 					t.Fatalf("unexpected method %q", req.Method)
 				}
-				payload, _ := json.Marshal(schema.SurfaceActionResponse{Action: "surface.raise.debug", SurfaceID: "view-raise", Decision: schema.SurfaceActionDenied, Reason: tc.message, Error: tc.message})
+				payload, _ := json.Marshal(schema.SurfaceActionResponse{Action: "surface.raise", SurfaceID: "view-raise", Decision: schema.SurfaceActionDenied, Reason: tc.message, Error: tc.message})
 				return schema.Response{OK: false, Body: payload, ErrorClass: tc.class, ErrorMessage: tc.message}
 			})
 			secret := []byte("01234567890123456789012345678901")
 			server := New(Config{Secret: secret, Now: func() time.Time { return authNow }, CompositorSocket: compSock})
-			req := httptest.NewRequest(http.MethodPost, "/api/shell/surface/debug-raise", strings.NewReader(`{"surface_id":"view-raise","mode":"no-focus"}`))
+			req := httptest.NewRequest(http.MethodPost, "/api/shell/surface/raise", strings.NewReader(`{"surface_id":"view-raise","mode":"no-focus"}`))
 			req.Header.Set("Authorization", "Bearer "+mustMintHumanToken(t, secret))
 			resp := httptest.NewRecorder()
 			server.ServeHTTP(resp, req)
@@ -596,14 +596,14 @@ func TestSurfaceDebugRaiseEndpointReturnsStructuredDeniedResults(t *testing.T) {
 			if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil {
 				t.Fatal(err)
 			}
-			if result.ErrorClass != tc.class || result.Result.Action != "surface.raise.debug" || result.Result.Decision != schema.SurfaceActionDenied || result.Result.SurfaceID != "view-raise" {
+			if result.ErrorClass != tc.class || result.Result.Action != "surface.raise" || result.Result.Decision != schema.SurfaceActionDenied || result.Result.SurfaceID != "view-raise" {
 				t.Fatalf("unexpected structured denial %+v", result)
 			}
 		})
 	}
 }
 
-func TestSurfaceDebugRaiseEndpointRejectsMalformedRequests(t *testing.T) {
+func TestSurfaceRaiseEndpointRejectsMalformedRequests(t *testing.T) {
 	t.Parallel()
 	authNow := time.Now().UTC().Truncate(time.Second)
 	secret := []byte("01234567890123456789012345678901")
@@ -613,13 +613,13 @@ func TestSurfaceDebugRaiseEndpointRejectsMalformedRequests(t *testing.T) {
 		body string
 		want string
 	}{
-		{name: "bad-timeout-type", body: `{"surface_id":"view-raise","wait_timeout_ms":"soon"}`, want: "decode debug raise request"},
+		{name: "bad-timeout-type", body: `{"surface_id":"view-raise","wait_timeout_ms":"soon"}`, want: "decode raise request"},
 		{name: "missing-surface", body: `{"mode":"no-focus"}`, want: "surface_id is required"},
 	} {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			req := httptest.NewRequest(http.MethodPost, "/api/shell/surface/debug-raise", strings.NewReader(tc.body))
+			req := httptest.NewRequest(http.MethodPost, "/api/shell/surface/raise", strings.NewReader(tc.body))
 			req.Header.Set("Authorization", "Bearer "+mustMintHumanToken(t, secret))
 			resp := httptest.NewRecorder()
 			server.ServeHTTP(resp, req)

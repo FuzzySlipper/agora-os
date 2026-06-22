@@ -191,8 +191,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleSurfaceMaximize(w, r)
 	case "/surface/minimize":
 		s.handleSurfaceMinimize(w, r)
-	case "/surface/debug-raise":
-		s.handleSurfaceDebugRaise(w, r)
+	case "/surface/raise", "/surface/debug-raise":
+		s.handleSurfaceRaise(w, r)
 	case "/surface/close":
 		s.handleSurfaceClose(w, r)
 	case "/escalations/decide":
@@ -860,7 +860,7 @@ func (s *Server) handleSurfaceMinimize(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(body)
 }
 
-func (s *Server) handleSurfaceDebugRaise(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleSurfaceRaise(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -870,9 +870,9 @@ func (s *Server) handleSurfaceDebugRaise(w http.ResponseWriter, r *http.Request)
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
-	var req schema.DebugRaiseSurfaceRequest
+	var req schema.RaiseSurfaceRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, fmt.Sprintf("decode debug raise request: %v", err), http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("decode raise request: %v", err), http.StatusBadRequest)
 		return
 	}
 	if req.SurfaceID == "" {
@@ -882,9 +882,9 @@ func (s *Server) handleSurfaceDebugRaise(w http.ResponseWriter, r *http.Request)
 	if req.Mode == "" {
 		req.Mode = "no-focus"
 	}
-	body, resp, err := callResponse(s.compositorSocket, schema.MethodDebugRaiseSurface, req)
+	body, resp, err := callResponse(s.compositorSocket, schema.MethodRaiseSurface, req)
 	if err != nil {
-		result := schema.SurfaceActionResponse{Action: "surface.raise.debug", SurfaceID: req.SurfaceID, Decision: schema.SurfaceActionDenied, Reason: err.Error(), Error: err.Error(), Actor: "human-shell"}
+		result := schema.SurfaceActionResponse{Action: "surface.raise", SurfaceID: req.SurfaceID, Decision: schema.SurfaceActionDenied, Reason: err.Error(), Error: err.Error(), Actor: "human-shell"}
 		uid := uint32(identity.UID)
 		result.ActorUID = &uid
 		if resp != nil {

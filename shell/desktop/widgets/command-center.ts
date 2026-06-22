@@ -1,5 +1,5 @@
 import type { AppCatalogEntry, AppCatalogListResponse, AppLaunchActionResponse, CommandCenterState, ConversationTurnRequest, DesktopShellState, ShellWidget, SurfaceActionResponse, SurfaceEvent } from "../../shared/types.js";
-import { createSurfaceFocusAction, SurfaceFocusError, type SurfaceFocusAction } from "./taskbar.js";
+import { createSurfaceFocusAction, createSurfaceRaiseAction, SurfaceFocusError, type SurfaceFocusAction, type SurfaceRaiseAction } from "./taskbar.js";
 
 export type ShellPublisher = (topic: string, body: unknown) => void;
 export type LoadAppsAction = () => Promise<AppCatalogEntry[]>;
@@ -8,6 +8,7 @@ export type LaunchAppAction = (catalogId: string) => Promise<AppLaunchActionResp
 export interface CommandCenterWidgetOptions {
     publish?: ShellPublisher;
     focusSurface?: SurfaceFocusAction;
+    raiseSurface?: SurfaceRaiseAction;
     onFocusResult?: (result: SurfaceActionResponse) => void;
     onAppLaunchResult?: (result: AppLaunchActionResponse) => void;
     onPromptSubmit?: (request: ConversationTurnRequest) => void;
@@ -23,6 +24,7 @@ export class CommandCenterWidget extends HTMLElement implements ShellWidget {
     readonly layer = 25;
     private publish: ShellPublisher;
     private focusSurface: SurfaceFocusAction;
+    private raiseSurface: SurfaceRaiseAction;
     private onFocusResult: (result: SurfaceActionResponse) => void;
     private onAppLaunchResult: (result: AppLaunchActionResponse) => void;
     private onPromptSubmit: (request: ConversationTurnRequest) => void;
@@ -42,6 +44,7 @@ export class CommandCenterWidget extends HTMLElement implements ShellWidget {
         super();
         this.publish = options.publish ?? (() => undefined);
         this.focusSurface = options.focusSurface ?? createSurfaceFocusAction();
+        this.raiseSurface = options.raiseSurface ?? createSurfaceRaiseAction();
         this.onFocusResult = options.onFocusResult ?? (() => undefined);
         this.onAppLaunchResult = options.onAppLaunchResult ?? (() => undefined);
         this.onPromptSubmit = options.onPromptSubmit ?? ((request) => this.publish("conversation.turn.requested", request));
@@ -133,6 +136,23 @@ export class CommandCenterWidget extends HTMLElement implements ShellWidget {
         }
     }
 
+    private async raiseSurfaceRow(surface: SurfaceEvent): Promise<void> {
+        this.localError = undefined;
+        this.render();
+        try {
+            const result = await this.raiseSurface(surface.id);
+            this.onFocusResult(result);
+        } catch (error) {
+            const result = error instanceof SurfaceFocusError ? error.result : undefined;
+            if (result) {
+                this.onFocusResult(result);
+            }
+            const message = result?.error || result?.reason || (error instanceof Error ? error.message : String(error));
+            this.localError = message;
+            this.render();
+        }
+    }
+
     private async launchAppRow(app: AppCatalogEntry): Promise<void> {
         if (app.state !== "ready") {
             return;
@@ -208,7 +228,8 @@ export class CommandCenterWidget extends HTMLElement implements ShellWidget {
         const suggestionsTitle = document.createElement("h3");
         suggestionsTitle.textContent = "Suggested";
         const appRows = this.apps.length > 0 ? this.apps.map((app) => this.appRow(app)) : [loadingAppsRow(this.loadingApps)];
-        suggestions.append(suggestionsTitle, askRow(), ...this.surfaces.map((surface) => this.surfaceRow(surface)), ...appRows);
+        const surfaceRows = this.surfaces.flatMap((surface) => [this.surfaceRow(surface), this.raiseSurfaceRowButton(surface)]);
+        suggestions.append(suggestionsTitle, askRow(), ...surfaceRows, ...appRows);
 
         const transcript = this.transcriptNode();
         const errorText = this.commandCenter.error ?? this.localError;
@@ -234,6 +255,19 @@ export class CommandCenterWidget extends HTMLElement implements ShellWidget {
         const meta = document.createElement("span");
         meta.className = "command-center-widget__row-meta";
         meta.textContent = surface.focused ? "focused" : surface.id;
+        row.append(meta);
+        return row;
+    }
+
+    private raiseSurfaceRowButton(surface: SurfaceEvent): HTMLButtonElement {
+        const label = surfaceLabel(surface);
+        const row = button("command-center-widget__row", `Raise: ${label}`, `Raise ${label} without changing focus`);
+        row.dataset.action = "surface.raise";
+        row.dataset.surfaceId = surface.id;
+        row.addEventListener("click", () => { void this.raiseSurfaceRow(surface); });
+        const meta = document.createElement("span");
+        meta.className = "command-center-widget__row-meta";
+        meta.textContent = surface.is_top_in_stack ? "top" : (surface.stack_index !== undefined && surface.stack_count !== undefined ? `stack ${surface.stack_index + 1}/${surface.stack_count}` : "no-focus");
         row.append(meta);
         return row;
     }

@@ -10,6 +10,21 @@ export interface SurfaceTiledEdges {
     edges?: string[];
 }
 
+export interface SurfaceWorkspace {
+    x: number;
+    y: number;
+}
+
+export interface SurfaceStackState {
+    output_id?: string;
+    workspace?: SurfaceWorkspace;
+    stack_layer?: string;
+    stack_index?: number;
+    stack_count?: number;
+    is_top_in_stack?: boolean;
+    z_order_generation?: number;
+}
+
 export interface SurfaceEvent {
     id: string;
     title?: string;
@@ -27,6 +42,13 @@ export interface SurfaceEvent {
     minimized?: boolean;
     restorable?: boolean;
     visibility_state?: "visible" | "minimized" | string;
+    output_id?: string;
+    workspace?: SurfaceWorkspace;
+    stack_layer?: string;
+    stack_index?: number;
+    stack_count?: number;
+    is_top_in_stack?: boolean;
+    z_order_generation?: number;
 }
 
 export type SurfaceActionDecision = "accepted" | "denied" | string;
@@ -37,6 +59,7 @@ export interface SurfaceState {
     maximized?: boolean;
     minimized?: boolean;
     tiled_edges?: SurfaceTiledEdges;
+    stack?: SurfaceStackState;
 }
 
 export interface SurfaceActionResponse {
