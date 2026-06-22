@@ -51,6 +51,9 @@ struct surface_snapshot_t
     std::optional<bool> fullscreen;
     std::optional<uint32_t> tiled_edges;
     std::optional<bool> maximized;
+    std::optional<bool> minimized;
+    std::optional<bool> restorable;
+    std::string visibility_state;
     int32_t workspace_x = 0;
     int32_t workspace_y = 0;
     std::string stack_layer;
@@ -121,6 +124,9 @@ struct bridge_message_t
     std::optional<bool> fullscreen;
     std::optional<uint32_t> tiled_edges;
     std::optional<bool> maximized;
+    std::optional<bool> minimized;
+    std::optional<bool> restorable;
+    std::string visibility_state;
     std::string mode;
 };
 
@@ -280,7 +286,7 @@ inline std::string encode_surface_event(std::string_view event_name, const surfa
         << "\"width\":" << static_cast<int32_t>(surface.width * surface.scale_factor) << ","
         << "\"height\":" << static_cast<int32_t>(surface.height * surface.scale_factor) << "},"
         << "\"scale_factor\":" << surface.scale_factor << ","
-        << "\"visible\":true,"
+        << "\"visible\":" << ((surface.minimized.has_value() && *surface.minimized) ? "false" : "true") << ","
         << "\"output_id\":\"" << json_escape(surface.output_id) << "\"";
     if (!surface.stack_layer.empty())
     {
@@ -336,6 +342,18 @@ inline std::string encode_surface_event(std::string_view event_name, const surfa
     if (surface.maximized.has_value())
     {
         out << ",\"maximized\":" << (*surface.maximized ? "true" : "false");
+    }
+    if (surface.minimized.has_value())
+    {
+        out << ",\"minimized\":" << (*surface.minimized ? "true" : "false");
+    }
+    if (surface.restorable.has_value())
+    {
+        out << ",\"restorable\":" << (*surface.restorable ? "true" : "false");
+    }
+    if (!surface.visibility_state.empty())
+    {
+        out << ",\"visibility_state\":\"" << json_escape(surface.visibility_state) << "\"";
     }
     append_layer_shell_metadata(out, surface);
     out << "},"
@@ -875,6 +893,7 @@ inline bridge_message_t parse_bridge_message(const std::string& line)
         message.surface_id = find_string_field(line, "surface_id").value_or("");
         message.fullscreen = find_bool_field(line, "fullscreen");
         message.maximized = find_bool_field(line, "maximized");
+        message.minimized = find_bool_field(line, "minimized");
         return message;
     }
 

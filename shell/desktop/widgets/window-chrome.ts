@@ -8,6 +8,7 @@ export type SurfaceTileAction = (surfaceId: string, region: { rows: number; cols
 export type SurfaceAlwaysOnTopAction = (surfaceId: string, enabled: boolean) => Promise<SurfaceActionResponse>;
 export type SurfaceFullscreenAction = (surfaceId: string, enabled: boolean) => Promise<SurfaceActionResponse>;
 export type SurfaceMaximizeAction = (surfaceId: string, enabled: boolean) => Promise<SurfaceActionResponse>;
+export type SurfaceMinimizeAction = (surfaceId: string, enabled: boolean) => Promise<SurfaceActionResponse>;
 
 export interface WindowChromeWidgetOptions {
     focusSurface?: SurfaceFocusAction;
@@ -17,6 +18,7 @@ export interface WindowChromeWidgetOptions {
     alwaysOnTopSurface?: SurfaceAlwaysOnTopAction;
     fullscreenSurface?: SurfaceFullscreenAction;
     maximizeSurface?: SurfaceMaximizeAction;
+    minimizeSurface?: SurfaceMinimizeAction;
     onActionResult?: (result: SurfaceActionResponse) => void;
 }
 
@@ -35,6 +37,7 @@ export class WindowChromeWidget extends HTMLElement implements ShellWidget {
     private alwaysOnTopSurface: SurfaceAlwaysOnTopAction;
     private fullscreenSurface: SurfaceFullscreenAction;
     private maximizeSurface: SurfaceMaximizeAction;
+    private minimizeSurface: SurfaceMinimizeAction;
     private onActionResult: (result: SurfaceActionResponse) => void;
     private surfaces: SurfaceEvent[] = [];
     private actionStatus = new Map<string, ChromeActionStatus>();
@@ -48,6 +51,7 @@ export class WindowChromeWidget extends HTMLElement implements ShellWidget {
         this.alwaysOnTopSurface = options.alwaysOnTopSurface ?? createSurfaceAlwaysOnTopAction();
         this.fullscreenSurface = options.fullscreenSurface ?? createSurfaceFullscreenAction();
         this.maximizeSurface = options.maximizeSurface ?? createSurfaceMaximizeAction();
+        this.minimizeSurface = options.minimizeSurface ?? createSurfaceMinimizeAction();
         this.onActionResult = options.onActionResult ?? (() => undefined);
     }
 
@@ -118,6 +122,10 @@ export class WindowChromeWidget extends HTMLElement implements ShellWidget {
 
     private async requestSurfaceMaximize(surface: SurfaceEvent): Promise<void> {
         await this.runAction(surface, "surface.maximize", () => this.maximizeSurface(surface.id, !surface.maximized));
+    }
+
+    private async requestSurfaceMinimize(surface: SurfaceEvent): Promise<void> {
+        await this.runAction(surface, "surface.minimize", () => this.minimizeSurface(surface.id, true));
     }
 
     private async runAction(surface: SurfaceEvent, action: string, invoke: () => Promise<SurfaceActionResponse>): Promise<void> {
@@ -261,6 +269,13 @@ export class WindowChromeWidget extends HTMLElement implements ShellWidget {
             event.stopPropagation();
             void this.requestSurfaceMaximize(surface);
         });
+        const minimize = button("window-chrome-widget__button", "Minimize", `Minimize ${surfaceLabel(surface)}`);
+        minimize.dataset.action = "surface.minimize";
+        minimize.disabled = status?.pending === "surface.minimize" || surface.minimized === true;
+        minimize.addEventListener("click", (event) => {
+            event.stopPropagation();
+            void this.requestSurfaceMinimize(surface);
+        });
         const close = button("window-chrome-widget__button window-chrome-widget__button--close", "×", `Close ${surfaceLabel(surface)}`);
         close.dataset.action = "surface.close";
         close.disabled = status?.pending === "surface.close";
@@ -268,7 +283,7 @@ export class WindowChromeWidget extends HTMLElement implements ShellWidget {
             event.stopPropagation();
             void this.requestClose(surface);
         });
-        controls.append(focus, pin, fullscreen, maximize, close);
+        controls.append(focus, pin, fullscreen, maximize, minimize, close);
         titlebar.append(titles, controls);
         row.append(titlebar);
 
@@ -412,6 +427,27 @@ export function createSurfaceFullscreenAction(fetcher: typeof fetch = fetch, tok
         if (!response.ok) {
             const result = body && "result" in body ? body.result : undefined;
             throw new SurfaceFocusError(result, result?.error || result?.reason || `surface.fullscreen failed (${response.status})`);
+        }
+        return body as SurfaceActionResponse;
+    };
+}
+
+export function createSurfaceMinimizeAction(fetcher: typeof fetch = fetch, tokenProvider: () => string | null = shellToken): SurfaceMinimizeAction {
+    return async (surfaceId: string, enabled: boolean): Promise<SurfaceActionResponse> => {
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        const token = tokenProvider();
+        if (token) {
+            headers.Authorization = `Bearer ${token}`;
+        }
+        const response = await fetcher("/api/shell/surface/minimize", {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ surface_id: surfaceId, enabled }),
+        });
+        const body = await response.json().catch(() => undefined) as SurfaceActionResponse | { result?: SurfaceActionResponse; error_class?: string } | undefined;
+        if (!response.ok) {
+            const result = body && "result" in body ? body.result : undefined;
+            throw new SurfaceFocusError(result, result?.error || result?.reason || `surface.minimize failed (${response.status})`);
         }
         return body as SurfaceActionResponse;
     };

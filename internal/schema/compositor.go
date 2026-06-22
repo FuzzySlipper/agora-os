@@ -76,6 +76,7 @@ const (
 	MethodAlwaysOnTop         = "always_on_top"
 	MethodFullscreenSurface   = "fullscreen_surface"
 	MethodMaximizeSurface     = "maximize_surface"
+	MethodMinimizeSurface     = "minimize_surface"
 	MethodCloseSurface        = "close_surface"
 	MethodCloseSurfacesByUID  = "close_surfaces_by_uid"
 	MethodGrantViewport       = "grant_viewport"
@@ -132,6 +133,8 @@ const (
 	SurfaceEventMapped      CompositorSurfaceEventName = "mapped"
 	SurfaceEventUnmapped    CompositorSurfaceEventName = "unmapped"
 	SurfaceEventFocused     CompositorSurfaceEventName = "focused"
+	SurfaceEventMinimized   CompositorSurfaceEventName = "minimized"
+	SurfaceEventRestored    CompositorSurfaceEventName = "restored"
 	SurfaceEventStacked     CompositorSurfaceEventName = "stacked"
 	SurfaceEventFrameDone   CompositorSurfaceEventName = "frame_done"
 	SurfaceEventInputDenied CompositorSurfaceEventName = "input_denied"
@@ -195,6 +198,9 @@ type CompositorSurface struct {
 	Fullscreen       *bool                      `json:"fullscreen,omitempty"`
 	TiledEdges       *SurfaceTiledEdges         `json:"tiled_edges,omitempty"`
 	Maximized        *bool                      `json:"maximized,omitempty"`
+	Minimized        *bool                      `json:"minimized,omitempty"`
+	Restorable       *bool                      `json:"restorable,omitempty"`
+	VisibilityState  string                     `json:"visibility_state,omitempty"`
 }
 
 type CompositorClientIdentity struct {
@@ -348,6 +354,7 @@ type CompositorSetSurfaceState struct {
 	SurfaceID  string                      `json:"surface_id"`
 	Fullscreen *bool                       `json:"fullscreen,omitempty"`
 	Maximized  *bool                       `json:"maximized,omitempty"`
+	Minimized  *bool                       `json:"minimized,omitempty"`
 }
 
 type CompositorSurfaceStatePluginResponse struct {
@@ -549,6 +556,7 @@ type SurfaceState struct {
 	AlwaysOnTop *bool                 `json:"always_on_top,omitempty"`
 	Fullscreen  *bool                 `json:"fullscreen,omitempty"`
 	Maximized   *bool                 `json:"maximized,omitempty"`
+	Minimized   *bool                 `json:"minimized,omitempty"`
 	TiledEdges  *SurfaceTiledEdges    `json:"tiled_edges,omitempty"`
 	Stack       *CompositorStackState `json:"stack,omitempty"`
 }
@@ -568,6 +576,7 @@ type SurfaceActionResponse struct {
 	AlwaysOnTop      *bool                     `json:"always_on_top,omitempty"`
 	Fullscreen       *bool                     `json:"fullscreen,omitempty"`
 	Maximized        *bool                     `json:"maximized,omitempty"`
+	Minimized        *bool                     `json:"minimized,omitempty"`
 	TiledEdges       *SurfaceTiledEdges        `json:"tiled_edges,omitempty"`
 	Queued           bool                      `json:"queued,omitempty"`
 	Actor            string                    `json:"actor,omitempty"`
@@ -594,6 +603,12 @@ type FullscreenSurfaceRequest struct {
 }
 
 type MaximizeSurfaceRequest struct {
+	SurfaceID     string `json:"surface_id"`
+	Enabled       bool   `json:"enabled"`
+	WaitTimeoutMs int    `json:"wait_timeout_ms,omitempty"`
+}
+
+type MinimizeSurfaceRequest struct {
 	SurfaceID     string `json:"surface_id"`
 	Enabled       bool   `json:"enabled"`
 	WaitTimeoutMs int    `json:"wait_timeout_ms,omitempty"`

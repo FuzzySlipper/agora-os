@@ -70,11 +70,35 @@ int main()
     assert(maximize_state_msg.surface_id == "view-10");
     assert(maximize_state_msg.maximized.has_value() && (*maximize_state_msg.maximized == true));
     assert(!maximize_state_msg.fullscreen.has_value());
+    auto minimize_state_msg = parse_bridge_message(
+        "{\"type\":\"set_surface_state\",\"request_id\":\"state-3\",\"surface_id\":\"view-10\",\"minimized\":true}");
+    assert(minimize_state_msg.kind == bridge_message_kind::set_surface_state);
+    assert(minimize_state_msg.request_id == "state-3");
+    assert(minimize_state_msg.surface_id == "view-10");
+    assert(minimize_state_msg.minimized.has_value() && (*minimize_state_msg.minimized == true));
+    assert(!minimize_state_msg.fullscreen.has_value());
+    assert(!minimize_state_msg.maximized.has_value());
     auto invalid_multi_state_msg = parse_bridge_message(
-        "{\"type\":\"set_surface_state\",\"request_id\":\"state-3\",\"surface_id\":\"view-10\",\"fullscreen\":true,\"maximized\":true}");
+        "{\"type\":\"set_surface_state\",\"request_id\":\"state-4\",\"surface_id\":\"view-10\",\"fullscreen\":true,\"maximized\":true}");
     assert(invalid_multi_state_msg.kind == bridge_message_kind::set_surface_state);
     assert(invalid_multi_state_msg.fullscreen.has_value() && (*invalid_multi_state_msg.fullscreen == true));
     assert(invalid_multi_state_msg.maximized.has_value() && (*invalid_multi_state_msg.maximized == true));
+    auto invalid_fullscreen_minimize_msg = parse_bridge_message(
+        "{\"type\":\"set_surface_state\",\"request_id\":\"state-5\",\"surface_id\":\"view-10\",\"fullscreen\":true,\"minimized\":true}");
+    assert(invalid_fullscreen_minimize_msg.kind == bridge_message_kind::set_surface_state);
+    assert(invalid_fullscreen_minimize_msg.fullscreen.has_value() && (*invalid_fullscreen_minimize_msg.fullscreen == true));
+    assert(invalid_fullscreen_minimize_msg.minimized.has_value() && (*invalid_fullscreen_minimize_msg.minimized == true));
+    auto invalid_maximize_minimize_msg = parse_bridge_message(
+        "{\"type\":\"set_surface_state\",\"request_id\":\"state-6\",\"surface_id\":\"view-10\",\"maximized\":true,\"minimized\":true}");
+    assert(invalid_maximize_minimize_msg.kind == bridge_message_kind::set_surface_state);
+    assert(invalid_maximize_minimize_msg.maximized.has_value() && (*invalid_maximize_minimize_msg.maximized == true));
+    assert(invalid_maximize_minimize_msg.minimized.has_value() && (*invalid_maximize_minimize_msg.minimized == true));
+    auto invalid_all_state_msg = parse_bridge_message(
+        "{\"type\":\"set_surface_state\",\"request_id\":\"state-7\",\"surface_id\":\"view-10\",\"fullscreen\":true,\"maximized\":true,\"minimized\":true}");
+    assert(invalid_all_state_msg.kind == bridge_message_kind::set_surface_state);
+    assert(invalid_all_state_msg.fullscreen.has_value() && (*invalid_all_state_msg.fullscreen == true));
+    assert(invalid_all_state_msg.maximized.has_value() && (*invalid_all_state_msg.maximized == true));
+    assert(invalid_all_state_msg.minimized.has_value() && (*invalid_all_state_msg.minimized == true));
     auto state_response = encode_surface_state_response("state-1", "view-10", true, "");
     assert(state_response.find("\"type\":\"surface_state_response\"") != std::string::npos);
     assert(state_response.find("\"ok\":true") != std::string::npos);

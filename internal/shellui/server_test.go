@@ -40,9 +40,11 @@ func TestStateReturnsAgentsSurfacesAndPendingEscalations(t *testing.T) {
 		if req.Method != schema.MethodListSurfaces {
 			t.Fatalf("unexpected method %q", req.Method)
 		}
+		minimized := true
+		restorable := true
 		return okSchemaResponse(schema.ListSurfacesResponse{
 			Surfaces: []schema.CompositorTrackedSurface{{
-				Surface:   schema.CompositorSurface{ID: "surface-1", Title: "Writer"},
+				Surface:   schema.CompositorSurface{ID: "surface-1", Title: "Writer", Minimized: &minimized, Restorable: &restorable, VisibilityState: "minimized"},
 				Client:    schema.CompositorClientIdentity{PID: 123, UID: 60001, GID: 60001},
 				LastEvent: schema.SurfaceEventMapped,
 				UpdatedAt: now,
@@ -91,11 +93,46 @@ func TestStateReturnsAgentsSurfacesAndPendingEscalations(t *testing.T) {
 	if len(state.Agents) != 1 || state.Agents[0].UID != 60001 {
 		t.Fatalf("got agents %+v", state.Agents)
 	}
-	if len(state.Surfaces) != 1 || state.Surfaces[0].Surface.ID != "surface-1" {
+	if len(state.Surfaces) != 1 || state.Surfaces[0].Surface.ID != "surface-1" || state.Surfaces[0].Surface.Minimized == nil || !*state.Surfaces[0].Surface.Minimized || state.Surfaces[0].Surface.Restorable == nil || !*state.Surfaces[0].Surface.Restorable || state.Surfaces[0].Surface.VisibilityState != "minimized" {
 		t.Fatalf("got surfaces %+v", state.Surfaces)
 	}
 	if len(state.PendingEscalations) != 1 || state.PendingEscalations[0].Request.AgentUID != 60001 {
 		t.Fatalf("got pending escalations %+v", state.PendingEscalations)
+	}
+}
+
+func TestStateReturnsSurfacesWhenAgentInventoryUnavailable(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1700000200, 0).UTC()
+	missingIsoSock := filepath.Join(t.TempDir(), "missing-isolation.sock")
+	compSock := startSchemaServer(t, func(req schema.Request) schema.Response {
+		if req.Method != schema.MethodListSurfaces {
+			t.Fatalf("unexpected method %q", req.Method)
+		}
+		minimized := true
+		restorable := true
+		return okSchemaResponse(schema.ListSurfacesResponse{Surfaces: []schema.CompositorTrackedSurface{{
+			Surface:   schema.CompositorSurface{ID: "surface-minimized", Title: "Writer", Minimized: &minimized, Restorable: &restorable, VisibilityState: "minimized"},
+			LastEvent: schema.SurfaceEventMinimized,
+			UpdatedAt: now,
+		}}})
+	})
+	secret := []byte("01234567890123456789012345678901")
+	server := New(Config{Secret: secret, Now: func() time.Time { return time.Now().UTC() }, IsolationSocket: missingIsoSock, CompositorSocket: compSock})
+	req := httptest.NewRequest(http.MethodGet, "/api/shell/state", nil)
+	req.Header.Set("Authorization", "Bearer "+mustMintHumanToken(t, secret))
+	resp := httptest.NewRecorder()
+	server.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("got status %d body %q, want 200", resp.Code, resp.Body.String())
+	}
+	var state State
+	if err := json.Unmarshal(resp.Body.Bytes(), &state); err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Agents) != 0 || len(state.Surfaces) != 1 || state.Surfaces[0].Surface.Minimized == nil || !*state.Surfaces[0].Surface.Minimized || state.Surfaces[0].Surface.VisibilityState != "minimized" {
+		t.Fatalf("unexpected degraded state %+v", state)
 	}
 }
 
@@ -1489,5 +1526,86 @@ func TestLoadAdminEscalationsSkipsDecisionEntries(t *testing.T) {
 	}
 	if events[0].Request.AgentUID != 60003 {
 		t.Errorf("expected agent_uid 60003, got %d", events[0].Request.AgentUID)
+	}
+}
+
+func TestSurfaceMinimizeEndpointCallsCanonicalCompositorAction(t *testing.T) {
+	t.Parallel()
+	secret := []byte("01234567890123456789012345678901")
+	compSock := startSchemaServer(t, func(req schema.Request) schema.Response {
+		if req.Method != schema.MethodMinimizeSurface {
+			t.Fatalf("unexpected method %q", req.Method)
+		}
+		var body schema.MinimizeSurfaceRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		if body.SurfaceID != "view-min" || !body.Enabled || body.WaitTimeoutMs != 1200 {
+			t.Fatalf("unexpected body %+v", body)
+		}
+		value := true
+		return okSchemaResponse(schema.SurfaceActionResponse{
+			Action:      "surface.minimize",
+			SurfaceID:   "view-min",
+			Decision:    schema.SurfaceActionAccepted,
+			TargetState: &schema.SurfaceState{Minimized: &value},
+			ResultState: &schema.SurfaceState{Minimized: &value},
+			Minimized:   &value,
+			Surface:     &schema.CompositorTrackedSurface{Surface: schema.CompositorSurface{ID: "view-min", Minimized: &value, Restorable: &value, VisibilityState: "minimized"}},
+		})
+	})
+	server := New(Config{Secret: secret, Now: func() time.Time { return time.Now().UTC() }, CompositorSocket: compSock})
+	req := httptest.NewRequest(http.MethodPost, "/api/shell/surface/minimize", strings.NewReader(`{"surface_id":"view-min","enabled":true,"wait_timeout_ms":1200}`))
+	req.Header.Set("Authorization", "Bearer "+mustMintHumanToken(t, secret))
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	server.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	var result schema.SurfaceActionResponse
+	if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if result.Action != "surface.minimize" || result.Decision != schema.SurfaceActionAccepted || result.ResultState == nil || result.ResultState.Minimized == nil || !*result.ResultState.Minimized || result.Surface == nil || result.Surface.Surface.VisibilityState != "minimized" {
+		t.Fatalf("unexpected response: %+v", result)
+	}
+}
+
+func TestSurfaceMinimizeEndpointReturnsStructuredDeniedResults(t *testing.T) {
+	t.Parallel()
+	secret := []byte("01234567890123456789012345678901")
+	wanted := true
+	compSock := startSchemaServer(t, func(req schema.Request) schema.Response {
+		if req.Method != schema.MethodMinimizeSurface {
+			t.Fatalf("unexpected method %q", req.Method)
+		}
+		payload, _ := json.Marshal(schema.SurfaceActionResponse{
+			Action:      "surface.minimize",
+			SurfaceID:   "view-min",
+			Decision:    schema.SurfaceActionDenied,
+			Reason:      "stale surface",
+			TargetState: &schema.SurfaceState{Minimized: &wanted},
+		})
+		return schema.Response{OK: false, Body: payload, ErrorClass: schema.ErrorSurfaceStale, ErrorMessage: "stale surface"}
+	})
+	server := New(Config{Secret: secret, Now: func() time.Time { return time.Now().UTC() }, CompositorSocket: compSock})
+	req := httptest.NewRequest(http.MethodPost, "/api/shell/surface/minimize", strings.NewReader(`{"surface_id":"view-min","enabled":true}`))
+	req.Header.Set("Authorization", "Bearer "+mustMintHumanToken(t, secret))
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	server.ServeHTTP(resp, req)
+	if resp.Code != http.StatusConflict {
+		t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	var envelope struct {
+		ErrorClass string                       `json:"error_class"`
+		Result     schema.SurfaceActionResponse `json:"result"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if envelope.ErrorClass != schema.ErrorSurfaceStale || envelope.Result.Action != "surface.minimize" || envelope.Result.Decision != schema.SurfaceActionDenied || envelope.Result.TargetState == nil || envelope.Result.TargetState.Minimized == nil || !*envelope.Result.TargetState.Minimized {
+		t.Fatalf("unexpected response: %+v", envelope)
 	}
 }

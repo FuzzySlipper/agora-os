@@ -903,6 +903,319 @@ func TestDebugRaiseDeniesLayerShell(t *testing.T) {
 	}
 }
 
+func TestDispatchMinimizeRoutesToPluginRetainsSurfaceAndPublishesAction(t *testing.T) {
+	pub := &fakePublisher{}
+	bridge, err := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	server, client, cleanup := unixSocketPair(t)
+	defer cleanup()
+
+	go bridge.HandlePluginConn(server)
+	dec := json.NewDecoder(client)
+	readInitialSync(t, dec)
+
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventMapped, Surface: schema.CompositorSurface{ID: "view-minimize", WayfireViewID: 73, Role: "toplevel", Visible: boolPtr(true), OutputID: "HDMI-A-1", Minimized: boolPtr(false), Restorable: boolPtr(false), VisibilityState: "visible"}, Client: schema.CompositorClientIdentity{UID: 60001}})
+	var discard schema.CompositorPolicyUpsert
+	_ = dec.Decode(&discard)
+
+	body, err := json.Marshal(schema.MinimizeSurfaceRequest{SurfaceID: "view-minimize", Enabled: true, WaitTimeoutMs: 500})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	respCh := make(chan schema.Response, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		resp, err := bridge.dispatch(60002, schema.Request{Method: schema.MethodMinimizeSurface, Body: body})
+		if err != nil {
+			errCh <- err
+			return
+		}
+		respCh <- resp
+	}()
+
+	var msg schema.CompositorSetSurfaceState
+	if err := dec.Decode(&msg); err != nil {
+		t.Fatalf("decode set_surface_state: %v", err)
+	}
+	if msg.Type != schema.PluginMessageSetSurfaceState || msg.SurfaceID != "view-minimize" || msg.RequestID == "" || msg.Minimized == nil || !*msg.Minimized || msg.Fullscreen != nil || msg.Maximized != nil {
+		t.Fatalf("unexpected set_surface_state message: %+v", msg)
+	}
+	if err := json.NewEncoder(client).Encode(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceStateResponse, RequestID: msg.RequestID, SurfaceID: "view-minimize", OK: true}); err != nil {
+		t.Fatalf("encode surface state response: %v", err)
+	}
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventMinimized, Surface: schema.CompositorSurface{ID: "view-minimize", WayfireViewID: 73, Role: "toplevel", Visible: boolPtr(false), OutputID: "HDMI-A-1", Minimized: boolPtr(true), Restorable: boolPtr(true), VisibilityState: "minimized"}, Client: schema.CompositorClientIdentity{UID: 60001}})
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("dispatch returned error: %v", err)
+	case resp := <-respCh:
+		if !resp.OK {
+			t.Fatalf("dispatch response not OK: %+v", resp)
+		}
+		var action schema.SurfaceActionResponse
+		if err := json.Unmarshal(resp.Body, &action); err != nil {
+			t.Fatalf("unmarshal response: %v", err)
+		}
+		if action.Action != "surface.minimize" || action.Decision != schema.SurfaceActionAccepted || action.TargetState == nil || action.TargetState.Minimized == nil || !*action.TargetState.Minimized || action.ResultState == nil || action.ResultState.Minimized == nil || !*action.ResultState.Minimized || action.Minimized == nil || !*action.Minimized || action.Surface == nil || action.Surface.Surface.Minimized == nil || !*action.Surface.Surface.Minimized || action.Surface.Surface.Restorable == nil || !*action.Surface.Surface.Restorable || action.Surface.Surface.VisibilityState != "minimized" {
+			t.Fatalf("unexpected action response: %+v", action)
+		}
+	case <-time.After(700 * time.Millisecond):
+		t.Fatal("timed out waiting for dispatch response")
+	}
+	if got := bridge.ListSurfaces(); len(got) != 1 || got[0].Surface.ID != "view-minimize" || got[0].Visible || got[0].Capturable || got[0].InputInjectable {
+		t.Fatalf("minimized surface was not retained with disabled capture/input: %+v", got)
+	}
+	if len(pub.events) == 0 || pub.events[len(pub.events)-1].topic != schema.TopicShellActionCompleted {
+		t.Fatalf("shell action completion was not published: %+v", pub.events)
+	}
+}
+
+func TestDispatchMinimizeRestoreRoutesToPluginAndPublishesAction(t *testing.T) {
+	pub := &fakePublisher{}
+	bridge, err := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	server, client, cleanup := unixSocketPair(t)
+	defer cleanup()
+	go bridge.HandlePluginConn(server)
+	dec := json.NewDecoder(client)
+	readInitialSync(t, dec)
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventMapped, Surface: schema.CompositorSurface{ID: "view-restore", WayfireViewID: 74, Role: "toplevel", Visible: boolPtr(false), OutputID: "HDMI-A-1", Minimized: boolPtr(true), Restorable: boolPtr(true), VisibilityState: "minimized"}, Client: schema.CompositorClientIdentity{UID: 60001}})
+	var discard schema.CompositorPolicyUpsert
+	_ = dec.Decode(&discard)
+	body, err := json.Marshal(schema.MinimizeSurfaceRequest{SurfaceID: "view-restore", Enabled: false, WaitTimeoutMs: 500})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	respCh := make(chan schema.Response, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		resp, err := bridge.dispatch(60002, schema.Request{Method: schema.MethodMinimizeSurface, Body: body})
+		if err != nil {
+			errCh <- err
+			return
+		}
+		respCh <- resp
+	}()
+	var msg schema.CompositorSetSurfaceState
+	if err := dec.Decode(&msg); err != nil {
+		t.Fatalf("decode set_surface_state: %v", err)
+	}
+	if msg.Minimized == nil || *msg.Minimized {
+		t.Fatalf("unexpected set_surface_state message: %+v", msg)
+	}
+	if err := json.NewEncoder(client).Encode(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceStateResponse, RequestID: msg.RequestID, SurfaceID: "view-restore", OK: true}); err != nil {
+		t.Fatalf("encode surface state response: %v", err)
+	}
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventRestored, Surface: schema.CompositorSurface{ID: "view-restore", WayfireViewID: 74, Role: "toplevel", Visible: boolPtr(true), OutputID: "HDMI-A-1", Minimized: boolPtr(false), Restorable: boolPtr(false), VisibilityState: "visible"}, Client: schema.CompositorClientIdentity{UID: 60001}})
+	select {
+	case err := <-errCh:
+		t.Fatalf("dispatch returned error: %v", err)
+	case resp := <-respCh:
+		var action schema.SurfaceActionResponse
+		if err := json.Unmarshal(resp.Body, &action); err != nil || action.ResultState == nil || action.ResultState.Minimized == nil || *action.ResultState.Minimized || action.Surface == nil || !action.Surface.Visible {
+			t.Fatalf("unexpected response/action err=%v action=%+v", err, action)
+		}
+	case <-time.After(700 * time.Millisecond):
+		t.Fatal("timed out waiting for restore response")
+	}
+}
+
+func TestDispatchMinimizeDeniesMissingStaleAndLayerShell(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(*Bridge)
+		class string
+	}{
+		{name: "missing", class: schema.ErrorSurfaceNotFound},
+		{name: "stale", class: schema.ErrorSurfaceStale, setup: func(bridge *Bridge) {
+			bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventMapped, Surface: schema.CompositorSurface{ID: "view-min-denied", Role: "toplevel", WayfireViewID: 75, Visible: boolPtr(true), OutputID: "HDMI-A-1", Minimized: boolPtr(false), VisibilityState: "visible"}, Client: schema.CompositorClientIdentity{UID: 60001}})
+			bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventUnmapped, Surface: schema.CompositorSurface{ID: "view-min-denied", WayfireViewID: 75}, Client: schema.CompositorClientIdentity{UID: 60001}})
+		}},
+		{name: "layer-shell", class: schema.ErrorBackendUnsupported, setup: func(bridge *Bridge) {
+			bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventMapped, Surface: schema.CompositorSurface{ID: "view-min-denied", SurfaceKind: schema.SurfaceKindLayerShell, Visible: boolPtr(true), OutputID: "HDMI-A-1", Minimized: boolPtr(false), VisibilityState: "visible"}, Client: schema.CompositorClientIdentity{UID: 60001}})
+		}},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			pub := &fakePublisher{}
+			bridge, err := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			if tc.setup != nil {
+				tc.setup(bridge)
+			}
+			body, err := json.Marshal(schema.MinimizeSurfaceRequest{SurfaceID: "view-min-denied", Enabled: true, WaitTimeoutMs: 20})
+			if err != nil {
+				t.Fatalf("marshal request: %v", err)
+			}
+			_, err = bridge.dispatch(60002, schema.Request{Method: schema.MethodMinimizeSurface, Body: body})
+			assertMinimizeDenied(t, pub, err, tc.class, "", true, nil, "")
+		})
+	}
+}
+
+func TestDispatchMinimizeDeniesPluginAckTimeout(t *testing.T) {
+	pub := &fakePublisher{}
+	bridge, err := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	server, client, cleanup := unixSocketPair(t)
+	defer cleanup()
+	go bridge.HandlePluginConn(server)
+	dec := json.NewDecoder(client)
+	readInitialSync(t, dec)
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventMapped, Surface: schema.CompositorSurface{ID: "view-min-timeout", WayfireViewID: 76, Role: "toplevel", Visible: boolPtr(true), OutputID: "HDMI-A-1", Minimized: boolPtr(false), VisibilityState: "visible"}, Client: schema.CompositorClientIdentity{UID: 60001}})
+	var discard schema.CompositorPolicyUpsert
+	_ = dec.Decode(&discard)
+	body, err := json.Marshal(schema.MinimizeSurfaceRequest{SurfaceID: "view-min-timeout", Enabled: true, WaitTimeoutMs: 25})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := bridge.dispatch(60002, schema.Request{Method: schema.MethodMinimizeSurface, Body: body})
+		errCh <- err
+	}()
+	var msg schema.CompositorSetSurfaceState
+	if err := dec.Decode(&msg); err != nil {
+		t.Fatalf("decode set_surface_state: %v", err)
+	}
+	if msg.Type != schema.PluginMessageSetSurfaceState || msg.SurfaceID != "view-min-timeout" || msg.RequestID == "" || msg.Minimized == nil || !*msg.Minimized || msg.Fullscreen != nil || msg.Maximized != nil {
+		t.Fatalf("unexpected set_surface_state message: %+v", msg)
+	}
+	select {
+	case err := <-errCh:
+		assertMinimizeDenied(t, pub, err, schema.ErrorFrameTimeout, "minimize plugin acknowledgement timed out", true, boolPtr(false), "visible")
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("timed out waiting for minimize ack timeout")
+	}
+}
+
+func TestDispatchMinimizeDeniesReadbackTimeoutAfterPluginAck(t *testing.T) {
+	pub := &fakePublisher{}
+	bridge, err := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	server, client, cleanup := unixSocketPair(t)
+	defer cleanup()
+	go bridge.HandlePluginConn(server)
+	dec := json.NewDecoder(client)
+	readInitialSync(t, dec)
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventMapped, Surface: schema.CompositorSurface{ID: "view-min-readback-timeout", WayfireViewID: 77, Role: "toplevel", Visible: boolPtr(true), OutputID: "HDMI-A-1", Minimized: boolPtr(false), VisibilityState: "visible"}, Client: schema.CompositorClientIdentity{UID: 60001}})
+	var discard schema.CompositorPolicyUpsert
+	_ = dec.Decode(&discard)
+	body, err := json.Marshal(schema.MinimizeSurfaceRequest{SurfaceID: "view-min-readback-timeout", Enabled: true, WaitTimeoutMs: 30})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := bridge.dispatch(60002, schema.Request{Method: schema.MethodMinimizeSurface, Body: body})
+		errCh <- err
+	}()
+	var msg schema.CompositorSetSurfaceState
+	if err := dec.Decode(&msg); err != nil {
+		t.Fatalf("decode set_surface_state: %v", err)
+	}
+	if err := json.NewEncoder(client).Encode(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceStateResponse, RequestID: msg.RequestID, SurfaceID: "view-min-readback-timeout", OK: true}); err != nil {
+		t.Fatalf("encode surface state response: %v", err)
+	}
+	select {
+	case err := <-errCh:
+		assertMinimizeDenied(t, pub, err, schema.ErrorFrameTimeout, "minimize readback timed out after plugin ack", true, boolPtr(false), "visible")
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("timed out waiting for minimize readback timeout")
+	}
+}
+
+func TestDispatchMinimizeDeniesPluginNegativeAck(t *testing.T) {
+	pub := &fakePublisher{}
+	bridge, err := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	server, client, cleanup := unixSocketPair(t)
+	defer cleanup()
+	go bridge.HandlePluginConn(server)
+	dec := json.NewDecoder(client)
+	readInitialSync(t, dec)
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventMapped, Surface: schema.CompositorSurface{ID: "view-min-negative-ack", WayfireViewID: 78, Role: "toplevel", Visible: boolPtr(true), OutputID: "HDMI-A-1", Minimized: boolPtr(false), VisibilityState: "visible"}, Client: schema.CompositorClientIdentity{UID: 60001}})
+	var discard schema.CompositorPolicyUpsert
+	_ = dec.Decode(&discard)
+	body, err := json.Marshal(schema.MinimizeSurfaceRequest{SurfaceID: "view-min-negative-ack", Enabled: true, WaitTimeoutMs: 250})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := bridge.dispatch(60002, schema.Request{Method: schema.MethodMinimizeSurface, Body: body})
+		errCh <- err
+	}()
+	var msg schema.CompositorSetSurfaceState
+	if err := dec.Decode(&msg); err != nil {
+		t.Fatalf("decode set_surface_state: %v", err)
+	}
+	if err := json.NewEncoder(client).Encode(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceStateResponse, RequestID: msg.RequestID, SurfaceID: "view-min-negative-ack", OK: false, Error: "backend refused minimize"}); err != nil {
+		t.Fatalf("encode surface state response: %v", err)
+	}
+	select {
+	case err := <-errCh:
+		assertMinimizeDenied(t, pub, err, schema.ErrorProtocolError, "backend refused minimize", true, boolPtr(false), "visible")
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("timed out waiting for minimize negative ack denial")
+	}
+}
+
+func TestMinimizedSurfaceTerminalUnmapRemovesRetainedSurface(t *testing.T) {
+	bridge, err := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventMinimized, Surface: schema.CompositorSurface{ID: "view-min-unmap", WayfireViewID: 79, Role: "toplevel", Visible: boolPtr(false), OutputID: "HDMI-A-1", Minimized: boolPtr(true), Restorable: boolPtr(true), VisibilityState: "minimized"}, Client: schema.CompositorClientIdentity{UID: 60001}})
+	if got := bridge.ListSurfaces(); len(got) != 1 || got[0].Surface.ID != "view-min-unmap" || got[0].Surface.Minimized == nil || !*got[0].Surface.Minimized {
+		t.Fatalf("minimized surface not retained before terminal unmap: %+v", got)
+	}
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventUnmapped, Surface: schema.CompositorSurface{ID: "view-min-unmap", WayfireViewID: 79}, Client: schema.CompositorClientIdentity{UID: 60001}})
+	if got := bridge.ListSurfaces(); len(got) != 0 {
+		t.Fatalf("terminal unmap should remove retained minimized surface: %+v", got)
+	}
+}
+
+func assertMinimizeDenied(t *testing.T, pub *fakePublisher, err error, wantClass, wantMessage string, wantTarget bool, wantReadback *bool, wantVisibility string) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("expected minimize denial error")
+	}
+	if class, _ := classifyError(err); class != wantClass {
+		t.Fatalf("got error class %q (%v), want %q", class, err, wantClass)
+	}
+	if wantMessage != "" && !strings.Contains(err.Error(), wantMessage) {
+		t.Fatalf("error %q does not contain %q", err.Error(), wantMessage)
+	}
+	if len(pub.events) == 0 || pub.events[len(pub.events)-1].topic != schema.TopicShellActionDenied {
+		t.Fatalf("shell action denial was not published: %+v", pub.events)
+	}
+	action, ok := pub.events[len(pub.events)-1].body.(schema.SurfaceActionResponse)
+	if !ok || action.Action != "surface.minimize" || action.Decision != schema.SurfaceActionDenied || action.TargetState == nil || action.TargetState.Minimized == nil || *action.TargetState.Minimized != wantTarget {
+		t.Fatalf("unexpected denied action %+v", pub.events[len(pub.events)-1].body)
+	}
+	if wantReadback != nil {
+		if action.Surface == nil || action.Surface.Surface.Minimized == nil || *action.Surface.Surface.Minimized != *wantReadback {
+			t.Fatalf("denied action missing readback minimized=%v: %+v", *wantReadback, action)
+		}
+		if wantVisibility != "" && action.Surface.Surface.VisibilityState != wantVisibility {
+			t.Fatalf("denied action visibility_state=%q, want %q: %+v", action.Surface.Surface.VisibilityState, wantVisibility, action)
+		}
+	}
+}
+
 func TestDispatchMaximizeRoutesToPluginAndPublishesAction(t *testing.T) {
 	pub := &fakePublisher{}
 	bridge, err := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})

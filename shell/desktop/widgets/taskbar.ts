@@ -2,10 +2,12 @@ import type { DesktopShellState, ShellWidget, SurfaceActionResponse, SurfaceEven
 
 export type ShellPublisher = (topic: string, body: unknown) => void;
 export type SurfaceFocusAction = (surfaceId: string) => Promise<SurfaceActionResponse>;
+export type SurfaceMinimizeAction = (surfaceId: string, enabled: boolean) => Promise<SurfaceActionResponse>;
 
 export interface TaskbarWidgetOptions {
     publish?: ShellPublisher;
     focusSurface?: SurfaceFocusAction;
+    minimizeSurface?: SurfaceMinimizeAction;
     onFocusResult?: (result: SurfaceActionResponse) => void;
     onOpenCommandCenter?: () => void;
 }
@@ -27,6 +29,7 @@ export class TaskbarWidget extends HTMLElement implements ShellWidget {
     readonly layer = 30;
     private publish: ShellPublisher;
     private focusSurface: SurfaceFocusAction;
+    private minimizeSurface: SurfaceMinimizeAction;
     private onFocusResult: (result: SurfaceActionResponse) => void;
     private onOpenCommandCenter: () => void;
     private surfaces: SurfaceTaskbarItem[] = [];
@@ -37,12 +40,14 @@ export class TaskbarWidget extends HTMLElement implements ShellWidget {
         if (typeof options === "function") {
             this.publish = options;
             this.focusSurface = createSurfaceFocusAction();
+            this.minimizeSurface = createSurfaceMinimizeAction();
             this.onFocusResult = () => undefined;
             this.onOpenCommandCenter = () => undefined;
             return;
         }
         this.publish = options.publish ?? (() => undefined);
         this.focusSurface = options.focusSurface ?? createSurfaceFocusAction();
+        this.minimizeSurface = options.minimizeSurface ?? createSurfaceMinimizeAction();
         this.onFocusResult = options.onFocusResult ?? (() => undefined);
         this.onOpenCommandCenter = options.onOpenCommandCenter ?? (() => undefined);
     }
@@ -71,6 +76,10 @@ export class TaskbarWidget extends HTMLElement implements ShellWidget {
     }
 
     private async requestFocus(surface: SurfaceEvent): Promise<void> {
+        if (surface.minimized || surface.visibility_state === "minimized") {
+            await this.requestRestore(surface);
+            return;
+        }
         if (surface.disabled) {
             return;
         }
@@ -80,6 +89,32 @@ export class TaskbarWidget extends HTMLElement implements ShellWidget {
             const result = await this.focusSurface(surface.id);
             if (result.decision === "denied") {
                 this.actionStatus.set(surface.id, { error: result.error || result.reason || "focus denied" });
+            } else {
+                this.actionStatus.delete(surface.id);
+            }
+            this.onFocusResult(result);
+        } catch (error) {
+            const result = error instanceof SurfaceFocusError ? error.result : undefined;
+            const message = result?.error || result?.reason || (error instanceof Error ? error.message : String(error));
+            this.actionStatus.set(surface.id, { error: message });
+            if (result) {
+                this.onFocusResult(result);
+            }
+        }
+        this.render();
+    }
+
+
+    private async requestRestore(surface: SurfaceEvent): Promise<void> {
+        if (surface.disabled) {
+            return;
+        }
+        this.actionStatus.set(surface.id, { pending: true });
+        this.render();
+        try {
+            const result = await this.minimizeSurface(surface.id, false);
+            if (result.decision === "denied") {
+                this.actionStatus.set(surface.id, { error: result.error || result.reason || "restore denied" });
             } else {
                 this.actionStatus.delete(surface.id);
             }
@@ -122,10 +157,14 @@ export class TaskbarWidget extends HTMLElement implements ShellWidget {
             if (surface.disabled) {
                 classes.push("taskbar-widget__surface--disabled");
             }
-            const icon = button(classes.join(" "), item.icon, `Focus ${item.label}`);
+            if (surface.minimized || surface.visibility_state === "minimized") {
+                classes.push("taskbar-widget__surface--minimized");
+            }
+            const isRestore = Boolean(surface.minimized || surface.visibility_state === "minimized");
+            const icon = button(classes.join(" "), item.icon, `${isRestore ? "Restore" : "Focus"} ${item.label}`);
             icon.title = status?.error || surface.action_error || item.title;
             icon.dataset.surfaceId = surface.id;
-            icon.dataset.action = "surface.focus";
+            icon.dataset.action = isRestore ? "surface.minimize" : "surface.focus";
             icon.disabled = Boolean(surface.disabled || status?.pending);
             icon.addEventListener("click", () => { void this.requestFocus(surface); });
             const text = document.createElement("span");
@@ -193,6 +232,9 @@ function surfaceTitle(surface: SurfaceEvent, label: string): string {
     if (surface.status === "closing") {
         bits.push("closing");
     }
+    if (surface.minimized || surface.visibility_state === "minimized") {
+        bits.push("minimized · click to restore");
+    }
     return bits.join(" · ");
 }
 
@@ -209,6 +251,27 @@ export class SurfaceFocusError extends Error {
         super(message);
         this.name = "SurfaceFocusError";
     }
+}
+
+export function createSurfaceMinimizeAction(fetcher: typeof fetch = fetch, tokenProvider: () => string | null = shellToken): SurfaceMinimizeAction {
+    return async (surfaceId: string, enabled: boolean): Promise<SurfaceActionResponse> => {
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        const token = tokenProvider();
+        if (token) {
+            headers.Authorization = `Bearer ${token}`;
+        }
+        const response = await fetcher("/api/shell/surface/minimize", {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ surface_id: surfaceId, enabled }),
+        });
+        const body = await response.json().catch(() => undefined) as SurfaceActionResponse | { result?: SurfaceActionResponse; error_class?: string } | undefined;
+        if (!response.ok) {
+            const result = body && "result" in body ? body.result : undefined;
+            throw new SurfaceFocusError(result, result?.error || result?.reason || `surface.minimize failed (${response.status})`);
+        }
+        return body as SurfaceActionResponse;
+    };
 }
 
 export function createSurfaceFocusAction(fetcher: typeof fetch = fetch, tokenProvider: () => string | null = shellToken): SurfaceFocusAction {

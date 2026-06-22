@@ -278,6 +278,30 @@ func TestBuildMaximizeSurfaceRequestRejectsInvalidState(t *testing.T) {
 	}
 }
 
+func TestBuildMinimizeSurfaceRequest(t *testing.T) {
+	t.Parallel()
+
+	req, err := buildMinimizeSurfaceRequest([]string{"--surface", "view-42", "--state", "false", "--timeout-ms", "1500"})
+	if err != nil {
+		t.Fatalf("buildMinimizeSurfaceRequest returned error: %v", err)
+	}
+	if req.SurfaceID != "view-42" || req.Enabled || req.WaitTimeoutMs != 1500 {
+		t.Fatalf("request = %+v, want surface view-42 enabled false timeout 1500", req)
+	}
+}
+
+func TestBuildMinimizeSurfaceRequestRejectsInvalidState(t *testing.T) {
+	t.Parallel()
+
+	_, err := buildMinimizeSurfaceRequest([]string{"--surface", "view-42", "--state", "maybe"})
+	if err == nil {
+		t.Fatal("expected invalid state error")
+	}
+	if !strings.Contains(err.Error(), "--state must be true or false") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestDefaultShellConfigDirUsesSharedDirWhenPresent(t *testing.T) {
 	sharedDir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "xdg"))

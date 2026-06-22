@@ -127,18 +127,26 @@ if find_existing_shell_surface >"$existing_json"; then
   existing_title=$(json_get title "$existing_json")
   rm -f "$existing_json"
   if [[ -n "$surface_id" ]]; then
-    log "adopting existing Agora shell panel surface_id=$surface_id title=${existing_title:-unknown} client_pid=${client_pid:-unknown}"
-    while true; do
-      if ! surface_present "$surface_id"; then
-        log "adopted shell panel surface disappeared: $surface_id"
-        exit 1
-      fi
-      if [[ -n "$client_pid" ]] && ! process_present "$client_pid"; then
-        log "adopted shell panel client process exited: $client_pid"
-        exit 1
-      fi
+    if [[ -n "$client_pid" ]] && ! process_present "$client_pid"; then
+      log "discarding stale Agora shell panel surface_id=$surface_id title=${existing_title:-unknown} dead_client_pid=$client_pid"
+      "$COMPOSITORCTL" --pretty surface close --surface "$surface_id" >/dev/null 2>&1 || true
       sleep "$POLL_INTERVAL_SECONDS"
-    done
+      surface_id=""
+      client_pid=""
+    else
+      log "adopting existing Agora shell panel surface_id=$surface_id title=${existing_title:-unknown} client_pid=${client_pid:-unknown}"
+      while true; do
+        if ! surface_present "$surface_id"; then
+          log "adopted shell panel surface disappeared: $surface_id"
+          exit 1
+        fi
+        if [[ -n "$client_pid" ]] && ! process_present "$client_pid"; then
+          log "adopted shell panel client process exited: $client_pid"
+          exit 1
+        fi
+        sleep "$POLL_INTERVAL_SECONDS"
+      done
+    fi
   fi
 else
   rm -f "$existing_json"

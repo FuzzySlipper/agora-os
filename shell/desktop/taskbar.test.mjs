@@ -65,6 +65,7 @@ const { TaskbarWidget } = await import("../dist/desktop/widgets/taskbar.js");
 const published = [];
 const focusResults = [];
 const focusCalls = [];
+const minimizeCalls = [];
 let commandCenterOpenCount = 0;
 const widget = new TaskbarWidget({
   publish: (topic, body) => published.push({ topic, body }),
@@ -73,6 +74,10 @@ const widget = new TaskbarWidget({
   focusSurface: async (surfaceId) => {
     focusCalls.push(surfaceId);
     return { action: "surface.focus", surface_id: surfaceId, decision: "accepted", focused_surface_id: surfaceId };
+  },
+  minimizeSurface: async (surfaceId, enabled) => {
+    minimizeCalls.push({ surfaceId, enabled });
+    return { action: "surface.minimize", surface_id: surfaceId, decision: "accepted", target_state: { minimized: enabled }, result_state: { minimized: enabled }, minimized: enabled, surface: { surface: { id: surfaceId, minimized: enabled, visibility_state: enabled ? "minimized" : "visible" } } };
   },
 });
 const container = new FakeElement("nav");
@@ -106,6 +111,21 @@ assert.deepEqual(focusCalls, ["view-1"]);
 assert.equal(focusResults.at(-1).action, "surface.focus");
 assert.equal(published.some((entry) => entry.topic === "shell.action.completed" || entry.topic === "shell.action.denied"), false, "taskbar does not spoof authoritative shell.action results");
 assert.equal(published.some((entry) => entry.topic === "compositor.advisory.surface.highlight_requested"), false, "taskbar no longer publishes advisory highlight only");
+
+widget.update({
+  surfaces: [{ id: "view-min", title: "Minimized App", minimized: true, restorable: true, visibility_state: "minimized" }],
+  agents: [],
+  notifications: [],
+  config: {},
+});
+const restoreButton = widget.querySelectorAll('[data-surface-id="view-min"]')[0];
+assert.equal(restoreButton.dataset.action, "surface.minimize");
+assert.equal(restoreButton.getAttribute("aria-label"), "Restore Minimized App");
+assert.ok(restoreButton.title.includes("minimized"), "minimized taskbar item advertises restore state");
+restoreButton.click();
+await Promise.resolve();
+assert.deepEqual(minimizeCalls, [{ surfaceId: "view-min", enabled: false }]);
+assert.equal(focusCalls.includes("view-min"), false, "minimized taskbar click restores through canonical minimize false instead of focus-only");
 
 const staleWidget = new TaskbarWidget({
   publish: (topic, body) => published.push({ topic, body }),

@@ -24,6 +24,9 @@ export interface SurfaceEvent {
     fullscreen?: boolean;
     tiled_edges?: SurfaceTiledEdges;
     maximized?: boolean;
+    minimized?: boolean;
+    restorable?: boolean;
+    visibility_state?: "visible" | "minimized" | string;
 }
 
 export type SurfaceActionDecision = "accepted" | "denied" | string;
@@ -32,6 +35,7 @@ export interface SurfaceState {
     always_on_top?: boolean;
     fullscreen?: boolean;
     maximized?: boolean;
+    minimized?: boolean;
     tiled_edges?: SurfaceTiledEdges;
 }
 
@@ -50,6 +54,7 @@ export interface SurfaceActionResponse {
     always_on_top?: boolean;
     fullscreen?: boolean;
     maximized?: boolean;
+    minimized?: boolean;
     tiled_edges?: SurfaceTiledEdges;
     queued?: boolean;
     actor?: string;

@@ -2264,6 +2264,145 @@ func (b *Bridge) surfaceMaximizedMatches(surfaceID string, want bool) bool {
 	return tracked.Surface.TiledEdges.Bits == tiledEdgesForMaximized(want).Bits
 }
 
+func (b *Bridge) MinimizeSurfaceAction(actorUID uint32, req schema.MinimizeSurfaceRequest) (schema.SurfaceActionResponse, error) {
+	if req.SurfaceID == "" {
+		err := fmt.Errorf("surface_id is required")
+		b.publishMinimizeDenied(actorUID, req, err, nil)
+		return schema.SurfaceActionResponse{}, err
+	}
+	b.mu.RLock()
+	tracked, ok := b.surfaces[req.SurfaceID]
+	b.mu.RUnlock()
+	if !ok {
+		b.mu.RLock()
+		_, stale := b.staleSurfaces[req.SurfaceID]
+		b.mu.RUnlock()
+		var err error
+		if stale {
+			err = compositorError(schema.ErrorSurfaceStale, "surface %s is unmapped/stale", req.SurfaceID)
+		} else {
+			err = compositorError(schema.ErrorSurfaceNotFound, "surface %s not found", req.SurfaceID)
+		}
+		b.publishMinimizeDenied(actorUID, req, err, nil)
+		return schema.SurfaceActionResponse{}, err
+	}
+	if tracked.Surface.SurfaceKind == schema.SurfaceKindLayerShell || (tracked.Surface.Role != "" && tracked.Surface.Role != "toplevel") {
+		err := compositorError(schema.ErrorBackendUnsupported, "surface %s is not an xdg toplevel and cannot be minimized", req.SurfaceID)
+		b.publishMinimizeDenied(actorUID, req, err, &tracked)
+		return schema.SurfaceActionResponse{}, err
+	}
+	if req.Enabled && !tracked.Visible {
+		err := compositorError(schema.ErrorSurfaceStale, "surface %s is not visible", req.SurfaceID)
+		b.publishMinimizeDenied(actorUID, req, err, &tracked)
+		return schema.SurfaceActionResponse{}, err
+	}
+	if err := b.setSurfaceMinimized(req.SurfaceID, req.Enabled, time.Duration(req.WaitTimeoutMs)*time.Millisecond); err != nil {
+		b.publishMinimizeDenied(actorUID, req, err, &tracked)
+		return schema.SurfaceActionResponse{}, err
+	}
+	b.mu.RLock()
+	updated, ok := b.surfaces[req.SurfaceID]
+	if ok {
+		updated = b.decorateSurfaceLocked(updated)
+	}
+	b.mu.RUnlock()
+	if !ok {
+		err := compositorError(schema.ErrorSurfaceStale, "surface %s disappeared after minimize", req.SurfaceID)
+		b.publishMinimizeDenied(actorUID, req, err, &tracked)
+		return schema.SurfaceActionResponse{}, err
+	}
+	if updated.Surface.Minimized == nil || *updated.Surface.Minimized != req.Enabled {
+		err := compositorError(schema.ErrorFrameTimeout, "surface %s minimize readback did not converge", req.SurfaceID)
+		b.publishMinimizeDenied(actorUID, req, err, &updated)
+		return schema.SurfaceActionResponse{}, err
+	}
+	actor, uid := b.surfaceActionActor(actorUID)
+	value := req.Enabled
+	state := schema.SurfaceState{Minimized: &value}
+	result := schema.SurfaceActionResponse{Action: "surface.minimize", SurfaceID: req.SurfaceID, Decision: schema.SurfaceActionAccepted, Reason: "minimize updated via compositor plugin", Actor: actor, ActorUID: uid, TargetState: &state, ResultState: &state, Minimized: &value, Surface: &updated}
+	if b.bus != nil {
+		if err := b.bus.Publish(schema.TopicShellActionCompleted, result); err != nil {
+			log.Printf("publish shell action completed: %v", err)
+		}
+	}
+	return result, nil
+}
+
+func (b *Bridge) publishMinimizeDenied(actorUID uint32, req schema.MinimizeSurfaceRequest, err error, surface *schema.CompositorTrackedSurface) {
+	actor, uid := b.surfaceActionActor(actorUID)
+	value := req.Enabled
+	state := schema.SurfaceState{Minimized: &value}
+	result := schema.SurfaceActionResponse{Action: "surface.minimize", SurfaceID: req.SurfaceID, Decision: schema.SurfaceActionDenied, Reason: err.Error(), Error: err.Error(), Actor: actor, ActorUID: uid, TargetState: &state, Minimized: &value, Surface: surface}
+	if b.bus != nil {
+		if publishErr := b.bus.Publish(schema.TopicShellActionDenied, result); publishErr != nil {
+			log.Printf("publish shell action denied: %v", publishErr)
+		}
+	}
+}
+
+func (b *Bridge) setSurfaceMinimized(surfaceID string, enabled bool, timeout time.Duration) error {
+	if b.surfaceMinimizedMatches(surfaceID, enabled) {
+		return nil
+	}
+	b.mu.Lock()
+	if b.plugin == nil {
+		b.mu.Unlock()
+		return compositorError(schema.ErrorCompositorUnavailable, "no plugin connected")
+	}
+	b.stateSeq++
+	requestID := fmt.Sprintf("state-%d-%d", time.Now().UnixNano(), b.stateSeq)
+	ch := make(chan schema.CompositorSurfaceStatePluginResponse, 1)
+	b.stateWaiters[requestID] = ch
+	session := b.plugin
+	b.mu.Unlock()
+	defer func() {
+		b.mu.Lock()
+		delete(b.stateWaiters, requestID)
+		b.mu.Unlock()
+	}()
+	if err := session.Send(schema.CompositorSetSurfaceState{Type: schema.PluginMessageSetSurfaceState, RequestID: requestID, SurfaceID: surfaceID, Minimized: &enabled}); err != nil {
+		return err
+	}
+	if timeout <= 0 {
+		timeout = 4 * time.Second
+	}
+	deadline := time.After(timeout)
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	pluginAcked := false
+	for {
+		select {
+		case resp := <-ch:
+			if !resp.OK {
+				if resp.Error == "" {
+					resp.Error = "surface state update failed"
+				}
+				return compositorError(schema.ErrorProtocolError, "set minimize failed: %s", resp.Error)
+			}
+			pluginAcked = true
+			if b.surfaceMinimizedMatches(surfaceID, enabled) {
+				return nil
+			}
+		case <-ticker.C:
+			if b.surfaceMinimizedMatches(surfaceID, enabled) {
+				return nil
+			}
+		case <-deadline:
+			if pluginAcked {
+				return compositorError(schema.ErrorFrameTimeout, "minimize readback timed out after plugin ack")
+			}
+			return compositorError(schema.ErrorFrameTimeout, "minimize plugin acknowledgement timed out")
+		}
+	}
+}
+
+func (b *Bridge) surfaceMinimizedMatches(surfaceID string, want bool) bool {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	tracked, ok := b.surfaces[surfaceID]
+	return ok && tracked.Surface.Minimized != nil && *tracked.Surface.Minimized == want
+}
+
 func (b *Bridge) CloseSurface(surfaceID string) error {
 	return b.sendToPlugin(schema.CompositorCloseSurface{
 		Type:      schema.PluginMessageCloseSurface,
@@ -3096,11 +3235,18 @@ func (b *Bridge) decorateSurfaceLocked(surface schema.CompositorTrackedSurface) 
 	if surface.Surface.Visible != nil {
 		surface.Visible = *surface.Surface.Visible
 	}
+	if surface.Surface.Minimized != nil && *surface.Surface.Minimized {
+		surface.Visible = false
+	}
 	if surface.LastEvent == schema.SurfaceEventFocused {
 		surface.Focused = true
 	}
 	surface.Capturable = surface.Visible
 	surface.InputInjectable = surface.Visible
+	if surface.Surface.Minimized != nil && *surface.Surface.Minimized {
+		surface.Capturable = false
+		surface.InputInjectable = false
+	}
 	if surface.Surface.SurfaceKind == schema.SurfaceKindLayerShell {
 		surface.Capturable = false
 		surface.InputInjectable = false
@@ -3574,6 +3720,16 @@ func (b *Bridge) dispatch(peerUID uint32, req schema.Request) (schema.Response, 
 			return schema.Response{}, err
 		}
 		return okResponse(resp), nil
+	case schema.MethodMinimizeSurface:
+		var body schema.MinimizeSurfaceRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			return schema.Response{}, fmt.Errorf("bad body: %w", err)
+		}
+		resp, err := b.MinimizeSurfaceAction(peerUID, body)
+		if err != nil {
+			return schema.Response{}, err
+		}
+		return okResponse(resp), nil
 	case schema.MethodCloseSurface:
 		var body schema.CloseSurfaceRequest
 		if err := json.Unmarshal(req.Body, &body); err != nil {
@@ -3785,8 +3941,8 @@ func (b *Bridge) handleSurfaceEvent(msg schema.CompositorPluginEvent) {
 				log.Printf("sync compositor policy for %s: %v", msg.Surface.ID, err)
 			}
 		}
-	case schema.SurfaceEventFocused, schema.SurfaceEventStacked, schema.SurfaceEventInputDenied, schema.SurfaceEventFrameDone:
-		if msg.Event == schema.SurfaceEventFocused {
+	case schema.SurfaceEventFocused, schema.SurfaceEventRestored, schema.SurfaceEventMinimized, schema.SurfaceEventStacked, schema.SurfaceEventInputDenied, schema.SurfaceEventFrameDone:
+		if msg.Event == schema.SurfaceEventFocused || msg.Event == schema.SurfaceEventRestored {
 			for id, other := range b.surfaces {
 				if id != msg.Surface.ID {
 					other.Focused = false
@@ -3828,8 +3984,11 @@ func (b *Bridge) handleSurfaceEvent(msg schema.CompositorPluginEvent) {
 				tracked.FrameCount++
 				tracked.LastPresentTimestamp = &now
 			}
-			if msg.Event != schema.SurfaceEventFocused {
+			if msg.Event != schema.SurfaceEventFocused && msg.Event != schema.SurfaceEventRestored {
 				tracked.Focused = previous.Focused
+			}
+			if msg.Event == schema.SurfaceEventMinimized {
+				tracked.Focused = false
 			}
 		}
 		b.surfaces[msg.Surface.ID] = tracked
