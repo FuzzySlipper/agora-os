@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { createThemeController } from "../dist/desktop/theme.js";
 
 class FakeStyle {
@@ -122,13 +123,13 @@ bus.emit("shell.apply_theme", {
     "empty-value": "",
   },
   wallpaper_url: "/shell/user/wallpaper.png",
-  css_url: "/shell/user/theme.css",
+  css_url: "/api/shell/theme.css",
   unknown_field: { ignored: true },
 });
 
 assert.equal(documentRef.documentElement.style.getPropertyValue("--taskbar-bg"), "#222222");
 assert.equal(documentRef.documentElement.style.getPropertyValue("--clock-color"), "#88ccff");
-assert.equal(documentRef.documentElement.style.getPropertyValue("--shell-accent"), "42");
+assert.equal(documentRef.documentElement.style.getPropertyValue("--shell-accent"), "#old");
 assert.equal(documentRef.documentElement.style.getPropertyValue("--agora-component-taskbar-background"), "#101827");
 assert.equal(documentRef.documentElement.style.getPropertyValue("--agora-semantic-color-text-primary"), "#f0f7ff");
 assert.equal(documentRef.documentElement.style.getPropertyValue("--agora-component-taskbar-launcher-background"), "#76e4f7");
@@ -138,21 +139,26 @@ assert.equal(documentRef.documentElement.style.getPropertyValue("--empty-value")
 assert.equal(documentRef.background.style.backgroundImage, 'url("/shell/user/wallpaper.png")');
 assert.equal(documentRef.head.children.length, 1);
 assert.equal(documentRef.head.children[0].getAttribute("rel"), "stylesheet");
-assert.equal(documentRef.head.children[0].getAttribute("href"), "/shell/user/theme.css");
+assert.equal(documentRef.head.children[0].getAttribute("href"), "/api/shell/theme.css");
 
 const applied = bus.published.at(-1);
 assert.equal(applied.topic, "shell.theme_applied");
 assert.deepEqual(applied.body.properties, {
   "--taskbar-bg": "#222222",
   "--clock-color": "#88ccff",
-  "--shell-accent": "42",
   "--agora-component-taskbar-background": "#101827",
   "--agora-semantic-color-text-primary": "#f0f7ff",
   "--agora-component-taskbar-launcher-background": "#76e4f7",
 });
 assert.equal(applied.body.wallpaper_url, "/shell/user/wallpaper.png");
-assert.equal(applied.body.css_url, "/shell/user/theme.css");
-assert.equal(applied.body.skipped, 3);
+assert.equal(applied.body.css_url, "/api/shell/theme.css");
+assert.equal(applied.body.skipped, 4);
+assert.deepEqual(applied.body.skipped_entries.map((entry) => entry.reason), [
+  "invalid_color_value",
+  "invalid_token_name",
+  "invalid_token_name",
+  "unknown_or_reserved_token",
+]);
 
 bus.emit("shell.reset_theme", {});
 assert.equal(documentRef.documentElement.style.getPropertyValue("--taskbar-bg"), "");
@@ -168,5 +174,96 @@ bus.emit("shell.apply_theme", { properties: ["bad"], wallpaper_url: 7, css_url: 
 const malformed = bus.published.at(-1);
 assert.equal(malformed.topic, "shell.theme_applied");
 assert.equal(malformed.body.skipped, 3);
+
+const manifestDocument = new FakeDocument();
+const manifestBus = new FakeBus();
+const manifestController = createThemeController(manifestBus, manifestDocument);
+const manifestSummary = manifestController.applyManifest({
+  schema: "agora-desktop-shell-theme/v0.1",
+  id: "agora-default",
+  tokens: {
+    "component.taskbar.background": "rgba(10, 14, 24, 0.88)",
+    "component.taskbar.position": "fixed",
+    "extension.agent.experimental": "#fff",
+  },
+  assets: {
+    wallpaper: {
+      kind: "css-gradient",
+      value: "linear-gradient(135deg, #05070d, #080b12)",
+    },
+  },
+  overrides: {
+    css_path: "theme.css",
+    css_mode: "safe-visual-only",
+  },
+}, "config");
+assert.equal(manifestSummary.theme_id, "agora-default");
+assert.equal(manifestDocument.documentElement.style.getPropertyValue("--agora-component-taskbar-background"), "rgba(10, 14, 24, 0.88)");
+assert.equal(manifestDocument.documentElement.style.getPropertyValue("--agora-component-taskbar-position"), "");
+assert.equal(manifestDocument.documentElement.style.getPropertyValue("--agora-extension-agent-experimental"), "");
+assert.equal(manifestDocument.background.style.backgroundImage, "linear-gradient(135deg, #05070d, #080b12)");
+assert.equal(manifestDocument.head.children[0].getAttribute("href"), "/api/shell/theme/agora-default/theme.css");
+assert.equal(manifestSummary.skipped, 2);
+assert.deepEqual(manifestSummary.skipped_entries.map((entry) => entry.reason), ["unknown_or_reserved_token", "extension_token_disabled"]);
+
+const defaultManifest = JSON.parse(await readFile(new URL("./themes/agora-default/theme.json", import.meta.url), "utf8"));
+const defaultDocument = new FakeDocument();
+const defaultBus = new FakeBus();
+const defaultController = createThemeController(defaultBus, defaultDocument);
+const defaultSummary = defaultController.applyManifest(defaultManifest, "config");
+assert.equal(defaultSummary.theme_id, "agora-default");
+assert.equal(defaultSummary.skipped, 0);
+assert.equal(
+  defaultDocument.documentElement.style.getPropertyValue("--agora-component-command-center-panel-background"),
+  defaultManifest.tokens["component.command_center.panel.background"],
+);
+assert.equal(defaultDocument.background.style.backgroundImage, defaultManifest.assets.wallpaper.value);
+
+const unsafeGradientDocument = new FakeDocument();
+const unsafeGradientBus = new FakeBus();
+const unsafeGradientController = createThemeController(unsafeGradientBus, unsafeGradientDocument);
+const unsafeGradientSummary = unsafeGradientController.applyManifest({
+  schema: "agora-desktop-shell-theme/v0.1",
+  id: "unsafe-gradient",
+  tokens: {
+    "component.command_center.panel.background": "linear-gradient(90deg, url(https://example.invalid/a), #fff)",
+    "semantic.color.background.canvas": "linear-gradient(90deg, javascript:alert(1), #fff)",
+    "semantic.color.background.panel": "linear-gradient(90deg, #fff\\0, #000)",
+  },
+  assets: {
+    wallpaper: {
+      kind: "css-gradient",
+      value: "linear-gradient(90deg, url(https://example.invalid/a), #fff)",
+    },
+  },
+}, "config");
+assert.equal(unsafeGradientSummary.skipped, 4);
+assert.deepEqual(unsafeGradientSummary.skipped_entries.map((entry) => entry.reason), [
+  "unsafe_value",
+  "unsafe_value",
+  "unsafe_value",
+  "unsupported_wallpaper",
+]);
+
+let fetchedURL = "";
+globalThis.fetch = async (url) => {
+  fetchedURL = String(url);
+  return {
+    ok: true,
+    async json() {
+      return {
+        schema: "agora-desktop-shell-theme/v0.1",
+        id: "runtime-calm",
+        tokens: { "semantic.color.text.primary": "#f8fafc" },
+      };
+    },
+  };
+};
+const loadDocument = new FakeDocument();
+const loadBus = new FakeBus();
+const loadController = createThemeController(loadBus, loadDocument);
+await loadController.loadFromServer();
+assert.equal(fetchedURL, "/api/shell/theme.json");
+assert.equal(loadDocument.documentElement.style.getPropertyValue("--agora-semantic-color-text-primary"), "#f8fafc");
 
 console.log("theme handler DOM tests passed");

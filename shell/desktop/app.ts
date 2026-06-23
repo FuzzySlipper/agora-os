@@ -88,6 +88,7 @@ export class ShellApp {
         this.update(this.state);
         void this.refreshShellStateSnapshot();
         this.stateRefreshTimer = setInterval(() => { void this.refreshShellStateSnapshot(); }, 15_000);
+        void this.theme.loadFromServer();
         void this.layout.loadFromServer();
         void this.injectedWidgets.loadFromServerLayout();
     }

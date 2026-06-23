@@ -1214,6 +1214,80 @@ func TestThemeCSSMissingReturnsNotFound(t *testing.T) {
 	}
 }
 
+func TestThemeJSONServesBundledDefaultTheme(t *testing.T) {
+	t.Parallel()
+
+	server := New(Config{ShellConfigDir: t.TempDir()})
+	req := httptest.NewRequest(http.MethodGet, "/api/shell/theme.json", nil)
+	resp := httptest.NewRecorder()
+	server.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("got status %d, want 200: %s", resp.Code, resp.Body.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(resp.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["id"] != "agora-default" {
+		t.Fatalf("got id %v, want agora-default", got["id"])
+	}
+}
+
+func TestThemeJSONServesSelectedRuntimeTheme(t *testing.T) {
+	t.Parallel()
+
+	configDir := t.TempDir()
+	themeDir := filepath.Join(configDir, "themes", "calm-runtime")
+	if err := os.MkdirAll(themeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := []byte(`{"schema":"agora-desktop-shell-theme/v0.1","id":"calm-runtime","tokens":{"semantic.color.text.primary":"#f8fafc"}}`)
+	if err := os.WriteFile(filepath.Join(themeDir, "theme.json"), manifest, 0644); err != nil {
+		t.Fatal(err)
+	}
+	selection := []byte(`{"selected_theme_id":"calm-runtime","source":"runtime"}`)
+	if err := os.WriteFile(filepath.Join(configDir, "theme-selection.json"), selection, 0644); err != nil {
+		t.Fatal(err)
+	}
+	server := New(Config{ShellConfigDir: configDir})
+	req := httptest.NewRequest(http.MethodGet, "/api/shell/theme.json", nil)
+	resp := httptest.NewRecorder()
+	server.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("got status %d, want 200: %s", resp.Code, resp.Body.String())
+	}
+	if got := bytes.TrimSpace(resp.Body.Bytes()); !bytes.Equal(got, manifest) {
+		t.Fatalf("got body %s, want %s", got, manifest)
+	}
+}
+
+func TestThemeAssetServesSanitizedRuntimeCSS(t *testing.T) {
+	t.Parallel()
+
+	configDir := t.TempDir()
+	themeDir := filepath.Join(configDir, "themes", "calm-runtime")
+	if err := os.MkdirAll(themeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(themeDir, "theme.css"), []byte(`.shell-taskbar { background: #111; position: absolute; }`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	server := New(Config{ShellConfigDir: configDir})
+	req := httptest.NewRequest(http.MethodGet, "/api/shell/theme/calm-runtime/theme.css", nil)
+	resp := httptest.NewRecorder()
+	server.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("got status %d, want 200: %s", resp.Code, resp.Body.String())
+	}
+	got := resp.Body.String()
+	if !strings.Contains(got, "background: #111;") || strings.Contains(got, "position") {
+		t.Fatalf("theme css was not safely filtered: %s", got)
+	}
+	if warnings := resp.Header().Get("X-Agora-CSS-Warnings"); !strings.Contains(warnings, "stripped property position") {
+		t.Fatalf("warnings missing stripped property: %q", warnings)
+	}
+}
+
 func TestLayoutJSONServesShellConfigFile(t *testing.T) {
 	t.Parallel()
 

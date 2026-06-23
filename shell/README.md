@@ -102,6 +102,27 @@ debugging, but on the current den-k8plus Wayfire/WebKit stack they can map while
 presenting black/no frames. Treat compositor presentation/capture evidence as
 the visibility gate, not `mapped` alone.
 
+## Desktop theme packages
+
+The desktop shell loads the selected theme manifest from
+`/api/shell/theme.json` at mount time. `event-bus-web` resolves that endpoint
+from the shell config directory first:
+
+- `${SHELL_CONFIG_DIR:-/var/lib/agora-shell}/theme-selection.json` selects a
+  package with `{ "selected_theme_id": "<id>", "source": "runtime" }`.
+- Runtime packages live under
+  `${SHELL_CONFIG_DIR:-/var/lib/agora-shell}/themes/<id>/theme.json`.
+- If no runtime selection exists, the bundled `agora-default` manifest is used;
+  the editable source package lives at
+  `shell/desktop/themes/agora-default/theme.json` and is copied into
+  `shell/dist/desktop/themes/` by `npm run --prefix shell build`.
+
+Theme manifests may set #3193 contract tokens, wallpaper, and optional
+safe-visual-only CSS overrides. The frontend validates token names/values and
+only accepts known `--agora-*` tokens or explicitly enabled `extension.*`
+tokens; theme CSS served through `/api/shell/theme/<id>/...` is filtered by the
+server-side safe visual CSS sanitizer.
+
 The desktop shell should render a clock, taskbar, and agent-health summary at
 the same host that serves the operator console. The operator console remains at
 `http://127.0.0.1:7780/shell/dist/` and `/shell/`.

@@ -333,6 +333,8 @@ type shellDefaultsInstallResult struct {
 	ConfigDir        string   `json:"config_dir"`
 	LayoutInstalled  bool     `json:"layout_installed,omitempty"`
 	LayoutPreserved  bool     `json:"layout_preserved,omitempty"`
+	ThemeInstalled   bool     `json:"theme_installed,omitempty"`
+	ThemeID          string   `json:"theme_id,omitempty"`
 	WidgetsInstalled []string `json:"widgets_installed"`
 }
 
@@ -341,6 +343,11 @@ func installShellDefaults(configDir string) (shellDefaultsInstallResult, error) 
 	if err != nil {
 		return result, err
 	}
+	if err := installDefaultTheme(configDir); err != nil {
+		return result, err
+	}
+	result.ThemeInstalled = true
+	result.ThemeID = shelldefaults.DefaultThemeID
 	layoutPath := filepath.Join(configDir, "layout.json")
 	if _, err := os.Stat(layoutPath); err == nil {
 		result.LayoutPreserved = true
@@ -356,6 +363,26 @@ func installShellDefaults(configDir string) (shellDefaultsInstallResult, error) 
 	}
 	result.LayoutInstalled = true
 	return result, nil
+}
+
+func installDefaultTheme(configDir string) error {
+	themeDir := filepath.Join(configDir, "themes", shelldefaults.DefaultThemeID)
+	if err := os.MkdirAll(themeDir, 0755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(themeDir, "theme.json"), []byte(shelldefaults.DefaultThemeManifestJSON), 0644); err != nil {
+		return err
+	}
+	selection := map[string]any{
+		"selected_theme_id": shelldefaults.DefaultThemeID,
+		"source":            "runtime",
+	}
+	raw, err := json.MarshalIndent(selection, "", "  ")
+	if err != nil {
+		return err
+	}
+	raw = append(raw, '\n')
+	return os.WriteFile(filepath.Join(configDir, "theme-selection.json"), raw, 0644)
 }
 
 func installShellExampleWidgets(configDir string) (shellDefaultsInstallResult, error) {

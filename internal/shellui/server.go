@@ -23,6 +23,7 @@ import (
 	"github.com/patch/agora-os/internal/appcatalog"
 	"github.com/patch/agora-os/internal/bus"
 	"github.com/patch/agora-os/internal/schema"
+	"github.com/patch/agora-os/internal/shelldefaults"
 	"github.com/patch/agora-os/internal/webbus"
 )
 
@@ -55,6 +56,7 @@ type Server struct {
 	now              func() time.Time
 	allowedOrigins   map[string]struct{}
 	assets           http.Handler
+	assetsFS         fs.FS
 	busSocket        string
 	isolationSocket  string
 	compositorSocket string
@@ -114,11 +116,14 @@ func New(cfg Config) *Server {
 	}
 
 	var assets http.Handler = http.NotFoundHandler()
+	var assetsFS fs.FS
 	devDir := strings.TrimSpace(cfg.DevDir)
 	if devDir != "" {
 		assets = http.FileServer(http.Dir(devDir))
+		assetsFS = os.DirFS(devDir)
 	} else if cfg.Assets != nil {
 		assets = http.FileServerFS(cfg.Assets)
+		assetsFS = cfg.Assets
 	}
 
 	s := &Server{
@@ -126,6 +131,7 @@ func New(cfg Config) *Server {
 		now:              now,
 		allowedOrigins:   allowedOrigins,
 		assets:           assets,
+		assetsFS:         assetsFS,
 		busSocket:        defaultString(cfg.BusSocket, schema.BusSocket),
 		isolationSocket:  defaultString(cfg.IsolationSocket, schema.IsolationSocket),
 		compositorSocket: defaultString(cfg.CompositorSocket, schema.CompositorControlSocket),
@@ -162,6 +168,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	cleanPath := path.Clean(strings.TrimPrefix(r.URL.Path, "/api/shell"))
 	if strings.HasPrefix(cleanPath, "/widget-proxy/") {
 		s.handleWidgetProxy(w, r, strings.TrimPrefix(cleanPath, "/widget-proxy/"))
+		return
+	}
+	if strings.HasPrefix(cleanPath, "/theme/") {
+		s.handleThemeAsset(w, r, strings.TrimPrefix(cleanPath, "/theme/"))
 		return
 	}
 	switch cleanPath {
@@ -203,6 +213,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleLayoutJSON(w, r)
 	case "/theme.css":
 		s.handleThemeCSS(w, r)
+	case "/theme.json":
+		s.handleThemeJSON(w, r)
 	default:
 		http.NotFound(w, r)
 	}
@@ -1023,6 +1035,122 @@ func (s *Server) handleEscalationDecision(w http.ResponseWriter, r *http.Request
 	writeJSON(w, decision)
 }
 
+func (s *Server) handleThemeJSON(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	raw, err := s.selectedThemeManifest()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(raw)
+}
+
+func (s *Server) selectedThemeManifest() ([]byte, error) {
+	selectionPath := filepath.Join(s.shellConfigDir, "theme-selection.json")
+	if raw, err := os.ReadFile(selectionPath); err == nil {
+		var selection struct {
+			SelectedThemeID string `json:"selected_theme_id"`
+			Source          string `json:"source"`
+		}
+		if err := json.Unmarshal(raw, &selection); err != nil {
+			return nil, fmt.Errorf("theme-selection.json is not valid JSON: %w", err)
+		}
+		id := strings.TrimSpace(selection.SelectedThemeID)
+		if !validThemeID(id) {
+			return nil, fmt.Errorf("theme-selection.json selected_theme_id is invalid")
+		}
+		if selection.Source == "runtime" {
+			return s.readRuntimeThemeManifest(id)
+		}
+		return s.readBundledThemeManifest(id)
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	if raw, err := s.readRuntimeThemeManifest("agora-default"); err == nil {
+		return raw, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	return s.readBundledThemeManifest("agora-default")
+}
+
+func (s *Server) readRuntimeThemeManifest(themeID string) ([]byte, error) {
+	return os.ReadFile(filepath.Join(s.shellConfigDir, "themes", themeID, "theme.json"))
+}
+
+func (s *Server) readBundledThemeManifest(themeID string) ([]byte, error) {
+	if themeID == shelldefaults.DefaultThemeID {
+		return []byte(shelldefaults.DefaultThemeManifestJSON), nil
+	}
+	if s.assetsFS == nil {
+		return nil, os.ErrNotExist
+	}
+	return fs.ReadFile(s.assetsFS, path.Join("desktop", "themes", themeID, "theme.json"))
+}
+
+func (s *Server) handleThemeAsset(w http.ResponseWriter, r *http.Request, themePath string) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	parts := strings.SplitN(themePath, "/", 2)
+	if len(parts) != 2 || !validThemeID(parts[0]) {
+		http.NotFound(w, r)
+		return
+	}
+	filePath := path.Clean("/" + parts[1])
+	if filePath == "/" || strings.Contains(filePath, "/.") {
+		http.NotFound(w, r)
+		return
+	}
+	raw, ext, err := s.readThemeAsset(parts[0], strings.TrimPrefix(filePath, "/"))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if ext == ".css" {
+		filtered, warnings := sanitizeThemeCSS(string(raw))
+		if len(warnings) > 0 {
+			w.Header().Set("X-Agora-CSS-Warnings", strings.Join(warnings, "; "))
+		}
+		w.Header().Set("Content-Type", "text/css; charset=utf-8")
+		_, _ = w.Write([]byte(filtered))
+		return
+	}
+	w.Header().Set("Content-Type", mime.TypeByExtension(ext))
+	_, _ = w.Write(raw)
+}
+
+func (s *Server) readThemeAsset(themeID, relativePath string) ([]byte, string, error) {
+	ext := filepath.Ext(relativePath)
+	root := filepath.Join(s.shellConfigDir, "themes", themeID)
+	localPath := filepath.Join(root, filepath.FromSlash(relativePath))
+	if resolved, ok, err := resolvedPathWithinDir(root, localPath); err == nil && ok {
+		raw, readErr := os.ReadFile(resolved)
+		if readErr == nil {
+			return raw, ext, nil
+		}
+		if !errors.Is(readErr, os.ErrNotExist) {
+			return nil, ext, readErr
+		}
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, ext, err
+	}
+	if s.assetsFS == nil {
+		return nil, ext, os.ErrNotExist
+	}
+	raw, err := fs.ReadFile(s.assetsFS, path.Join("desktop", "themes", themeID, filepath.ToSlash(relativePath)))
+	return raw, ext, err
+}
+
 func (s *Server) handleThemeCSS(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -1557,6 +1685,19 @@ func allowedCSSProperty(property string) bool {
 		return true
 	}
 	return strings.HasPrefix(property, "border-") || strings.HasPrefix(property, "font-")
+}
+
+func validThemeID(id string) bool {
+	if id == "" || len(id) > 64 {
+		return false
+	}
+	for i, r := range id {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || (i > 0 && (r == '-' || r == '_')) {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func validWidgetName(name string) bool {

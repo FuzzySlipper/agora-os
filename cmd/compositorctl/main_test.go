@@ -347,13 +347,15 @@ func TestInstallShellDefaultsCreatesLayoutAndHelloWorldWidget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("installShellDefaults returned error: %v", err)
 	}
-	if result.ConfigDir != configDir || !result.LayoutInstalled || result.LayoutPreserved {
+	if result.ConfigDir != configDir || !result.LayoutInstalled || result.LayoutPreserved || !result.ThemeInstalled || result.ThemeID != shelldefaults.DefaultThemeID {
 		t.Fatalf("unexpected result: %+v", result)
 	}
 	if len(result.WidgetsInstalled) != 1 || result.WidgetsInstalled[0] != shelldefaults.HelloWorldWidgetName {
 		t.Fatalf("widgets installed = %#v", result.WidgetsInstalled)
 	}
 	assertFileContent(t, filepath.Join(configDir, "layout.json"), shelldefaults.LayoutJSON)
+	assertFileContent(t, filepath.Join(configDir, "themes", shelldefaults.DefaultThemeID, "theme.json"), shelldefaults.DefaultThemeManifestJSON)
+	assertJSONFileField(t, filepath.Join(configDir, "theme-selection.json"), "selected_theme_id", shelldefaults.DefaultThemeID)
 	assertFileContent(t, filepath.Join(configDir, "widgets", "hello-world", "index.html"), shelldefaults.HelloWorldIndexHTML)
 	assertFileContent(t, filepath.Join(configDir, "widgets", "hello-world", "manifest.json"), shelldefaults.HelloWorldManifestJSON)
 
@@ -408,6 +410,22 @@ func TestPackagedHelloWorldFilesMatchExampleSources(t *testing.T) {
 	assertFileContent(t, filepath.Join("..", "..", "shell", "example-widgets", "layout.json"), shelldefaults.LayoutJSON)
 	assertFileContent(t, filepath.Join("..", "..", "shell", "example-widgets", "hello-world", "index.html"), shelldefaults.HelloWorldIndexHTML)
 	assertFileContent(t, filepath.Join("..", "..", "shell", "example-widgets", "hello-world", "manifest.json"), shelldefaults.HelloWorldManifestJSON)
+	assertFileContent(t, filepath.Join("..", "..", "shell", "desktop", "themes", shelldefaults.DefaultThemeID, "theme.json"), shelldefaults.DefaultThemeManifestJSON)
+}
+
+func assertJSONFileField(t *testing.T, path string, key string, want string) {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got[key] != want {
+		t.Fatalf("%s[%s] = %v, want %q", path, key, got[key], want)
+	}
 }
 
 func assertFileContent(t *testing.T, path string, want string) {
