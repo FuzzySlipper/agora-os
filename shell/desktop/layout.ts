@@ -91,8 +91,9 @@ export class LayoutController {
             const order = typeof widgetConfig?.order === "number" ? widgetConfig.order : undefined;
             applyWidgetContainerLayout(container, position, visible, order);
         }
-        if (config.theme !== undefined) {
-            this.onTheme?.(config.theme);
+        const layoutTheme = sanitizeLayoutTheme(config.theme);
+        if (layoutTheme !== undefined) {
+            this.onTheme?.(layoutTheme);
         }
     }
 
@@ -140,6 +141,23 @@ function normalizeLayout(layout: unknown): { widgets: Record<string, { visible?:
         }
     }
     return { widgets, theme: raw.theme };
+}
+
+function sanitizeLayoutTheme(theme: unknown): unknown {
+    if (!theme || typeof theme !== "object" || Array.isArray(theme)) {
+        return undefined;
+    }
+    const raw = theme as Record<string, unknown>;
+    const sanitized: Record<string, unknown> = {};
+    for (const key of ["theme_id", "tokens", "wallpaper", "wallpaper_url", "css_url", "allow_extensions"] as const) {
+        if (raw[key] !== undefined) {
+            sanitized[key] = raw[key];
+        }
+    }
+    if (raw.properties !== undefined && raw.allow_legacy_properties === true) {
+        sanitized.properties = raw.properties;
+    }
+    return Object.keys(sanitized).length > 0 ? sanitized : undefined;
 }
 
 function normalizePosition(position: unknown, fallback: string): string {

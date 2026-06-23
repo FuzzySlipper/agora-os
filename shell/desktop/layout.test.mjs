@@ -121,7 +121,12 @@ assert.equal(elements.clock.style.getPropertyValue("order"), "2");
 assert.equal(elements.taskbar.hidden, true);
 assert.equal(elements.taskbar.style.display, "none");
 assert.ok(elements.notifications.classList.contains("pos-center"), "unknown positions default to center");
-assert.deepEqual(themes, [{ properties: { "--taskbar-bg": "#222" } }]);
+assert.deepEqual(themes, [], "legacy layout.theme.properties are ignored unless explicitly allowed");
+
+controller.applyLayout({ theme: { tokens: { "semantic.color.text.primary": "#fff" } } });
+assert.deepEqual(themes, [{ tokens: { "semantic.color.text.primary": "#fff" } }], "manifest-token layout theme payloads still pass through");
+controller.applyLayout({ theme: { allow_legacy_properties: true, properties: { "--taskbar-bg": "#333" } } });
+assert.deepEqual(themes.at(-1), { properties: { "--taskbar-bg": "#333" } }, "legacy layout theme properties require explicit opt-in");
 
 bus.emit("shell.layout_updated", {
   widgets: {
