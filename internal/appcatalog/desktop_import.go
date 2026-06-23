@@ -97,14 +97,16 @@ func DefaultDesktopImportDirs() []string {
 		seen[dir] = struct{}{}
 		dirs = append(dirs, dir)
 	}
-	add("/usr/share/applications")
-	add("/usr/local/share/applications")
 	if xdgHome := os.Getenv("XDG_DATA_HOME"); xdgHome != "" {
 		add(filepath.Join(xdgHome, "applications"))
 	} else if home := os.Getenv("HOME"); home != "" {
 		add(filepath.Join(home, ".local/share/applications"))
 	}
-	for _, base := range filepath.SplitList(os.Getenv("XDG_DATA_DIRS")) {
+	dataDirs := os.Getenv("XDG_DATA_DIRS")
+	if dataDirs == "" {
+		dataDirs = "/usr/local/share:/usr/share"
+	}
+	for _, base := range filepath.SplitList(dataDirs) {
 		add(filepath.Join(base, "applications"))
 	}
 	return dirs
@@ -117,7 +119,7 @@ func ImportDesktopCandidates(opts DesktopImportOptions) (DesktopCandidateArtifac
 	}
 	artifact := DesktopCandidateArtifact{Version: 1, GeneratedBy: "compositorctl app import-desktop", Sources: append([]string(nil), dirs...)}
 	seenPath := map[string]struct{}{}
-	seenID := map[string]struct{}{}
+	seenID := map[string]string{}
 	for _, dir := range dirs {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
@@ -149,10 +151,12 @@ func ImportDesktopCandidates(opts DesktopImportOptions) (DesktopCandidateArtifac
 				artifact.Summary.Skipped++
 				continue
 			}
-			if _, duplicate := seenID[candidate.Entry.ID]; duplicate {
-				return artifact, fmt.Errorf("duplicate desktop candidate id %q", candidate.Entry.ID)
+			if originalPath, duplicate := seenID[candidate.Entry.ID]; duplicate {
+				artifact.Diagnostics = append(artifact.Diagnostics, ImportDiagnostic{Path: path, Reason: fmt.Sprintf("duplicate desktop candidate id %q; keeping %s", candidate.Entry.ID, originalPath)})
+				artifact.Summary.Skipped++
+				continue
 			}
-			seenID[candidate.Entry.ID] = struct{}{}
+			seenID[candidate.Entry.ID] = path
 			artifact.Candidates = append(artifact.Candidates, candidate)
 		}
 	}

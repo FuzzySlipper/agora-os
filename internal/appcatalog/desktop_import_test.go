@@ -11,6 +11,9 @@ import (
 
 func writeDesktopFixture(t *testing.T, dir, name, body string) {
 	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(strings.TrimSpace(body)+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +224,7 @@ Exec=/usr/bin/bad "unterminated`)
 	}
 }
 
-func TestImportDesktopCandidatesRejectsDuplicateGeneratedIDs(t *testing.T) {
+func TestImportDesktopCandidatesSkipsDuplicateGeneratedIDs(t *testing.T) {
 	dir := t.TempDir()
 	writeDesktopFixture(t, dir, "foo.bar.desktop", `[Desktop Entry]
 Type=Application
@@ -231,9 +234,43 @@ Exec=/usr/bin/one`)
 Type=Application
 Name=Two
 Exec=/usr/bin/two`)
-	_, err := ImportDesktopCandidates(DesktopImportOptions{Dirs: []string{dir}})
-	if err == nil || !strings.Contains(err.Error(), "duplicate desktop candidate id") {
-		t.Fatalf("expected duplicate id error, got %v", err)
+	artifact, err := ImportDesktopCandidates(DesktopImportOptions{Dirs: []string{dir}})
+	if err != nil {
+		t.Fatalf("ImportDesktopCandidates: %v", err)
+	}
+	if len(artifact.Candidates) != 1 || artifact.Candidates[0].Entry.Label != "Two" {
+		t.Fatalf("duplicate handling should keep deterministic first sorted file: %+v", artifact.Candidates)
+	}
+	if artifact.Summary.Skipped != 1 || len(artifact.Diagnostics) != 1 || !strings.Contains(artifact.Diagnostics[0].Reason, "duplicate desktop candidate id") {
+		t.Fatalf("duplicate diagnostic/summary missing: summary=%+v diagnostics=%+v", artifact.Summary, artifact.Diagnostics)
+	}
+}
+
+func TestImportDesktopCandidatesUsesXDGPrecedenceForDuplicateIDs(t *testing.T) {
+	userData := t.TempDir()
+	systemData := t.TempDir()
+	userApps := filepath.Join(userData, "applications")
+	systemApps := filepath.Join(systemData, "applications")
+	writeDesktopFixture(t, userApps, "demo.desktop", `[Desktop Entry]
+Type=Application
+Name=User Demo
+Exec=/usr/bin/user-demo`)
+	writeDesktopFixture(t, systemApps, "demo.desktop", `[Desktop Entry]
+Type=Application
+Name=System Demo
+Exec=/usr/bin/system-demo`)
+	t.Setenv("XDG_DATA_HOME", userData)
+	t.Setenv("XDG_DATA_DIRS", systemData)
+
+	artifact, err := ImportDesktopCandidates(DesktopImportOptions{})
+	if err != nil {
+		t.Fatalf("ImportDesktopCandidates: %v", err)
+	}
+	if len(artifact.Candidates) != 1 || artifact.Candidates[0].Entry.Label != "User Demo" {
+		t.Fatalf("expected user desktop file to take precedence: %+v", artifact.Candidates)
+	}
+	if artifact.Summary.Skipped != 1 || len(artifact.Diagnostics) != 1 || !strings.Contains(artifact.Diagnostics[0].Reason, "duplicate desktop candidate id") {
+		t.Fatalf("duplicate diagnostic/summary missing: summary=%+v diagnostics=%+v", artifact.Summary, artifact.Diagnostics)
 	}
 }
 

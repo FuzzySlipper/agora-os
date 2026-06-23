@@ -1264,8 +1264,32 @@ func (s *Server) handleWidgetProxy(w http.ResponseWriter, r *http.Request, proxy
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", mime.TypeByExtension(filepath.Ext(resolvedPath)))
+	contentType := mime.TypeByExtension(filepath.Ext(resolvedPath))
+	if strings.HasPrefix(contentType, "text/html") {
+		raw = injectWidgetReadableDefaults(raw)
+	}
+	w.Header().Set("Content-Type", contentType)
 	_, _ = w.Write(raw)
+}
+
+const widgetReadableDefaultsStyle = `<style data-agora-widget-readable-defaults>
+:root{color-scheme:dark;--agora-widget-bg:#071114;--agora-widget-text:#E6F0EE;--agora-widget-muted:#A7BBBA;--agora-widget-accent:#7CE3DC;--agora-widget-border:rgba(124,227,220,.32)}
+html,body{background:var(--agora-widget-bg)!important;color:var(--agora-widget-text)!important}
+body{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif!important}
+a{color:var(--agora-widget-accent)!important}small,.muted,.secondary,.ts{color:var(--agora-widget-muted)!important}
+button,input,select,textarea{background:rgba(6,17,18,.92)!important;color:var(--agora-widget-text)!important;border-color:var(--agora-widget-border)!important}
+</style>`
+
+func injectWidgetReadableDefaults(raw []byte) []byte {
+	text := string(raw)
+	if strings.Contains(text, "data-agora-widget-readable-defaults") {
+		return raw
+	}
+	lower := strings.ToLower(text)
+	if idx := strings.Index(lower, "</head>"); idx >= 0 {
+		return []byte(text[:idx] + widgetReadableDefaultsStyle + text[idx:])
+	}
+	return []byte(widgetReadableDefaultsStyle + text)
 }
 
 func (s *Server) handleAuditWS(w http.ResponseWriter, r *http.Request) {

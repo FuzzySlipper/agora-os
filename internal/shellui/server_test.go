@@ -152,14 +152,20 @@ func TestAppsEndpointListsCatalogWithoutCommands(t *testing.T) {
 	if resp.Code != http.StatusOK {
 		t.Fatalf("got status %d body %q, want 200", resp.Code, resp.Body.String())
 	}
-	if strings.Contains(resp.Body.String(), "foot") {
-		t.Fatalf("apps response leaked raw command: %s", resp.Body.String())
+	var raw map[string][]map[string]any
+	if err := json.Unmarshal(resp.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range raw["entries"] {
+		if _, ok := entry["command"]; ok {
+			t.Fatalf("apps response leaked raw command field: %s", resp.Body.String())
+		}
 	}
 	var list schema.AppCatalogListResponse
 	if err := json.Unmarshal(resp.Body.Bytes(), &list); err != nil {
 		t.Fatal(err)
 	}
-	if len(list.Entries) != 2 {
+	if len(list.Entries) < 2 {
 		t.Fatalf("got entries %+v", list.Entries)
 	}
 	for _, entry := range list.Entries {
@@ -1366,8 +1372,15 @@ func TestWidgetProxyServesWidgetFilesAndManifest(t *testing.T) {
 			if got := resp.Header().Get("Content-Type"); !strings.HasPrefix(got, tt.contentType) {
 				t.Fatalf("got content-type %q, want prefix %q", got, tt.contentType)
 			}
-			if got := strings.TrimSpace(resp.Body.String()); got != tt.want {
-				t.Fatalf("got body %q, want %q", got, tt.want)
+			body := strings.TrimSpace(resp.Body.String())
+			if !strings.Contains(body, tt.want) {
+				t.Fatalf("got body %q, want it to contain %q", body, tt.want)
+			}
+			if strings.HasSuffix(tt.path, ".html") && !strings.Contains(body, "data-agora-widget-readable-defaults") {
+				t.Fatalf("html widget response missing readable defaults style: %q", body)
+			}
+			if strings.HasSuffix(tt.path, ".json") && strings.Contains(body, "data-agora-widget-readable-defaults") {
+				t.Fatalf("manifest response should not receive readable defaults style: %q", body)
 			}
 		})
 	}

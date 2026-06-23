@@ -75,21 +75,27 @@ func Default() Catalog {
 			WaitSurface:   &wait,
 			WaitTimeoutMs: 10000,
 		},
-		{
-			ID:             "browser",
-			Label:          "Browser",
-			Description:    "Open a graphical browser",
-			Icon:           "browser",
-			Tags:           []string{"network", "browser"},
-			Enabled:        false,
-			Reason:         "not installed/allowlisted on this host (#3024)",
-			DisabledTaskID: 3024,
-		},
 	}}
 }
 
+type LoadOptions struct {
+	IncludeInstalledDesktopApps bool
+	DesktopImportOptions        DesktopImportOptions
+}
+
 func Load(path string) (Catalog, error) {
+	return LoadWithOptions(path, LoadOptions{IncludeInstalledDesktopApps: true})
+}
+
+func LoadWithOptions(path string, opts LoadOptions) (Catalog, error) {
 	base := Default()
+	if opts.IncludeInstalledDesktopApps {
+		desktop, err := InstalledDesktopCatalog(opts.DesktopImportOptions)
+		if err != nil {
+			return Catalog{}, err
+		}
+		base = Merge(base, desktop)
+	}
 	path = strings.TrimSpace(path)
 	if path == "" {
 		path = DefaultCatalogFile
@@ -110,6 +116,47 @@ func Load(path string) (Catalog, error) {
 	}
 	merged := Merge(base, host)
 	return Validate(merged)
+}
+
+func InstalledDesktopCatalog(opts DesktopImportOptions) (Catalog, error) {
+	artifact, err := ImportDesktopCandidates(opts)
+	if err != nil {
+		return Catalog{}, err
+	}
+	entries := make([]Entry, 0, len(artifact.Candidates))
+	for _, candidate := range artifact.Candidates {
+		entry := candidate.Entry
+		desktopID := strings.TrimSpace(candidate.Desktop.DesktopID)
+		if desktopID == "" {
+			continue
+		}
+		entry.Enabled = true
+		entry.Reason = "installed desktop application"
+		entry.Command = "gtk-launch " + shellQuote(strings.TrimSuffix(desktopID, ".desktop"))
+		entry.Role = "toplevel"
+		entry.ExpectedTitle = entry.Label
+		wait := false
+		entry.WaitSurface = &wait
+		entry.WaitTimeoutMs = 0
+		if !containsString(entry.Tags, "installed") {
+			entry.Tags = append(entry.Tags, "installed")
+		}
+		entries = append(entries, entry)
+	}
+	return Validate(Catalog{Version: 1, Entries: entries})
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
+func containsString(list []string, value string) bool {
+	for _, item := range list {
+		if item == value {
+			return true
+		}
+	}
+	return false
 }
 
 func validateUniqueIDs(entries []Entry) error {

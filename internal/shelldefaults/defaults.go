@@ -13,8 +13,8 @@ const LayoutJSON = `{
 
 const HelloWorldIndexHTML = `<!doctype html>
 <html><head><meta charset="utf-8"><title>Hello World</title>
-<style>body{font-family:sans-serif;color:#e2e8f0;padding:0.8rem;margin:0;background:transparent}
-h2{margin:0 0 0.3rem;font-size:1rem}.ts{font-size:0.7rem;color:#94a3b8;opacity:0.8}</style>
+<style>:root{color-scheme:dark}body{font-family:Inter,ui-sans-serif,system-ui,sans-serif;color:#E6F0EE;padding:0.8rem;margin:0;background:#071114}
+h2{margin:0 0 0.3rem;font-size:1rem;color:#E6F0EE}.ts{font-size:0.7rem;color:#A7BBBA;opacity:0.92}</style>
 </head><body>
 <h2>👋 Hello World</h2>
 <div class="ts" id="ts"></div>
@@ -121,9 +121,9 @@ const DefaultThemeManifestJSON = `{
     "semantic.backdrop.overlay": "blur(18px)",
     "semantic.backdrop.scrim": "blur(7px)",
     "component.background.wallpaper": "radial-gradient(circle at 18% 12%, rgba(106, 215, 210, 0.16), transparent 32%), radial-gradient(circle at 84% 26%, rgba(216, 166, 87, 0.10), transparent 28%), radial-gradient(circle at 52% 74%, rgba(157, 140, 255, 0.08), transparent 30%), linear-gradient(135deg, #061112 0%, #071114 48%, #0B1F26 100%)",
-    "component.taskbar.background": "rgba(6, 17, 18, 0.84)",
+    "component.taskbar.background": "rgba(6, 17, 18, 0.94)",
     "component.taskbar.height": "58px",
-    "component.taskbar.border": "rgba(124, 227, 220, 0.20)",
+    "component.taskbar.border": "rgba(124, 227, 220, 0.36)",
     "component.taskbar.radius": "0.88rem",
     "component.taskbar.shadow": "0 18px 48px rgba(0, 0, 0, 0.34)",
     "component.taskbar.launcher.background": "linear-gradient(135deg, #6AD7D2, #D8A657)",
@@ -133,18 +133,18 @@ const DefaultThemeManifestJSON = `{
     "component.command_center.panel.border": "rgba(124, 227, 220, 0.32)",
     "component.command_center.control.background": "rgba(7, 17, 20, 0.80)",
     "component.command_center.input.background": "rgba(6, 17, 18, 0.88)",
-    "component.surface_button.background": "rgba(167, 187, 186, 0.11)",
-    "component.surface_button.border": "rgba(167, 187, 186, 0.16)",
-    "component.window_chrome.frame.background": "rgba(6, 17, 18, 0.72)",
-    "component.window_chrome.surface.background": "rgba(16, 38, 45, 0.76)",
-    "component.window_chrome.surface.border": "rgba(124, 227, 220, 0.20)",
+    "component.surface_button.background": "rgba(8, 26, 31, 0.92)",
+    "component.surface_button.border": "rgba(124, 227, 220, 0.30)",
+    "component.window_chrome.frame.background": "rgba(6, 17, 18, 0.92)",
+    "component.window_chrome.surface.background": "rgba(8, 26, 31, 0.94)",
+    "component.window_chrome.surface.border": "rgba(124, 227, 220, 0.34)",
     "component.window_chrome.button.background": "rgba(167, 187, 186, 0.11)",
     "component.window_chrome.button.border": "rgba(167, 187, 186, 0.18)",
     "component.notification.background": "rgba(16, 38, 45, 0.92)",
     "component.notification.radius": "0.88rem",
     "component.notification.shadow": "0 14px 38px rgba(0, 0, 0, 0.30)",
-    "component.widget_container.background": "rgba(16, 38, 45, 0.58)",
-    "component.widget_container.border": "rgba(124, 227, 220, 0.18)",
+    "component.widget_container.background": "rgba(7, 17, 20, 0.94)",
+    "component.widget_container.border": "rgba(124, 227, 220, 0.36)",
     "component.widget_container.radius": "0.88rem",
     "component.widget_container.shadow": "0 16px 42px rgba(0, 0, 0, 0.26)",
     "component.agent_health.dot.size": "0.7rem",

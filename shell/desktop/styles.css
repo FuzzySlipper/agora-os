@@ -74,9 +74,9 @@
     --agora-semantic-backdrop-overlay: blur(18px);
     --agora-semantic-backdrop-scrim: blur(7px);
     --agora-component-background-wallpaper: radial-gradient(circle at 18% 12%, rgba(106, 215, 210, 0.16), transparent 32%), radial-gradient(circle at 84% 26%, rgba(216, 166, 87, 0.10), transparent 28%), radial-gradient(circle at 52% 74%, rgba(157, 140, 255, 0.08), transparent 30%), linear-gradient(135deg, #061112 0%, #071114 48%, #0B1F26 100%);
-    --agora-component-taskbar-background: rgba(6, 17, 18, 0.84);
+    --agora-component-taskbar-background: rgba(6, 17, 18, 0.94);
     --agora-component-taskbar-height: 58px;
-    --agora-component-taskbar-border: rgba(124, 227, 220, 0.20);
+    --agora-component-taskbar-border: rgba(124, 227, 220, 0.36);
     --agora-component-taskbar-radius: 0.88rem;
     --agora-component-taskbar-shadow: 0 18px 48px rgba(0, 0, 0, 0.34);
     --agora-component-taskbar-launcher-background: linear-gradient(135deg, #6AD7D2, #D8A657);
@@ -89,12 +89,12 @@
     --agora-component-command-center-suggestion-border: #D8A657;
     --agora-component-command-center-suggestion-background: rgba(216, 166, 87, 0.10);
     --agora-component-command-center-transcript-border: rgba(124, 227, 220, 0.52);
-    --agora-component-surface-button-background: rgba(167, 187, 186, 0.11);
-    --agora-component-surface-button-border: rgba(167, 187, 186, 0.16);
+    --agora-component-surface-button-background: rgba(8, 26, 31, 0.92);
+    --agora-component-surface-button-border: rgba(124, 227, 220, 0.30);
     --agora-component-surface-button-minimized-opacity: 0.68;
-    --agora-component-window-chrome-frame-background: rgba(6, 17, 18, 0.72);
-    --agora-component-window-chrome-surface-background: rgba(16, 38, 45, 0.76);
-    --agora-component-window-chrome-surface-border: rgba(124, 227, 220, 0.20);
+    --agora-component-window-chrome-frame-background: rgba(6, 17, 18, 0.92);
+    --agora-component-window-chrome-surface-background: rgba(8, 26, 31, 0.94);
+    --agora-component-window-chrome-surface-border: rgba(124, 227, 220, 0.34);
     --agora-component-window-chrome-surface-pending-border: rgba(216, 166, 87, 0.56);
     --agora-component-window-chrome-button-background: rgba(167, 187, 186, 0.11);
     --agora-component-window-chrome-button-active-background: rgba(106, 215, 210, 0.16);
@@ -106,8 +106,8 @@
     --agora-component-notification-success-border: rgba(111, 211, 161, 0.52);
     --agora-component-notification-warning-border: rgba(216, 166, 87, 0.56);
     --agora-component-notification-danger-border: rgba(255, 107, 95, 0.52);
-    --agora-component-widget-container-background: rgba(16, 38, 45, 0.58);
-    --agora-component-widget-container-border: rgba(124, 227, 220, 0.18);
+    --agora-component-widget-container-background: rgba(7, 17, 20, 0.94);
+    --agora-component-widget-container-border: rgba(124, 227, 220, 0.36);
     --agora-component-widget-container-radius: 0.88rem;
     --agora-component-widget-container-shadow: 0 16px 42px rgba(0, 0, 0, 0.26);
     --agora-component-agent-health-dot-size: 0.7rem;
@@ -153,7 +153,7 @@
     --clock-color: var(--agora-component-clock-color);
     --notif-bg: var(--agora-component-notification-background);
     --health-dot-size: var(--agora-component-agent-health-dot-size);
-    --shell-border: var(--agora-semantic-color-border-subtle);
+    --shell-border: var(--agora-component-widget-container-border);
     color-scheme: dark;
     font-family: var(--agora-global-font-family-sans);
 }
@@ -231,6 +231,7 @@ body {
     background: var(--agora-component-widget-container-background);
     box-shadow: var(--agora-component-widget-container-shadow);
     backdrop-filter: var(--agora-semantic-backdrop-panel);
+    color: var(--shell-text);
 }
 
 .injected-widget {
@@ -239,7 +240,8 @@ body {
     height: 12rem;
     max-width: 100%;
     border: 0;
-    background: transparent;
+    background: var(--agora-semantic-color-background-canvas);
+    color-scheme: dark;
 }
 
 .pos-top-left {
@@ -311,7 +313,7 @@ agora-clock {
     padding: 0.55rem var(--agora-global-space-6);
     border: 1px solid var(--shell-border);
     border-radius: var(--agora-global-radius-pill);
-    background: var(--agora-semantic-color-background-panel);
+    background: rgba(7, 17, 20, 0.94);
     color: var(--clock-color);
     font-size: 0.95rem;
     font-weight: var(--agora-global-font-weight-label);
@@ -560,6 +562,7 @@ agora-taskbar {
     font-weight: var(--agora-global-font-weight-strong);
     cursor: pointer;
     transition: border-color var(--agora-motion-duration-fast) var(--agora-motion-easing-standard), background var(--agora-motion-duration-fast) var(--agora-motion-easing-standard), box-shadow var(--agora-motion-duration-fast) var(--agora-motion-easing-standard), opacity var(--agora-motion-duration-fast) var(--agora-motion-easing-standard);
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.65);
 }
 
 .taskbar-widget__surface:hover,
@@ -595,6 +598,7 @@ agora-taskbar {
 
 .taskbar-widget__surface:disabled {
     cursor: var(--agora-state-disabled-cursor);
+    background: rgba(216, 166, 87, 0.10);
 }
 
 .taskbar-widget__surface-label {
