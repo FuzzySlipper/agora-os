@@ -23,12 +23,19 @@
       "surface_button",
       "clock",
       "agent_health",
+      "status_indicator",
       "notification_stack",
+      "notification",
+      "window_chrome",
+      "surface_chrome",
+      "surface_controls",
       "command_center",
       "command_center_panel",
       "command_input",
       "command_suggestions",
-      "conversation_transcript"
+      "conversation_transcript",
+      "empty_state",
+      "theme_default_panel"
     ]
   },
   "spaces": [
@@ -49,11 +56,12 @@
       "z": 0,
       "contains": [
         "agent_health",
+        "agent_status_runner",
         "agora_desktop_shell",
         "clock",
+        "empty_surface_state",
         "notification_stack",
         "shell_background",
-        "surface_button_smoke_terminal",
         "taskbar",
         "taskbar_command_center_button",
         "taskbar_surface_list",
@@ -76,7 +84,7 @@
       "domain_role": "desktop_shell_root",
       "parent": "viewport",
       "layer": "z_0",
-      "text": "Agora Desktop Shell empty reference scene",
+      "text": "Agora Desktop Shell reference scene",
       "bounds": {
         "space": "viewport",
         "x": 0,
@@ -194,20 +202,23 @@
       "domain_role": "agent_health",
       "parent": "shell_grid",
       "layer": "z_0",
-      "text": "Agents Runner ready ready",
+      "text": "Agentsrunner ready",
       "bounds": {
         "space": "viewport",
         "x": 0.0125,
         "y": 0.022222222222222223,
-        "w": 0.14583333333333334,
+        "w": 0.16666666666666666,
         "h": 0.08888888888888889,
         "px": {
           "x": 24,
           "y": 24,
-          "w": 280,
+          "w": 320,
           "h": 96
         }
       },
+      "children": [
+        "agent_status_runner"
+      ],
       "importance": "major",
       "confidence": 0.98,
       "evidence_refs": [
@@ -224,6 +235,41 @@
       }
     },
     {
+      "id": "agent_status_runner",
+      "kind": "text",
+      "role": "status_indicator",
+      "parent": "agent_health",
+      "layer": "z_0",
+      "text": "runner ready",
+      "bounds": {
+        "space": "viewport",
+        "x": 0.021354166666666667,
+        "y": 0.06111111111111111,
+        "w": 0.0703125,
+        "h": 0.027777777777777776,
+        "px": {
+          "x": 41,
+          "y": 66,
+          "w": 135,
+          "h": 30
+        }
+      },
+      "importance": "major",
+      "confidence": 0.98,
+      "evidence_refs": [
+        "promotion:agent_status_runner"
+      ],
+      "style": {
+        "background": "rgba(16, 38, 45, 0.58)",
+        "color": "rgb(167, 187, 186)",
+        "display": "inline-flex",
+        "font_size_px": "16",
+        "font_weight": "400",
+        "opacity": "1.00",
+        "position": "static"
+      }
+    },
+    {
       "id": "clock",
       "kind": "panel",
       "role": "clock",
@@ -233,14 +279,14 @@
       "text": "Time12:00",
       "bounds": {
         "space": "viewport",
-        "x": 0.8416666666666667,
+        "x": 0.8208333333333333,
         "y": 0.022222222222222223,
-        "w": 0.14583333333333334,
+        "w": 0.16666666666666666,
         "h": 0.08888888888888889,
         "px": {
-          "x": 1616,
+          "x": 1576,
           "y": 24,
-          "w": 280,
+          "w": 320,
           "h": 96
         }
       },
@@ -265,20 +311,23 @@
       "role": "layout_zone",
       "parent": "shell_grid",
       "layer": "z_0",
-      "text": "Agora Observatory default theme \u2014 no surfaces open",
+      "text": "Agora Observatory default theme \u2014 no controllable surfaces open",
       "bounds": {
         "space": "viewport",
-        "x": 0.16666666666666666,
+        "x": 0.1875,
         "y": 0.1259259259259259,
-        "w": 0.6666666666666666,
+        "w": 0.625,
         "h": 0.7703703703703704,
         "px": {
-          "x": 320,
+          "x": 360,
           "y": 136,
-          "w": 1280,
+          "w": 1200,
           "h": 832
         }
       },
+      "children": [
+        "empty_surface_state"
+      ],
       "importance": "major",
       "confidence": 0.98,
       "evidence_refs": [
@@ -295,23 +344,59 @@
       }
     },
     {
+      "id": "empty_surface_state",
+      "kind": "panel",
+      "role": "empty_state",
+      "domain_role": "empty_state",
+      "parent": "zone_center",
+      "layer": "z_0",
+      "text": "Agora Observatory default theme \u2014 no controllable surfaces open",
+      "bounds": {
+        "space": "viewport",
+        "x": 0.35260416666666666,
+        "y": 0.4777777777777778,
+        "w": 0.2942708333333333,
+        "h": 0.06666666666666667,
+        "px": {
+          "x": 677,
+          "y": 516,
+          "w": 565,
+          "h": 72
+        }
+      },
+      "importance": "major",
+      "confidence": 0.98,
+      "evidence_refs": [
+        "promotion:empty_surface_state"
+      ],
+      "style": {
+        "background": "rgba(16, 38, 45, 0.32)",
+        "color": "rgb(167, 187, 186)",
+        "display": "block",
+        "font_size_px": "16",
+        "font_weight": "400",
+        "opacity": "1.00",
+        "position": "static"
+      }
+    },
+    {
       "id": "notification_stack",
       "kind": "panel",
       "role": "notification_stack",
       "domain_role": "notification_stack",
       "parent": "shell_grid",
       "layer": "z_0",
-      "text": "Notifications Quiet",
+      "text": "Notificationsquiet",
       "bounds": {
         "space": "viewport",
-        "x": 0.8416666666666667,
+        "x": 0.8208333333333333,
         "y": 0.7574074074074074,
-        "w": 0.14583333333333334,
+        "w": 0.16666666666666666,
         "h": 0.1388888888888889,
         "px": {
-          "x": 1616,
+          "x": 1576,
           "y": 818,
-          "w": 280,
+          "w": 320,
           "h": 150
         }
       },
@@ -381,14 +466,14 @@
       "bounds": {
         "space": "viewport",
         "x": 0.022395833333333334,
-        "y": 0.9268518518518518,
-        "w": 0.08541666666666667,
-        "h": 0.03611111111111111,
+        "y": 0.925,
+        "w": 0.08333333333333333,
+        "h": 0.03888888888888889,
         "px": {
           "x": 43,
-          "y": 1001,
-          "w": 164,
-          "h": 39
+          "y": 999,
+          "w": 160,
+          "h": 42
         }
       },
       "importance": "critical",
@@ -413,23 +498,19 @@
       "domain_role": "surface_list",
       "parent": "taskbar",
       "layer": "z_0",
-      "text": "Terminal",
       "bounds": {
         "space": "viewport",
-        "x": 0.11510416666666666,
-        "y": 0.9277777777777778,
-        "w": 0.041666666666666664,
-        "h": 0.03425925925925926,
+        "x": 0.11302083333333333,
+        "y": 0.925,
+        "w": 0.8338541666666667,
+        "h": 0.03888888888888889,
         "px": {
-          "x": 221,
-          "y": 1002,
-          "w": 80,
-          "h": 37
+          "x": 217,
+          "y": 999,
+          "w": 1601,
+          "h": 42
         }
       },
-      "children": [
-        "surface_button_smoke_terminal"
-      ],
       "importance": "major",
       "confidence": 0.98,
       "evidence_refs": [
@@ -440,41 +521,6 @@
         "color": "rgb(230, 240, 238)",
         "display": "flex",
         "font_size_px": "16",
-        "font_weight": "400",
-        "opacity": "1.00",
-        "position": "static"
-      }
-    },
-    {
-      "id": "surface_button_smoke_terminal",
-      "kind": "button",
-      "role": "surface_button",
-      "parent": "taskbar_surface_list",
-      "layer": "z_0",
-      "text": "Terminal",
-      "bounds": {
-        "space": "viewport",
-        "x": 0.11510416666666666,
-        "y": 0.9277777777777778,
-        "w": 0.041666666666666664,
-        "h": 0.03425925925925926,
-        "px": {
-          "x": 221,
-          "y": 1002,
-          "w": 80,
-          "h": 37
-        }
-      },
-      "importance": "major",
-      "confidence": 0.98,
-      "evidence_refs": [
-        "promotion:surface_button_smoke_terminal"
-      ],
-      "style": {
-        "background": "rgba(167, 187, 186, 0.11)",
-        "color": "rgb(230, 240, 238)",
-        "display": "block",
-        "font_size_px": "13",
         "font_weight": "400",
         "opacity": "1.00",
         "position": "static"
@@ -568,6 +614,18 @@
     },
     {
       "type": "inside",
+      "a": "agent_status_runner",
+      "b": "agora_desktop_shell",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "agora_desktop_shell",
+      "b": "agent_status_runner",
+      "confidence": 0.9
+    },
+    {
+      "type": "inside",
       "a": "clock",
       "b": "agora_desktop_shell",
       "confidence": 0.9
@@ -588,6 +646,18 @@
       "type": "contains",
       "a": "agora_desktop_shell",
       "b": "zone_center",
+      "confidence": 0.9
+    },
+    {
+      "type": "inside",
+      "a": "empty_surface_state",
+      "b": "agora_desktop_shell",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "agora_desktop_shell",
+      "b": "empty_surface_state",
       "confidence": 0.9
     },
     {
@@ -648,18 +718,6 @@
     },
     {
       "type": "inside",
-      "a": "surface_button_smoke_terminal",
-      "b": "agora_desktop_shell",
-      "confidence": 0.9
-    },
-    {
-      "type": "contains",
-      "a": "agora_desktop_shell",
-      "b": "surface_button_smoke_terminal",
-      "confidence": 0.9
-    },
-    {
-      "type": "inside",
       "a": "shell_background",
       "b": "shell_grid",
       "confidence": 0.9
@@ -712,6 +770,18 @@
     },
     {
       "type": "inside",
+      "a": "agent_status_runner",
+      "b": "shell_background",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "shell_background",
+      "b": "agent_status_runner",
+      "confidence": 0.9
+    },
+    {
+      "type": "inside",
       "a": "clock",
       "b": "shell_background",
       "confidence": 0.9
@@ -732,6 +802,18 @@
       "type": "contains",
       "a": "shell_background",
       "b": "zone_center",
+      "confidence": 0.9
+    },
+    {
+      "type": "inside",
+      "a": "empty_surface_state",
+      "b": "shell_background",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "shell_background",
+      "b": "empty_surface_state",
       "confidence": 0.9
     },
     {
@@ -792,18 +874,6 @@
     },
     {
       "type": "inside",
-      "a": "surface_button_smoke_terminal",
-      "b": "shell_background",
-      "confidence": 0.9
-    },
-    {
-      "type": "contains",
-      "a": "shell_background",
-      "b": "surface_button_smoke_terminal",
-      "confidence": 0.9
-    },
-    {
-      "type": "inside",
       "a": "agent_health",
       "b": "shell_grid",
       "confidence": 0.9
@@ -821,6 +891,18 @@
         "agent_health"
       ],
       "confidence": 0.82
+    },
+    {
+      "type": "inside",
+      "a": "agent_status_runner",
+      "b": "shell_grid",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "shell_grid",
+      "b": "agent_status_runner",
+      "confidence": 0.9
     },
     {
       "type": "inside",
@@ -844,6 +926,18 @@
       "type": "contains",
       "a": "shell_grid",
       "b": "zone_center",
+      "confidence": 0.9
+    },
+    {
+      "type": "inside",
+      "a": "empty_surface_state",
+      "b": "shell_grid",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "shell_grid",
+      "b": "empty_surface_state",
       "confidence": 0.9
     },
     {
@@ -904,15 +998,23 @@
     },
     {
       "type": "inside",
-      "a": "surface_button_smoke_terminal",
-      "b": "shell_grid",
+      "a": "agent_status_runner",
+      "b": "agent_health",
       "confidence": 0.9
     },
     {
       "type": "contains",
-      "a": "shell_grid",
-      "b": "surface_button_smoke_terminal",
+      "a": "agent_health",
+      "b": "agent_status_runner",
       "confidence": 0.9
+    },
+    {
+      "type": "aligned_left",
+      "items": [
+        "agent_health",
+        "agent_status_runner"
+      ],
+      "confidence": 0.82
     },
     {
       "type": "right_of",
@@ -948,6 +1050,30 @@
       "type": "above",
       "a": "agent_health",
       "b": "zone_center",
+      "confidence": 0.84
+    },
+    {
+      "type": "right_of",
+      "a": "empty_surface_state",
+      "b": "agent_health",
+      "confidence": 0.84
+    },
+    {
+      "type": "left_of",
+      "a": "agent_health",
+      "b": "empty_surface_state",
+      "confidence": 0.84
+    },
+    {
+      "type": "below",
+      "a": "empty_surface_state",
+      "b": "agent_health",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "agent_health",
+      "b": "empty_surface_state",
       "confidence": 0.84
     },
     {
@@ -1027,15 +1153,151 @@
       "confidence": 0.84
     },
     {
+      "type": "right_of",
+      "a": "clock",
+      "b": "agent_status_runner",
+      "confidence": 0.84
+    },
+    {
+      "type": "left_of",
+      "a": "agent_status_runner",
+      "b": "clock",
+      "confidence": 0.84
+    },
+    {
+      "type": "right_of",
+      "a": "zone_center",
+      "b": "agent_status_runner",
+      "confidence": 0.84
+    },
+    {
+      "type": "left_of",
+      "a": "agent_status_runner",
+      "b": "zone_center",
+      "confidence": 0.84
+    },
+    {
       "type": "below",
-      "a": "surface_button_smoke_terminal",
-      "b": "agent_health",
+      "a": "zone_center",
+      "b": "agent_status_runner",
       "confidence": 0.84
     },
     {
       "type": "above",
-      "a": "agent_health",
-      "b": "surface_button_smoke_terminal",
+      "a": "agent_status_runner",
+      "b": "zone_center",
+      "confidence": 0.84
+    },
+    {
+      "type": "right_of",
+      "a": "empty_surface_state",
+      "b": "agent_status_runner",
+      "confidence": 0.84
+    },
+    {
+      "type": "left_of",
+      "a": "agent_status_runner",
+      "b": "empty_surface_state",
+      "confidence": 0.84
+    },
+    {
+      "type": "below",
+      "a": "empty_surface_state",
+      "b": "agent_status_runner",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "agent_status_runner",
+      "b": "empty_surface_state",
+      "confidence": 0.84
+    },
+    {
+      "type": "right_of",
+      "a": "notification_stack",
+      "b": "agent_status_runner",
+      "confidence": 0.84
+    },
+    {
+      "type": "left_of",
+      "a": "agent_status_runner",
+      "b": "notification_stack",
+      "confidence": 0.84
+    },
+    {
+      "type": "below",
+      "a": "notification_stack",
+      "b": "agent_status_runner",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "agent_status_runner",
+      "b": "notification_stack",
+      "confidence": 0.84
+    },
+    {
+      "type": "below",
+      "a": "taskbar",
+      "b": "agent_status_runner",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "agent_status_runner",
+      "b": "taskbar",
+      "confidence": 0.84
+    },
+    {
+      "type": "aligned_left",
+      "items": [
+        "agent_status_runner",
+        "taskbar"
+      ],
+      "confidence": 0.82
+    },
+    {
+      "type": "below",
+      "a": "taskbar_command_center_button",
+      "b": "agent_status_runner",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "agent_status_runner",
+      "b": "taskbar_command_center_button",
+      "confidence": 0.84
+    },
+    {
+      "type": "aligned_left",
+      "items": [
+        "agent_status_runner",
+        "taskbar_command_center_button"
+      ],
+      "confidence": 0.82
+    },
+    {
+      "type": "right_of",
+      "a": "taskbar_surface_list",
+      "b": "agent_status_runner",
+      "confidence": 0.84
+    },
+    {
+      "type": "left_of",
+      "a": "agent_status_runner",
+      "b": "taskbar_surface_list",
+      "confidence": 0.84
+    },
+    {
+      "type": "below",
+      "a": "taskbar_surface_list",
+      "b": "agent_status_runner",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "agent_status_runner",
+      "b": "taskbar_surface_list",
       "confidence": 0.84
     },
     {
@@ -1060,6 +1322,30 @@
       "type": "above",
       "a": "clock",
       "b": "zone_center",
+      "confidence": 0.84
+    },
+    {
+      "type": "right_of",
+      "a": "clock",
+      "b": "empty_surface_state",
+      "confidence": 0.84
+    },
+    {
+      "type": "left_of",
+      "a": "empty_surface_state",
+      "b": "clock",
+      "confidence": 0.84
+    },
+    {
+      "type": "below",
+      "a": "empty_surface_state",
+      "b": "clock",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "clock",
+      "b": "empty_surface_state",
       "confidence": 0.84
     },
     {
@@ -1119,18 +1405,6 @@
       "confidence": 0.84
     },
     {
-      "type": "right_of",
-      "a": "clock",
-      "b": "taskbar_surface_list",
-      "confidence": 0.84
-    },
-    {
-      "type": "left_of",
-      "a": "taskbar_surface_list",
-      "b": "clock",
-      "confidence": 0.84
-    },
-    {
       "type": "below",
       "a": "taskbar_surface_list",
       "b": "clock",
@@ -1143,28 +1417,16 @@
       "confidence": 0.84
     },
     {
-      "type": "right_of",
-      "a": "clock",
-      "b": "surface_button_smoke_terminal",
-      "confidence": 0.84
+      "type": "inside",
+      "a": "empty_surface_state",
+      "b": "zone_center",
+      "confidence": 0.9
     },
     {
-      "type": "left_of",
-      "a": "surface_button_smoke_terminal",
-      "b": "clock",
-      "confidence": 0.84
-    },
-    {
-      "type": "below",
-      "a": "surface_button_smoke_terminal",
-      "b": "clock",
-      "confidence": 0.84
-    },
-    {
-      "type": "above",
-      "a": "clock",
-      "b": "surface_button_smoke_terminal",
-      "confidence": 0.84
+      "type": "contains",
+      "a": "zone_center",
+      "b": "empty_surface_state",
+      "confidence": 0.9
     },
     {
       "type": "right_of",
@@ -1215,18 +1477,6 @@
       "confidence": 0.84
     },
     {
-      "type": "right_of",
-      "a": "zone_center",
-      "b": "taskbar_surface_list",
-      "confidence": 0.84
-    },
-    {
-      "type": "left_of",
-      "a": "taskbar_surface_list",
-      "b": "zone_center",
-      "confidence": 0.84
-    },
-    {
       "type": "below",
       "a": "taskbar_surface_list",
       "b": "zone_center",
@@ -1240,26 +1490,74 @@
     },
     {
       "type": "right_of",
-      "a": "zone_center",
-      "b": "surface_button_smoke_terminal",
+      "a": "notification_stack",
+      "b": "empty_surface_state",
       "confidence": 0.84
     },
     {
       "type": "left_of",
-      "a": "surface_button_smoke_terminal",
-      "b": "zone_center",
+      "a": "empty_surface_state",
+      "b": "notification_stack",
       "confidence": 0.84
     },
     {
       "type": "below",
-      "a": "surface_button_smoke_terminal",
-      "b": "zone_center",
+      "a": "notification_stack",
+      "b": "empty_surface_state",
       "confidence": 0.84
     },
     {
       "type": "above",
-      "a": "zone_center",
-      "b": "surface_button_smoke_terminal",
+      "a": "empty_surface_state",
+      "b": "notification_stack",
+      "confidence": 0.84
+    },
+    {
+      "type": "below",
+      "a": "taskbar",
+      "b": "empty_surface_state",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "empty_surface_state",
+      "b": "taskbar",
+      "confidence": 0.84
+    },
+    {
+      "type": "right_of",
+      "a": "empty_surface_state",
+      "b": "taskbar_command_center_button",
+      "confidence": 0.84
+    },
+    {
+      "type": "left_of",
+      "a": "taskbar_command_center_button",
+      "b": "empty_surface_state",
+      "confidence": 0.84
+    },
+    {
+      "type": "below",
+      "a": "taskbar_command_center_button",
+      "b": "empty_surface_state",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "empty_surface_state",
+      "b": "taskbar_command_center_button",
+      "confidence": 0.84
+    },
+    {
+      "type": "below",
+      "a": "taskbar_surface_list",
+      "b": "empty_surface_state",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "empty_surface_state",
+      "b": "taskbar_surface_list",
       "confidence": 0.84
     },
     {
@@ -1299,18 +1597,6 @@
       "confidence": 0.84
     },
     {
-      "type": "right_of",
-      "a": "notification_stack",
-      "b": "taskbar_surface_list",
-      "confidence": 0.84
-    },
-    {
-      "type": "left_of",
-      "a": "taskbar_surface_list",
-      "b": "notification_stack",
-      "confidence": 0.84
-    },
-    {
       "type": "below",
       "a": "taskbar_surface_list",
       "b": "notification_stack",
@@ -1320,30 +1606,6 @@
       "type": "above",
       "a": "notification_stack",
       "b": "taskbar_surface_list",
-      "confidence": 0.84
-    },
-    {
-      "type": "right_of",
-      "a": "notification_stack",
-      "b": "surface_button_smoke_terminal",
-      "confidence": 0.84
-    },
-    {
-      "type": "left_of",
-      "a": "surface_button_smoke_terminal",
-      "b": "notification_stack",
-      "confidence": 0.84
-    },
-    {
-      "type": "below",
-      "a": "surface_button_smoke_terminal",
-      "b": "notification_stack",
-      "confidence": 0.84
-    },
-    {
-      "type": "above",
-      "a": "notification_stack",
-      "b": "surface_button_smoke_terminal",
       "confidence": 0.84
     },
     {
@@ -1379,18 +1641,6 @@
       "confidence": 0.9
     },
     {
-      "type": "inside",
-      "a": "surface_button_smoke_terminal",
-      "b": "taskbar",
-      "confidence": 0.9
-    },
-    {
-      "type": "contains",
-      "a": "taskbar",
-      "b": "surface_button_smoke_terminal",
-      "confidence": 0.9
-    },
-    {
       "type": "right_of",
       "a": "taskbar_surface_list",
       "b": "taskbar_command_center_button",
@@ -1401,55 +1651,11 @@
       "a": "taskbar_command_center_button",
       "b": "taskbar_surface_list",
       "confidence": 0.84
-    },
-    {
-      "type": "right_of",
-      "a": "surface_button_smoke_terminal",
-      "b": "taskbar_command_center_button",
-      "confidence": 0.84
-    },
-    {
-      "type": "left_of",
-      "a": "taskbar_command_center_button",
-      "b": "surface_button_smoke_terminal",
-      "confidence": 0.84
-    },
-    {
-      "type": "inside",
-      "a": "taskbar_surface_list",
-      "b": "surface_button_smoke_terminal",
-      "confidence": 0.9
-    },
-    {
-      "type": "inside",
-      "a": "surface_button_smoke_terminal",
-      "b": "taskbar_surface_list",
-      "confidence": 0.9
-    },
-    {
-      "type": "contains",
-      "a": "taskbar_surface_list",
-      "b": "surface_button_smoke_terminal",
-      "confidence": 0.9
-    },
-    {
-      "type": "contains",
-      "a": "surface_button_smoke_terminal",
-      "b": "taskbar_surface_list",
-      "confidence": 0.9
-    },
-    {
-      "type": "aligned_left",
-      "items": [
-        "taskbar_surface_list",
-        "surface_button_smoke_terminal"
-      ],
-      "confidence": 0.82
     }
   ],
   "constraints": [
     {
-      "id": "root_exists",
+      "id": "agora_desktop_shell_exists",
       "type": "object_exists",
       "object": "agora_desktop_shell",
       "importance": "critical"
@@ -1461,19 +1667,19 @@
       "importance": "critical"
     },
     {
-      "id": "command_entrypoint_exists",
+      "id": "taskbar_command_center_button_exists",
       "type": "object_exists",
       "object": "taskbar_command_center_button",
       "importance": "critical"
     },
     {
-      "id": "background_exists",
+      "id": "shell_background_exists",
       "type": "object_exists",
       "object": "shell_background",
       "importance": "major"
     },
     {
-      "id": "taskbar_inside_root",
+      "id": "taskbar_inside_agora_desktop_shell",
       "type": "layout_relation",
       "a": "taskbar",
       "b": "agora_desktop_shell",
@@ -1481,11 +1687,17 @@
       "importance": "major"
     },
     {
-      "id": "surface_list_inside_taskbar",
+      "id": "taskbar_surface_list_inside_taskbar",
       "type": "layout_relation",
       "a": "taskbar_surface_list",
       "b": "taskbar",
       "relation": "inside",
+      "importance": "major"
+    },
+    {
+      "id": "empty_surface_state_exists",
+      "type": "object_exists",
+      "object": "empty_surface_state",
       "importance": "major"
     }
   ],
@@ -1531,6 +1743,15 @@
         "confidence": 0.98
       },
       {
+        "id": "promotion:agent_status_runner",
+        "kind": "contract_promotion",
+        "source_ref": "agent_status_runner",
+        "object_refs": [
+          "agent_status_runner"
+        ],
+        "confidence": 0.98
+      },
+      {
         "id": "promotion:clock",
         "kind": "contract_promotion",
         "source_ref": "clock",
@@ -1545,6 +1766,15 @@
         "source_ref": "zone_center",
         "object_refs": [
           "zone_center"
+        ],
+        "confidence": 0.98
+      },
+      {
+        "id": "promotion:empty_surface_state",
+        "kind": "contract_promotion",
+        "source_ref": "empty_surface_state",
+        "object_refs": [
+          "empty_surface_state"
         ],
         "confidence": 0.98
       },
@@ -1581,15 +1811,6 @@
         "source_ref": "taskbar_surface_list",
         "object_refs": [
           "taskbar_surface_list"
-        ],
-        "confidence": 0.98
-      },
-      {
-        "id": "promotion:surface_button_smoke_terminal",
-        "kind": "contract_promotion",
-        "source_ref": "surface_button_smoke_terminal",
-        "object_refs": [
-          "surface_button_smoke_terminal"
         ],
         "confidence": 0.98
       }

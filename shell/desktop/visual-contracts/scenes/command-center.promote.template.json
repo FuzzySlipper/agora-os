@@ -13,12 +13,19 @@
       "surface_button",
       "clock",
       "agent_health",
+      "status_indicator",
       "notification_stack",
+      "notification",
+      "window_chrome",
+      "surface_chrome",
+      "surface_controls",
       "command_center",
       "command_center_panel",
       "command_input",
       "command_suggestions",
-      "conversation_transcript"
+      "conversation_transcript",
+      "empty_state",
+      "theme_default_panel"
     ]
   },
   "objects": [
@@ -105,11 +112,17 @@
       "target_id": "command_center_transcript",
       "domain_role": "conversation_transcript",
       "importance": "major"
+    },
+    {
+      "source_id": "surface_button_smoke_terminal",
+      "target_id": "surface_button_smoke_terminal",
+      "domain_role": "surface_button",
+      "importance": "major"
     }
   ],
   "constraints": [
     {
-      "id": "root_exists",
+      "id": "agora_desktop_shell_exists",
       "type": "object_exists",
       "object": "agora_desktop_shell",
       "importance": "critical"
@@ -121,19 +134,19 @@
       "importance": "critical"
     },
     {
-      "id": "command_entrypoint_exists",
+      "id": "taskbar_command_center_button_exists",
       "type": "object_exists",
       "object": "taskbar_command_center_button",
       "importance": "critical"
     },
     {
-      "id": "background_exists",
+      "id": "shell_background_exists",
       "type": "object_exists",
       "object": "shell_background",
       "importance": "major"
     },
     {
-      "id": "taskbar_inside_root",
+      "id": "taskbar_inside_agora_desktop_shell",
       "type": "layout_relation",
       "a": "taskbar",
       "b": "agora_desktop_shell",
@@ -141,7 +154,7 @@
       "importance": "major"
     },
     {
-      "id": "surface_list_inside_taskbar",
+      "id": "taskbar_surface_list_inside_taskbar",
       "type": "layout_relation",
       "a": "taskbar_surface_list",
       "b": "taskbar",
@@ -155,21 +168,21 @@
       "importance": "critical"
     },
     {
-      "id": "command_input_exists",
+      "id": "command_center_input_exists",
       "type": "object_exists",
       "object": "command_center_input",
       "importance": "critical"
     },
     {
-      "id": "command_panel_inside_root",
+      "id": "command_center_panel_inside_command_center",
       "type": "layout_relation",
       "a": "command_center_panel",
-      "b": "agora_desktop_shell",
+      "b": "command_center",
       "relation": "inside",
-      "importance": "critical"
+      "importance": "major"
     },
     {
-      "id": "command_input_inside_panel",
+      "id": "command_center_input_inside_command_center_panel",
       "type": "layout_relation",
       "a": "command_center_input",
       "b": "command_center_panel",
@@ -177,18 +190,10 @@
       "importance": "major"
     },
     {
-      "id": "suggestions_inside_panel",
+      "id": "taskbar_inside_agora_desktop_shell",
       "type": "layout_relation",
-      "a": "command_center_suggestions",
-      "b": "command_center_panel",
-      "relation": "inside",
-      "importance": "major"
-    },
-    {
-      "id": "transcript_inside_panel",
-      "type": "layout_relation",
-      "a": "command_center_transcript",
-      "b": "command_center_panel",
+      "a": "taskbar",
+      "b": "agora_desktop_shell",
       "relation": "inside",
       "importance": "major"
     }

@@ -139,7 +139,19 @@
     "density.panel.padding": "1rem",
     "density.row.gap": "0.6rem",
     "density.shell.gap": "1rem",
-    "density.taskbar.height": "58px"
+    "density.taskbar.height": "58px",
+    "component.agent_health.chip.background": "rgba(16, 38, 45, 0.58)",
+    "component.agent_health.chip.border": "rgba(124, 227, 220, 0.18)",
+    "component.command_center.suggestion.border": "#D8A657",
+    "component.command_center.suggestion.background": "rgba(216, 166, 87, 0.10)",
+    "component.command_center.transcript.border": "rgba(124, 227, 220, 0.52)",
+    "component.notification.info.border": "rgba(106, 215, 210, 0.46)",
+    "component.notification.success.border": "rgba(111, 211, 161, 0.52)",
+    "component.notification.warning.border": "rgba(216, 166, 87, 0.56)",
+    "component.notification.danger.border": "rgba(255, 107, 95, 0.52)",
+    "component.surface_button.minimized.opacity": "0.68",
+    "component.window_chrome.button.active.background": "rgba(106, 215, 210, 0.16)",
+    "component.window_chrome.surface.pending.border": "rgba(216, 166, 87, 0.56)"
   },
   "assets": {
     "wallpaper": {
@@ -151,6 +163,8 @@
   "visual_contracts": {
     "empty_desktop": "visual-contracts/empty-desktop.contract.json",
     "theme_default": "visual-contracts/theme-default.contract.json",
-    "command_center_open": "visual-contracts/command-center-open.contract.json"
+    "command_center_open": "visual-contracts/command-center-open.contract.json",
+    "surfaces": "visual-contracts/surfaces.contract.json",
+    "notifications": "visual-contracts/notifications.contract.json"
   }
 }

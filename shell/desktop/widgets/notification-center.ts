@@ -44,11 +44,15 @@ export class NotificationCenter extends HTMLElement implements ShellWidget {
         item.dataset.notificationId = notification.id;
         const title = document.createElement("strong");
         title.className = "notification-center__title";
+        const level = notification.level ?? "info";
         title.textContent = notification.title ?? notification.topic ?? "Notification";
+        const severity = document.createElement("span");
+        severity.className = "notification-center__severity";
+        severity.textContent = level;
         const message = document.createElement("p");
         message.className = "notification-center__message";
         message.textContent = notification.message;
-        item.append(title, message);
+        item.append(title, severity, message);
         return item;
     }
 

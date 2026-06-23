@@ -22,15 +22,17 @@ export class AgentHealthWidget extends HTMLElement implements ShellWidget {
         const agents = [...state.agents].sort((a, b) => agentLabel(a).localeCompare(agentLabel(b)));
         this.replaceChildren();
         this.append(el("span", "agent-health-widget__summary", `${agents.length} agents`));
-        const dots = el("span", "agent-health-widget__dots");
+        const chips = el("span", "agent-health-widget__chips");
         for (const agent of agents) {
-            const dot = el("span", `agent-health-widget__dot agent-health-widget__dot--${statusClass(agent.status)}`);
-            applyVisualMarker(dot, visualID("agent_status", agentLabel(agent)), "status_indicator");
-            dot.title = `${agentLabel(agent)}: ${agent.status}`;
-            dot.setAttribute("aria-label", dot.title);
-            dots.append(dot);
+            const normalizedStatus = statusClass(agent.status);
+            const chip = el("span", `agent-health-widget__chip agent-health-widget__chip--${normalizedStatus}`);
+            applyVisualMarker(chip, visualID("agent_status", agentLabel(agent)), "status_indicator");
+            chip.title = `${agentLabel(agent)}: ${agent.status}`;
+            chip.setAttribute("aria-label", chip.title);
+            chip.append(el("span", "agent-health-widget__dot"), el("span", "agent-health-widget__label", `${agentLabel(agent)} ${agent.status}`));
+            chips.append(chip);
         }
-        this.append(dots);
+        this.append(chips);
     }
 }
 

@@ -84,20 +84,32 @@
       "importance": "major"
     },
     {
-      "source_id": "theme_default_panel",
-      "target_id": "theme_default_panel",
-      "domain_role": "theme_default_panel",
+      "source_id": "window_chrome",
+      "target_id": "window_chrome",
+      "domain_role": "window_chrome",
+      "importance": "critical"
+    },
+    {
+      "source_id": "window_chrome_surface_asha",
+      "target_id": "window_chrome_surface_asha",
+      "domain_role": "surface_chrome",
+      "importance": "critical"
+    },
+    {
+      "source_id": "window_chrome_controls_asha",
+      "target_id": "window_chrome_controls_asha",
+      "domain_role": "surface_controls",
       "importance": "major"
     },
     {
-      "source_id": "notification_theme_loaded",
-      "target_id": "notification_theme_loaded",
-      "domain_role": "notification",
-      "importance": "major"
+      "source_id": "surface_button_asha",
+      "target_id": "surface_button_asha",
+      "domain_role": "surface_button",
+      "importance": "critical"
     },
     {
-      "source_id": "surface_button_theme_preview",
-      "target_id": "surface_button_theme_preview",
+      "source_id": "surface_button_terminal",
+      "target_id": "surface_button_terminal",
       "domain_role": "surface_button",
       "importance": "major"
     }
@@ -144,21 +156,37 @@
       "importance": "major"
     },
     {
-      "id": "theme_default_panel_exists",
+      "id": "window_chrome_exists",
       "type": "object_exists",
-      "object": "theme_default_panel",
-      "importance": "major"
+      "object": "window_chrome",
+      "importance": "critical"
     },
     {
-      "id": "notification_theme_loaded_exists",
+      "id": "window_chrome_surface_asha_exists",
       "type": "object_exists",
-      "object": "notification_theme_loaded",
-      "importance": "major"
+      "object": "window_chrome_surface_asha",
+      "importance": "critical"
     },
     {
-      "id": "surface_button_theme_preview_inside_taskbar_surface_list",
+      "id": "window_chrome_surface_asha_inside_window_chrome",
       "type": "layout_relation",
-      "a": "surface_button_theme_preview",
+      "a": "window_chrome_surface_asha",
+      "b": "window_chrome",
+      "relation": "inside",
+      "importance": "major"
+    },
+    {
+      "id": "window_chrome_controls_asha_inside_window_chrome_surface_asha",
+      "type": "layout_relation",
+      "a": "window_chrome_controls_asha",
+      "b": "window_chrome_surface_asha",
+      "relation": "inside",
+      "importance": "major"
+    },
+    {
+      "id": "surface_button_asha_inside_taskbar_surface_list",
+      "type": "layout_relation",
+      "a": "surface_button_asha",
       "b": "taskbar_surface_list",
       "relation": "inside",
       "importance": "major"

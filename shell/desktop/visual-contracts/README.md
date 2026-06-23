@@ -12,10 +12,14 @@ shell/desktop/visual-contracts/
 ├── fixtures/
 │   ├── command-center-smoke.html
 │   ├── empty-desktop-smoke.html
+│   ├── notifications-smoke.html
+│   ├── surfaces-smoke.html
 │   └── theme-default-smoke.html
 ├── scenes/
 │   ├── command-center.promote.template.json
 │   ├── empty-desktop.promote.template.json
+│   ├── notifications.promote.template.json
+│   ├── surfaces.promote.template.json
 │   └── theme-default.promote.template.json
 └── scripts/
     ├── collect-scene.mjs
@@ -217,6 +221,8 @@ Long-lived references should live under theme packages or this directory once th
 shell/desktop/themes/agora-default/visual-contracts/empty-desktop.contract.json
 shell/desktop/themes/agora-default/visual-contracts/theme-default.contract.json
 shell/desktop/themes/agora-default/visual-contracts/command-center-open.contract.json
+shell/desktop/themes/agora-default/visual-contracts/surfaces.contract.json
+shell/desktop/themes/agora-default/visual-contracts/notifications.contract.json
 shell/desktop/visual-contracts/references/agora-default.empty-desktop.contract.json
 ```
 

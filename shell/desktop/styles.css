@@ -86,21 +86,33 @@
     --agora-component-command-center-panel-border: rgba(124, 227, 220, 0.32);
     --agora-component-command-center-control-background: rgba(7, 17, 20, 0.80);
     --agora-component-command-center-input-background: rgba(6, 17, 18, 0.88);
+    --agora-component-command-center-suggestion-border: #D8A657;
+    --agora-component-command-center-suggestion-background: rgba(216, 166, 87, 0.10);
+    --agora-component-command-center-transcript-border: rgba(124, 227, 220, 0.52);
     --agora-component-surface-button-background: rgba(167, 187, 186, 0.11);
     --agora-component-surface-button-border: rgba(167, 187, 186, 0.16);
+    --agora-component-surface-button-minimized-opacity: 0.68;
     --agora-component-window-chrome-frame-background: rgba(6, 17, 18, 0.72);
     --agora-component-window-chrome-surface-background: rgba(16, 38, 45, 0.76);
     --agora-component-window-chrome-surface-border: rgba(124, 227, 220, 0.20);
+    --agora-component-window-chrome-surface-pending-border: rgba(216, 166, 87, 0.56);
     --agora-component-window-chrome-button-background: rgba(167, 187, 186, 0.11);
+    --agora-component-window-chrome-button-active-background: rgba(106, 215, 210, 0.16);
     --agora-component-window-chrome-button-border: rgba(167, 187, 186, 0.18);
     --agora-component-notification-background: rgba(16, 38, 45, 0.92);
     --agora-component-notification-radius: 0.88rem;
     --agora-component-notification-shadow: 0 14px 38px rgba(0, 0, 0, 0.30);
+    --agora-component-notification-info-border: rgba(106, 215, 210, 0.46);
+    --agora-component-notification-success-border: rgba(111, 211, 161, 0.52);
+    --agora-component-notification-warning-border: rgba(216, 166, 87, 0.56);
+    --agora-component-notification-danger-border: rgba(255, 107, 95, 0.52);
     --agora-component-widget-container-background: rgba(16, 38, 45, 0.58);
     --agora-component-widget-container-border: rgba(124, 227, 220, 0.18);
     --agora-component-widget-container-radius: 0.88rem;
     --agora-component-widget-container-shadow: 0 16px 42px rgba(0, 0, 0, 0.26);
     --agora-component-agent-health-dot-size: 0.7rem;
+    --agora-component-agent-health-chip-background: rgba(16, 38, 45, 0.58);
+    --agora-component-agent-health-chip-border: rgba(124, 227, 220, 0.18);
     --agora-component-clock-color: #E6F0EE;
     --agora-state-focus-border: #7CE3DC;
     --agora-state-focus-ring: 0 0 0 2px rgba(124, 227, 220, 0.28);
@@ -318,10 +330,32 @@ agora-agent-health {
     white-space: nowrap;
 }
 
+.agent-health-widget__chips,
 .agent-health-widget__dots {
     display: inline-flex;
+    flex-wrap: wrap;
     gap: var(--agora-global-space-2);
     align-items: center;
+}
+
+.agent-health-widget__chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--agora-global-space-2);
+    padding: 0.18rem var(--agora-global-space-3);
+    border: 1px solid var(--agora-component-agent-health-chip-border);
+    border-radius: var(--agora-global-radius-pill);
+    background: var(--agora-component-agent-health-chip-background);
+    color: var(--shell-muted);
+    font-size: var(--agora-global-font-size-xs);
+    font-weight: var(--agora-global-font-weight-label);
+}
+
+.agent-health-widget__label {
+    max-width: 8rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .agent-health-widget__dot,
@@ -329,20 +363,23 @@ agora-agent-health {
     width: var(--agora-component-agent-health-dot-size);
     height: var(--agora-component-agent-health-dot-size);
     border-radius: var(--agora-global-radius-pill);
-    background: var(--agora-component-taskbar-launcher-background);
+    background: var(--agora-semantic-color-accent-primary);
     box-shadow: var(--agora-state-accent-glow);
 }
 
+.agent-health-widget__chip--active .agent-health-widget__dot,
 .agent-health-widget__dot--active {
     background: var(--agora-state-success-color);
     box-shadow: var(--agora-state-success-glow);
 }
 
+.agent-health-widget__chip--idle .agent-health-widget__dot,
 .agent-health-widget__dot--idle {
     background: var(--agora-state-warning-color);
     box-shadow: var(--agora-state-warning-glow);
 }
 
+.agent-health-widget__chip--offline .agent-health-widget__dot,
 .agent-health-widget__dot--offline {
     background: var(--agora-semantic-color-danger);
     box-shadow: var(--agora-state-danger-glow);
@@ -411,8 +448,13 @@ agora-window-chrome {
     box-shadow: var(--agora-state-focus-ring);
 }
 
+.window-chrome-widget__surface--pending {
+    border-color: var(--agora-component-window-chrome-surface-pending-border);
+}
+
 .window-chrome-widget__surface--error {
-    border-color: var(--agora-semantic-color-danger);
+    border-color: var(--agora-state-error-border);
+    background: var(--agora-state-error-background);
 }
 
 .window-chrome-widget__titlebar {
@@ -458,9 +500,17 @@ agora-window-chrome {
     background: var(--agora-component-window-chrome-button-background);
     color: var(--shell-text);
     font: inherit;
-    font-size: 0.74rem;
+    font-size: var(--agora-global-font-size-xs);
     font-weight: var(--agora-global-font-weight-strong);
     cursor: pointer;
+    transition: border-color var(--agora-motion-duration-fast) var(--agora-motion-easing-standard), background var(--agora-motion-duration-fast) var(--agora-motion-easing-standard), box-shadow var(--agora-motion-duration-fast) var(--agora-motion-easing-standard);
+}
+
+.window-chrome-widget__button:hover,
+.window-chrome-widget__button:focus-visible {
+    border-color: var(--agora-state-hover-border);
+    background: var(--agora-component-window-chrome-button-active-background);
+    box-shadow: var(--agora-state-focus-ring);
 }
 
 .window-chrome-widget__button--close {
@@ -502,13 +552,20 @@ agora-taskbar {
     align-items: center;
     gap: var(--agora-global-space-3);
     overflow: hidden;
-    border: 1px solid transparent;
+    border: 1px solid var(--agora-component-surface-button-border);
     border-radius: var(--agora-semantic-radius-control);
     background: var(--agora-component-surface-button-background);
     color: var(--shell-text);
     font: inherit;
-    font-weight: 700;
+    font-weight: var(--agora-global-font-weight-strong);
     cursor: pointer;
+    transition: border-color var(--agora-motion-duration-fast) var(--agora-motion-easing-standard), background var(--agora-motion-duration-fast) var(--agora-motion-easing-standard), box-shadow var(--agora-motion-duration-fast) var(--agora-motion-easing-standard), opacity var(--agora-motion-duration-fast) var(--agora-motion-easing-standard);
+}
+
+.taskbar-widget__surface:hover,
+.taskbar-widget__surface:focus-visible {
+    border-color: var(--agora-state-hover-border);
+    background: var(--agora-state-hover-background);
 }
 
 .taskbar-widget__surface--focused {
@@ -519,6 +576,11 @@ agora-taskbar {
 .taskbar-widget__surface--pending,
 .taskbar-widget__surface--closing {
     opacity: var(--agora-state-pending-opacity);
+}
+
+.taskbar-widget__surface--minimized {
+    opacity: var(--agora-component-surface-button-minimized-opacity);
+    border-style: dashed;
 }
 
 .taskbar-widget__surface--closing {
@@ -569,10 +631,25 @@ agora-notification-center {
 .shell-notification,
 .shell-zone--bottom-right > * {
     border: 1px solid var(--shell-border);
+    border-left: 3px solid var(--agora-component-notification-info-border);
     border-radius: var(--agora-semantic-radius-panel);
     background: var(--notif-bg);
     box-shadow: var(--agora-component-notification-shadow);
     backdrop-filter: var(--agora-semantic-backdrop-panel);
+    padding: var(--agora-global-space-4) var(--agora-global-space-5);
+}
+
+.notification-center__item--success {
+    border-left-color: var(--agora-component-notification-success-border);
+}
+
+.notification-center__item--warning {
+    border-left-color: var(--agora-component-notification-warning-border);
+}
+
+.notification-center__item--error,
+.notification-center__item--danger {
+    border-left-color: var(--agora-component-notification-danger-border);
 }
 
 .notification-center__title {
@@ -580,6 +657,19 @@ agora-notification-center {
     margin-bottom: 0.25rem;
     color: var(--shell-text);
     font-size: 0.85rem;
+}
+
+.notification-center__severity {
+    display: inline-flex;
+    margin-bottom: var(--agora-global-space-2);
+    padding: 0.08rem var(--agora-global-space-2);
+    border: 1px solid var(--agora-semantic-color-border-muted);
+    border-radius: var(--agora-global-radius-pill);
+    color: var(--shell-muted);
+    font-size: var(--agora-global-font-size-xs);
+    font-weight: var(--agora-global-font-weight-label);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
 }
 
 .notification-center__message {
@@ -681,7 +771,7 @@ agora-notification-center {
     font-size: var(--agora-global-font-size-sm);
     letter-spacing: 0.12em;
     text-transform: uppercase;
-    color: var(--agora-global-color-violet-300);
+    color: var(--agora-semantic-color-accent-secondary);
 }
 
 .command-center-widget__row {
@@ -694,9 +784,15 @@ agora-notification-center {
     text-align: left;
 }
 
-.command-center-widget__row:not(:disabled):hover {
+.command-center-widget__row:not(:disabled):hover,
+.command-center-widget__row:focus-visible {
     border-color: var(--agora-state-hover-border);
     background: var(--agora-state-hover-background);
+}
+
+.command-center-widget__row[data-action="app.launch"] {
+    border-left: 3px solid var(--agora-component-command-center-suggestion-border);
+    background: var(--agora-component-command-center-suggestion-background);
 }
 
 .command-center-widget__row--disabled,
@@ -706,7 +802,7 @@ agora-notification-center {
 }
 
 .command-center-widget__turn {
-    border-left: 3px solid var(--agora-state-hover-border);
+    border-left: 3px solid var(--agora-component-command-center-transcript-border);
     padding: 7px 10px;
     background: var(--agora-semantic-color-background-panel-muted);
     border-radius: 10px;

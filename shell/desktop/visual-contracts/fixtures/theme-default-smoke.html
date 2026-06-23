@@ -1,62 +1,61 @@
 <!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Agora Observatory default theme reference</title>
-  <style>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Agora Desktop Shell default theme reference</title><style>
     :root {
       color-scheme: dark;
-      --agora-bg: #071114;
-      --agora-bg-deep: #061112;
-      --agora-bg-low: #0B1F26;
-      --agora-panel: rgba(16, 38, 45, 0.88);
-      --agora-panel-muted: rgba(16, 38, 45, 0.58);
-      --agora-border: rgba(124, 227, 220, 0.20);
-      --agora-accent: #6AD7D2;
-      --agora-accent-bright: #7CE3DC;
-      --agora-amber: #D8A657;
-      --agora-text: #E6F0EE;
-      --agora-muted: #A7BBBA;
-      --agora-danger: #FF6B5F;
+      --agora-bg: #071114; --agora-bg-deep: #061112; --agora-bg-low: #0B1F26;
+      --agora-panel: rgba(16, 38, 45, 0.88); --agora-panel-muted: rgba(16, 38, 45, 0.58);
+      --agora-border: rgba(124, 227, 220, 0.20); --agora-border-strong: rgba(124, 227, 220, 0.32);
+      --agora-accent: #6AD7D2; --agora-accent-bright: #7CE3DC; --agora-amber: #D8A657;
+      --agora-text: #E6F0EE; --agora-muted: #A7BBBA; --agora-danger: #FF6B5F; --agora-danger-text: #FFB4A8; --agora-success: #6FD3A1;
       --agora-wallpaper: radial-gradient(circle at 18% 12%, rgba(106, 215, 210, 0.16), transparent 32%), radial-gradient(circle at 84% 26%, rgba(216, 166, 87, 0.10), transparent 28%), radial-gradient(circle at 52% 74%, rgba(157, 140, 255, 0.08), transparent 30%), linear-gradient(135deg, #061112 0%, #071114 48%, #0B1F26 100%);
     }
     * { box-sizing: border-box; }
     body { margin: 0; min-height: 100vh; background: var(--agora-bg); color: var(--agora-text); font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     .desktop-shell { position: relative; width: 100vw; height: 100vh; overflow: hidden; isolation: isolate; }
     .shell-background { position: absolute; inset: 0; z-index: 0; background: var(--agora-wallpaper); }
-    .shell-grid { position: relative; z-index: 1; display: grid; grid-template-rows: 96px 1fr 72px; grid-template-columns: 280px 1fr 280px; width: 100%; height: 100%; padding: 24px; gap: 16px; }
+    .shell-grid { position: relative; z-index: 1; display: grid; grid-template-rows: 96px 1fr 72px; grid-template-columns: 320px 1fr 320px; width: 100%; height: 100%; padding: 24px; gap: 16px; }
     .shell-zone { border: 1px solid var(--agora-border); border-radius: 18px; background: var(--agora-panel); box-shadow: 0 18px 48px rgba(0,0,0,0.34); backdrop-filter: blur(14px); }
-    .pos-top-left { grid-column: 1; grid-row: 1; padding: 18px; }
+    .pos-top-left { grid-column: 1; grid-row: 1; padding: 16px; }
     .pos-top-right { grid-column: 3; grid-row: 1; padding: 18px; text-align: right; }
-    .pos-center { grid-column: 2; grid-row: 2; display: grid; place-items: center; color: var(--agora-muted); }
-    .pos-bottom-right { grid-column: 3; grid-row: 2; align-self: end; min-height: 150px; padding: 18px; }
+    .pos-center { grid-column: 2; grid-row: 2; display: grid; place-items: center; color: var(--agora-muted); padding: 18px; }
+    .pos-bottom-right { grid-column: 3; grid-row: 2; align-self: end; min-height: 150px; padding: 16px; }
     .pos-bottom { grid-column: 1 / -1; grid-row: 3; display: flex; align-items: center; gap: 14px; padding: 0 18px; }
-    .command-button { border: 0; border-radius: 999px; padding: 12px 18px; background: linear-gradient(135deg, var(--agora-accent), var(--agora-amber)); color: var(--agora-bg-deep); font-weight: 760; }
-    .surface-list { display: flex; gap: 10px; }
-    .surface-button { border: 1px solid rgba(167, 187, 186, 0.16); border-radius: 12px; padding: 10px 14px; background: rgba(167, 187, 186, 0.11); color: var(--agora-text); }
+    .command-button { border: 0; border-radius: 12px; min-width: 42px; min-height: 42px; padding: 10px 16px; background: linear-gradient(135deg, var(--agora-accent), var(--agora-amber)); color: var(--agora-bg-deep); font-weight: 760; }
+    .surface-list { display: flex; gap: 10px; flex: 1; min-width: 0; min-height: 42px; align-items: center; }
+    .surface-button { border: 1px solid rgba(167, 187, 186, 0.16); border-radius: 12px; padding: 10px 14px; background: rgba(167, 187, 186, 0.11); color: var(--agora-text); font-weight: 760; }
+    .surface-button.focused { border-color: var(--agora-accent-bright); box-shadow: 0 0 0 2px rgba(124, 227, 220, 0.28); }
     .label { display: block; color: var(--agora-muted); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; }
     .clock { font-size: 24px; font-weight: 650; }
-    .status-rail { display: inline-flex; gap: 8px; margin-top: 10px; align-items: center; color: var(--agora-muted); }
-    .dot { width: 11px; height: 11px; border-radius: 999px; background: var(--agora-accent); box-shadow: 0 0 18px rgba(106, 215, 210, 0.50); }
-
-  </style>
-</head>
-<body>
-  <main class="desktop-shell" data-visual-id="agora_desktop_shell" data-testid="agora_desktop_shell" data-visual-role="desktop_shell_root" aria-label="Agora Desktop Shell empty reference scene">
-    <section class="shell-background" aria-hidden="true" data-visual-id="shell_background" data-testid="shell_background" data-visual-role="background"></section>
-    <section class="shell-grid" aria-label="Agora desktop shell" data-visual-id="shell_grid" data-testid="shell_grid" data-visual-role="layout_grid">
-      <aside class="shell-zone pos-top-left" data-visual-id="agent_health" data-testid="agent_health" data-visual-role="agent_health"><span class="label">Agents</span> Runner ready <span class="status-rail"><span class="dot"></span>ready</span></aside>
-      <aside class="shell-zone pos-top-right" data-visual-id="clock" data-testid="clock" data-visual-role="clock"><span class="label">Time</span><span class="clock">12:00</span></aside>
-      <section class="shell-zone pos-center" data-visual-id="zone_center" data-testid="zone_center" data-visual-role="layout_zone">Agora Observatory default theme — default theme package loaded</section>
-      <aside class="shell-zone pos-bottom-right" data-visual-id="notification_stack" data-testid="notification_stack" data-visual-role="notification_stack"><span class="label">Notifications</span> Default theme ready</aside>
-      <nav class="shell-zone pos-bottom" aria-label="Desktop taskbar" data-visual-id="taskbar" data-testid="taskbar" data-visual-role="taskbar">
-        <button class="command-button" data-visual-id="taskbar_command_center_button" data-testid="taskbar_command_center_button" data-visual-role="command_center_entrypoint">⌘ Command Center</button>
-        <div class="surface-list" data-visual-id="taskbar_surface_list" data-testid="taskbar_surface_list" data-visual-role="surface_list">
-          <button class="surface-button" data-visual-id="surface_button_smoke_terminal" data-testid="surface_button_smoke_terminal" data-visual-role="surface_button">Terminal</button>
-        </div>
-      </nav>
-    </section>
-  </main>
-</body>
-</html>
+    .status-rail, .agent-chip { display: inline-flex; gap: 8px; margin-top: 8px; align-items: center; color: var(--agora-muted); }
+    .agent-chip { border: 1px solid rgba(124, 227, 220, 0.18); border-radius: 999px; padding: 3px 8px; background: rgba(16, 38, 45, 0.58); }
+    .dot { width: 11px; height: 11px; border-radius: 999px; background: var(--agora-success); box-shadow: 0 0 14px rgba(111, 211, 161, 0.52); }
+    .empty-state { border: 1px dashed rgba(167, 187, 186, 0.18); border-radius: 16px; padding: 24px 32px; background: rgba(16,38,45,0.32); }
+    .notification { border: 1px solid var(--agora-border); border-left: 3px solid var(--agora-accent); border-radius: 14px; padding: 12px 14px; background: rgba(16, 38, 45, 0.92); box-shadow: 0 14px 38px rgba(0, 0, 0, 0.30); }
+    .notification.warning { border-left-color: var(--agora-amber); } .notification.success { border-left-color: var(--agora-success); } .notification.error { border-left-color: var(--agora-danger); }
+    .severity { display: inline-flex; margin-top: 6px; padding: 2px 7px; border: 1px solid rgba(167, 187, 186, 0.14); border-radius: 999px; color: var(--agora-muted); font-size: 11px; text-transform: uppercase; }
+    .window-chrome { width: min(760px, 100%); border: 1px solid var(--agora-border-strong); border-radius: 18px; background: rgba(6,17,18,0.72); box-shadow: 0 28px 82px rgba(0,0,0,0.48), 0 0 42px rgba(106,215,210,0.12); overflow: hidden; }
+    .window-header { display: flex; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid rgba(167, 187, 186, 0.14); }
+    .surface-card { margin: 14px; border: 1px solid rgba(124,227,220,0.20); border-radius: 14px; background: rgba(16,38,45,0.76); }
+    .surface-card.focused { border-color: var(--agora-accent-bright); box-shadow: 0 0 0 2px rgba(124, 227, 220, 0.28); }
+    .surface-titlebar { display: flex; justify-content: space-between; gap: 12px; padding: 12px; }
+    .controls { display: flex; gap: 6px; flex-wrap: wrap; justify-content: end; }
+    .control { min-height: 30px; border: 1px solid rgba(167,187,186,0.18); border-radius: 8px; background: rgba(167,187,186,0.11); color: var(--agora-text); font-weight: 760; }
+    .control.close { background: rgba(255,107,95,0.16); color: var(--agora-danger-text); }
+    .status { padding: 0 12px 12px; color: var(--agora-muted); font-size: 12px; }
+    .command-center-scrim { position: absolute; inset: 0; z-index: 5; display: grid; place-items: center; background: rgba(6, 17, 18, 0.46); backdrop-filter: blur(7px); }
+    .command-center-panel { width: min(760px, calc(100vw - 96px)); min-height: 520px; border: 1px solid var(--agora-border-strong); border-radius: 22px; background: linear-gradient(145deg, rgba(16, 38, 45, 0.96), rgba(8, 26, 31, 0.94)); box-shadow: 0 28px 82px rgba(0, 0, 0, 0.48), 0 0 42px rgba(106, 215, 210, 0.12); padding: 22px; }
+    .command-center-input { width: 100%; min-height: 48px; border: 1px solid var(--agora-accent-bright); border-radius: 14px; background: rgba(6, 17, 18, 0.88); color: var(--agora-text); padding: 13px 16px; box-shadow: 0 0 0 2px rgba(124, 227, 220, 0.28); }
+    .command-center-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 18px; }
+    .command-card { border: 1px solid rgba(167, 187, 186, 0.14); border-radius: 16px; background: rgba(7, 17, 20, 0.80); padding: 16px; min-height: 270px; }
+    .suggestion { border-left: 3px solid var(--agora-amber); padding: 10px 12px; margin-top: 10px; background: rgba(216, 166, 87, 0.10); border-radius: 10px; }
+    .transcript-line { margin-top: 10px; color: var(--agora-muted); }
+</style></head>
+<body><main class="desktop-shell" data-visual-id="agora_desktop_shell" data-testid="agora_desktop_shell" data-visual-role="desktop_shell_root" aria-label="Agora Desktop Shell reference scene">
+<section class="shell-background" aria-hidden="true" data-visual-id="shell_background" data-testid="shell_background" data-visual-role="background"></section>
+<section class="shell-grid" aria-label="Agora desktop shell" data-visual-id="shell_grid" data-testid="shell_grid" data-visual-role="layout_grid">
+<aside class="shell-zone pos-top-left" data-visual-id="agent_health" data-testid="agent_health" data-visual-role="agent_health"><span class="label">Agents</span><span class="agent-chip" data-visual-id="agent_status_runner" data-testid="agent_status_runner" data-visual-role="status_indicator"><span class="dot"></span>runner ready</span></aside>
+<aside class="shell-zone pos-top-right" data-visual-id="clock" data-testid="clock" data-visual-role="clock"><span class="label">Time</span><span class="clock">12:00</span></aside>
+<section class="shell-zone pos-center" data-visual-id="zone_center" data-testid="zone_center" data-visual-role="layout_zone"><div class="empty-state" data-visual-id="theme_default_panel" data-testid="theme_default_panel" data-visual-role="theme_default_panel">Agora Observatory default theme loaded through manifest tokens</div></section>
+<aside class="shell-zone pos-bottom-right" data-visual-id="notification_stack" data-testid="notification_stack" data-visual-role="notification_stack"><span class="label">Notifications</span><div class="notification success" data-visual-id="notification_theme_loaded" data-testid="notification_theme_loaded" data-visual-role="notification">Default theme loaded<span class="severity">success</span></div></aside>
+<nav class="shell-zone pos-bottom" aria-label="Desktop taskbar" data-visual-id="taskbar" data-testid="taskbar" data-visual-role="taskbar"><button class="command-button" data-visual-id="taskbar_command_center_button" data-testid="taskbar_command_center_button" data-visual-role="command_center_entrypoint">⌘ Command Center</button><div class="surface-list" data-visual-id="taskbar_surface_list" data-testid="taskbar_surface_list" data-visual-role="surface_list"><button class="surface-button focused" data-visual-id="surface_button_theme_preview" data-testid="surface_button_theme_preview" data-visual-role="surface_button">Theme preview</button></div><span class="label">Agora</span></nav>
+</section></main></body></html>

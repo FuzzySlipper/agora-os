@@ -13,12 +13,19 @@
       "surface_button",
       "clock",
       "agent_health",
+      "status_indicator",
       "notification_stack",
+      "notification",
+      "window_chrome",
+      "surface_chrome",
+      "surface_controls",
       "command_center",
       "command_center_panel",
       "command_input",
       "command_suggestions",
-      "conversation_transcript"
+      "conversation_transcript",
+      "empty_state",
+      "theme_default_panel"
     ]
   },
   "objects": [
@@ -75,11 +82,17 @@
       "target_id": "notification_stack",
       "domain_role": "notification_stack",
       "importance": "major"
+    },
+    {
+      "source_id": "empty_surface_state",
+      "target_id": "empty_surface_state",
+      "domain_role": "empty_state",
+      "importance": "major"
     }
   ],
   "constraints": [
     {
-      "id": "root_exists",
+      "id": "agora_desktop_shell_exists",
       "type": "object_exists",
       "object": "agora_desktop_shell",
       "importance": "critical"
@@ -91,19 +104,19 @@
       "importance": "critical"
     },
     {
-      "id": "command_entrypoint_exists",
+      "id": "taskbar_command_center_button_exists",
       "type": "object_exists",
       "object": "taskbar_command_center_button",
       "importance": "critical"
     },
     {
-      "id": "background_exists",
+      "id": "shell_background_exists",
       "type": "object_exists",
       "object": "shell_background",
       "importance": "major"
     },
     {
-      "id": "taskbar_inside_root",
+      "id": "taskbar_inside_agora_desktop_shell",
       "type": "layout_relation",
       "a": "taskbar",
       "b": "agora_desktop_shell",
@@ -111,11 +124,17 @@
       "importance": "major"
     },
     {
-      "id": "surface_list_inside_taskbar",
+      "id": "taskbar_surface_list_inside_taskbar",
       "type": "layout_relation",
       "a": "taskbar_surface_list",
       "b": "taskbar",
       "relation": "inside",
+      "importance": "major"
+    },
+    {
+      "id": "empty_surface_state_exists",
+      "type": "object_exists",
+      "object": "empty_surface_state",
       "importance": "major"
     }
   ]

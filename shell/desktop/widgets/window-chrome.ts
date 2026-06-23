@@ -188,6 +188,9 @@ export class WindowChromeWidget extends HTMLElement implements ShellWidget {
         if (surface.focused) {
             row.classList.add("window-chrome-widget__surface--focused");
         }
+        if (status?.pending || surface.status === "closing") {
+            row.classList.add("window-chrome-widget__surface--pending");
+        }
         if (status?.error || surface.action_error) {
             row.classList.add("window-chrome-widget__surface--error");
         }

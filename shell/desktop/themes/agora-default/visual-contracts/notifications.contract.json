@@ -1,7 +1,7 @@
 {
   "schema": "layered-visual-contract/v0.1",
   "scene": {
-    "id": "agora_desktop_shell_theme_default",
+    "id": "agora_desktop_shell_notifications",
     "type": "web_ui",
     "viewport": {
       "width_px": 1920,
@@ -59,15 +59,17 @@
         "agent_status_runner",
         "agora_desktop_shell",
         "clock",
+        "notification_blocked",
+        "notification_pending",
+        "notification_ready",
         "notification_stack",
-        "notification_theme_loaded",
         "shell_background",
-        "surface_button_theme_preview",
+        "surface_button_shell",
         "taskbar",
         "taskbar_command_center_button",
         "taskbar_surface_list",
-        "theme_default_panel",
-        "zone_center"
+        "zone_center",
+        "zone_center_notifications"
       ]
     },
     {
@@ -313,7 +315,7 @@
       "role": "layout_zone",
       "parent": "shell_grid",
       "layer": "z_0",
-      "text": "Agora Observatory default theme loaded through manifest tokens",
+      "text": "Notification severity rails include text labels",
       "bounds": {
         "space": "viewport",
         "x": 0.1875,
@@ -328,7 +330,7 @@
         }
       },
       "children": [
-        "theme_default_panel"
+        "zone_center_notifications"
       ],
       "importance": "major",
       "confidence": 0.98,
@@ -346,30 +348,29 @@
       }
     },
     {
-      "id": "theme_default_panel",
+      "id": "zone_center_notifications",
       "kind": "panel",
-      "role": "theme_default_panel",
-      "domain_role": "theme_default_panel",
+      "role": "layout_zone",
       "parent": "zone_center",
       "layer": "z_0",
-      "text": "Agora Observatory default theme loaded through manifest tokens",
+      "text": "Notification severity rails include text labels",
       "bounds": {
         "space": "viewport",
-        "x": 0.353125,
+        "x": 0.3984375,
         "y": 0.4777777777777778,
-        "w": 0.29375,
+        "w": 0.20364583333333333,
         "h": 0.06666666666666667,
         "px": {
-          "x": 678,
+          "x": 765,
           "y": 516,
-          "w": 564,
+          "w": 391,
           "h": 72
         }
       },
       "importance": "major",
       "confidence": 0.98,
       "evidence_refs": [
-        "promotion:theme_default_panel"
+        "promotion:zone_center_notifications"
       ],
       "style": {
         "background": "rgba(16, 38, 45, 0.32)",
@@ -388,22 +389,24 @@
       "domain_role": "notification_stack",
       "parent": "shell_grid",
       "layer": "z_0",
-      "text": "NotificationsDefault theme loadedsuccess",
+      "text": "NotificationsTheme readysuccessReview pendingwarningAction denied: surface staleerror",
       "bounds": {
         "space": "viewport",
         "x": 0.8208333333333333,
-        "y": 0.7574074074074074,
+        "y": 0.6814814814814815,
         "w": 0.16666666666666666,
-        "h": 0.1388888888888889,
+        "h": 0.21481481481481482,
         "px": {
           "x": 1576,
-          "y": 818,
+          "y": 736,
           "w": 320,
-          "h": 150
+          "h": 232
         }
       },
       "children": [
-        "notification_theme_loaded"
+        "notification_ready",
+        "notification_pending",
+        "notification_blocked"
       ],
       "importance": "major",
       "confidence": 0.98,
@@ -421,22 +424,22 @@
       }
     },
     {
-      "id": "notification_theme_loaded",
+      "id": "notification_ready",
       "kind": "panel",
       "role": "notification",
       "domain_role": "notification",
       "parent": "notification_stack",
       "layer": "z_0",
-      "text": "Default theme loadedsuccess",
+      "text": "Theme readysuccess",
       "bounds": {
         "space": "viewport",
         "x": 0.8296875,
-        "y": 0.7888888888888889,
+        "y": 0.7129629629629629,
         "w": 0.14895833333333333,
         "h": 0.049074074074074076,
         "px": {
           "x": 1593,
-          "y": 852,
+          "y": 770,
           "w": 286,
           "h": 53
         }
@@ -444,7 +447,79 @@
       "importance": "major",
       "confidence": 0.98,
       "evidence_refs": [
-        "promotion:notification_theme_loaded"
+        "promotion:notification_ready"
+      ],
+      "style": {
+        "background": "rgba(16, 38, 45, 0.92)",
+        "color": "rgb(230, 240, 238)",
+        "display": "block",
+        "font_size_px": "16",
+        "font_weight": "400",
+        "opacity": "1.00",
+        "position": "static"
+      }
+    },
+    {
+      "id": "notification_pending",
+      "kind": "panel",
+      "role": "notification",
+      "domain_role": "notification",
+      "parent": "notification_stack",
+      "layer": "z_0",
+      "text": "Review pendingwarning",
+      "bounds": {
+        "space": "viewport",
+        "x": 0.8296875,
+        "y": 0.7620370370370371,
+        "w": 0.14895833333333333,
+        "h": 0.049074074074074076,
+        "px": {
+          "x": 1593,
+          "y": 823,
+          "w": 286,
+          "h": 53
+        }
+      },
+      "importance": "major",
+      "confidence": 0.98,
+      "evidence_refs": [
+        "promotion:notification_pending"
+      ],
+      "style": {
+        "background": "rgba(16, 38, 45, 0.92)",
+        "color": "rgb(230, 240, 238)",
+        "display": "block",
+        "font_size_px": "16",
+        "font_weight": "400",
+        "opacity": "1.00",
+        "position": "static"
+      }
+    },
+    {
+      "id": "notification_blocked",
+      "kind": "panel",
+      "role": "notification",
+      "domain_role": "notification",
+      "parent": "notification_stack",
+      "layer": "z_0",
+      "text": "Action denied: surface staleerror",
+      "bounds": {
+        "space": "viewport",
+        "x": 0.8296875,
+        "y": 0.8111111111111111,
+        "w": 0.14895833333333333,
+        "h": 0.06944444444444445,
+        "px": {
+          "x": 1593,
+          "y": 876,
+          "w": 286,
+          "h": 75
+        }
+      },
+      "importance": "major",
+      "confidence": 0.98,
+      "evidence_refs": [
+        "promotion:notification_blocked"
       ],
       "style": {
         "background": "rgba(16, 38, 45, 0.92)",
@@ -539,7 +614,7 @@
       "domain_role": "surface_list",
       "parent": "taskbar",
       "layer": "z_0",
-      "text": "Theme preview",
+      "text": "Shell",
       "bounds": {
         "space": "viewport",
         "x": 0.11302083333333333,
@@ -554,7 +629,7 @@
         }
       },
       "children": [
-        "surface_button_theme_preview"
+        "surface_button_shell"
       ],
       "importance": "major",
       "confidence": 0.98,
@@ -572,30 +647,30 @@
       }
     },
     {
-      "id": "surface_button_theme_preview",
+      "id": "surface_button_shell",
       "kind": "button",
       "role": "surface_button",
       "domain_role": "surface_button",
       "parent": "taskbar_surface_list",
       "layer": "z_0",
-      "text": "Theme preview",
+      "text": "Shell",
       "bounds": {
         "space": "viewport",
         "x": 0.11302083333333333,
         "y": 0.9277777777777778,
-        "w": 0.065625,
+        "w": 0.03229166666666667,
         "h": 0.03425925925925926,
         "px": {
           "x": 217,
           "y": 1002,
-          "w": 126,
+          "w": 62,
           "h": 37
         }
       },
       "importance": "major",
       "confidence": 0.98,
       "evidence_refs": [
-        "promotion:surface_button_theme_preview"
+        "promotion:surface_button_shell"
       ],
       "style": {
         "background": "rgba(167, 187, 186, 0.11)",
@@ -731,14 +806,14 @@
     },
     {
       "type": "inside",
-      "a": "theme_default_panel",
+      "a": "zone_center_notifications",
       "b": "agora_desktop_shell",
       "confidence": 0.9
     },
     {
       "type": "contains",
       "a": "agora_desktop_shell",
-      "b": "theme_default_panel",
+      "b": "zone_center_notifications",
       "confidence": 0.9
     },
     {
@@ -755,14 +830,38 @@
     },
     {
       "type": "inside",
-      "a": "notification_theme_loaded",
+      "a": "notification_ready",
       "b": "agora_desktop_shell",
       "confidence": 0.9
     },
     {
       "type": "contains",
       "a": "agora_desktop_shell",
-      "b": "notification_theme_loaded",
+      "b": "notification_ready",
+      "confidence": 0.9
+    },
+    {
+      "type": "inside",
+      "a": "notification_pending",
+      "b": "agora_desktop_shell",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "agora_desktop_shell",
+      "b": "notification_pending",
+      "confidence": 0.9
+    },
+    {
+      "type": "inside",
+      "a": "notification_blocked",
+      "b": "agora_desktop_shell",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "agora_desktop_shell",
+      "b": "notification_blocked",
       "confidence": 0.9
     },
     {
@@ -811,14 +910,14 @@
     },
     {
       "type": "inside",
-      "a": "surface_button_theme_preview",
+      "a": "surface_button_shell",
       "b": "agora_desktop_shell",
       "confidence": 0.9
     },
     {
       "type": "contains",
       "a": "agora_desktop_shell",
-      "b": "surface_button_theme_preview",
+      "b": "surface_button_shell",
       "confidence": 0.9
     },
     {
@@ -911,14 +1010,14 @@
     },
     {
       "type": "inside",
-      "a": "theme_default_panel",
+      "a": "zone_center_notifications",
       "b": "shell_background",
       "confidence": 0.9
     },
     {
       "type": "contains",
       "a": "shell_background",
-      "b": "theme_default_panel",
+      "b": "zone_center_notifications",
       "confidence": 0.9
     },
     {
@@ -935,14 +1034,38 @@
     },
     {
       "type": "inside",
-      "a": "notification_theme_loaded",
+      "a": "notification_ready",
       "b": "shell_background",
       "confidence": 0.9
     },
     {
       "type": "contains",
       "a": "shell_background",
-      "b": "notification_theme_loaded",
+      "b": "notification_ready",
+      "confidence": 0.9
+    },
+    {
+      "type": "inside",
+      "a": "notification_pending",
+      "b": "shell_background",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "shell_background",
+      "b": "notification_pending",
+      "confidence": 0.9
+    },
+    {
+      "type": "inside",
+      "a": "notification_blocked",
+      "b": "shell_background",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "shell_background",
+      "b": "notification_blocked",
       "confidence": 0.9
     },
     {
@@ -991,14 +1114,14 @@
     },
     {
       "type": "inside",
-      "a": "surface_button_theme_preview",
+      "a": "surface_button_shell",
       "b": "shell_background",
       "confidence": 0.9
     },
     {
       "type": "contains",
       "a": "shell_background",
-      "b": "surface_button_theme_preview",
+      "b": "surface_button_shell",
       "confidence": 0.9
     },
     {
@@ -1059,14 +1182,14 @@
     },
     {
       "type": "inside",
-      "a": "theme_default_panel",
+      "a": "zone_center_notifications",
       "b": "shell_grid",
       "confidence": 0.9
     },
     {
       "type": "contains",
       "a": "shell_grid",
-      "b": "theme_default_panel",
+      "b": "zone_center_notifications",
       "confidence": 0.9
     },
     {
@@ -1083,14 +1206,38 @@
     },
     {
       "type": "inside",
-      "a": "notification_theme_loaded",
+      "a": "notification_ready",
       "b": "shell_grid",
       "confidence": 0.9
     },
     {
       "type": "contains",
       "a": "shell_grid",
-      "b": "notification_theme_loaded",
+      "b": "notification_ready",
+      "confidence": 0.9
+    },
+    {
+      "type": "inside",
+      "a": "notification_pending",
+      "b": "shell_grid",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "shell_grid",
+      "b": "notification_pending",
+      "confidence": 0.9
+    },
+    {
+      "type": "inside",
+      "a": "notification_blocked",
+      "b": "shell_grid",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "shell_grid",
+      "b": "notification_blocked",
       "confidence": 0.9
     },
     {
@@ -1139,14 +1286,14 @@
     },
     {
       "type": "inside",
-      "a": "surface_button_theme_preview",
+      "a": "surface_button_shell",
       "b": "shell_grid",
       "confidence": 0.9
     },
     {
       "type": "contains",
       "a": "shell_grid",
-      "b": "surface_button_theme_preview",
+      "b": "surface_button_shell",
       "confidence": 0.9
     },
     {
@@ -1207,26 +1354,26 @@
     },
     {
       "type": "right_of",
-      "a": "theme_default_panel",
+      "a": "zone_center_notifications",
       "b": "agent_health",
       "confidence": 0.84
     },
     {
       "type": "left_of",
       "a": "agent_health",
-      "b": "theme_default_panel",
+      "b": "zone_center_notifications",
       "confidence": 0.84
     },
     {
       "type": "below",
-      "a": "theme_default_panel",
+      "a": "zone_center_notifications",
       "b": "agent_health",
       "confidence": 0.84
     },
     {
       "type": "above",
       "a": "agent_health",
-      "b": "theme_default_panel",
+      "b": "zone_center_notifications",
       "confidence": 0.84
     },
     {
@@ -1255,26 +1402,74 @@
     },
     {
       "type": "right_of",
-      "a": "notification_theme_loaded",
+      "a": "notification_ready",
       "b": "agent_health",
       "confidence": 0.84
     },
     {
       "type": "left_of",
       "a": "agent_health",
-      "b": "notification_theme_loaded",
+      "b": "notification_ready",
       "confidence": 0.84
     },
     {
       "type": "below",
-      "a": "notification_theme_loaded",
+      "a": "notification_ready",
       "b": "agent_health",
       "confidence": 0.84
     },
     {
       "type": "above",
       "a": "agent_health",
-      "b": "notification_theme_loaded",
+      "b": "notification_ready",
+      "confidence": 0.84
+    },
+    {
+      "type": "right_of",
+      "a": "notification_pending",
+      "b": "agent_health",
+      "confidence": 0.84
+    },
+    {
+      "type": "left_of",
+      "a": "agent_health",
+      "b": "notification_pending",
+      "confidence": 0.84
+    },
+    {
+      "type": "below",
+      "a": "notification_pending",
+      "b": "agent_health",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "agent_health",
+      "b": "notification_pending",
+      "confidence": 0.84
+    },
+    {
+      "type": "right_of",
+      "a": "notification_blocked",
+      "b": "agent_health",
+      "confidence": 0.84
+    },
+    {
+      "type": "left_of",
+      "a": "agent_health",
+      "b": "notification_blocked",
+      "confidence": 0.84
+    },
+    {
+      "type": "below",
+      "a": "notification_blocked",
+      "b": "agent_health",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "agent_health",
+      "b": "notification_blocked",
       "confidence": 0.84
     },
     {
@@ -1331,14 +1526,14 @@
     },
     {
       "type": "below",
-      "a": "surface_button_theme_preview",
+      "a": "surface_button_shell",
       "b": "agent_health",
       "confidence": 0.84
     },
     {
       "type": "above",
       "a": "agent_health",
-      "b": "surface_button_theme_preview",
+      "b": "surface_button_shell",
       "confidence": 0.84
     },
     {
@@ -1379,26 +1574,26 @@
     },
     {
       "type": "right_of",
-      "a": "theme_default_panel",
+      "a": "zone_center_notifications",
       "b": "agent_status_runner",
       "confidence": 0.84
     },
     {
       "type": "left_of",
       "a": "agent_status_runner",
-      "b": "theme_default_panel",
+      "b": "zone_center_notifications",
       "confidence": 0.84
     },
     {
       "type": "below",
-      "a": "theme_default_panel",
+      "a": "zone_center_notifications",
       "b": "agent_status_runner",
       "confidence": 0.84
     },
     {
       "type": "above",
       "a": "agent_status_runner",
-      "b": "theme_default_panel",
+      "b": "zone_center_notifications",
       "confidence": 0.84
     },
     {
@@ -1427,26 +1622,74 @@
     },
     {
       "type": "right_of",
-      "a": "notification_theme_loaded",
+      "a": "notification_ready",
       "b": "agent_status_runner",
       "confidence": 0.84
     },
     {
       "type": "left_of",
       "a": "agent_status_runner",
-      "b": "notification_theme_loaded",
+      "b": "notification_ready",
       "confidence": 0.84
     },
     {
       "type": "below",
-      "a": "notification_theme_loaded",
+      "a": "notification_ready",
       "b": "agent_status_runner",
       "confidence": 0.84
     },
     {
       "type": "above",
       "a": "agent_status_runner",
-      "b": "notification_theme_loaded",
+      "b": "notification_ready",
+      "confidence": 0.84
+    },
+    {
+      "type": "right_of",
+      "a": "notification_pending",
+      "b": "agent_status_runner",
+      "confidence": 0.84
+    },
+    {
+      "type": "left_of",
+      "a": "agent_status_runner",
+      "b": "notification_pending",
+      "confidence": 0.84
+    },
+    {
+      "type": "below",
+      "a": "notification_pending",
+      "b": "agent_status_runner",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "agent_status_runner",
+      "b": "notification_pending",
+      "confidence": 0.84
+    },
+    {
+      "type": "right_of",
+      "a": "notification_blocked",
+      "b": "agent_status_runner",
+      "confidence": 0.84
+    },
+    {
+      "type": "left_of",
+      "a": "agent_status_runner",
+      "b": "notification_blocked",
+      "confidence": 0.84
+    },
+    {
+      "type": "below",
+      "a": "notification_blocked",
+      "b": "agent_status_runner",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "agent_status_runner",
+      "b": "notification_blocked",
       "confidence": 0.84
     },
     {
@@ -1515,26 +1758,26 @@
     },
     {
       "type": "right_of",
-      "a": "surface_button_theme_preview",
+      "a": "surface_button_shell",
       "b": "agent_status_runner",
       "confidence": 0.84
     },
     {
       "type": "left_of",
       "a": "agent_status_runner",
-      "b": "surface_button_theme_preview",
+      "b": "surface_button_shell",
       "confidence": 0.84
     },
     {
       "type": "below",
-      "a": "surface_button_theme_preview",
+      "a": "surface_button_shell",
       "b": "agent_status_runner",
       "confidence": 0.84
     },
     {
       "type": "above",
       "a": "agent_status_runner",
-      "b": "surface_button_theme_preview",
+      "b": "surface_button_shell",
       "confidence": 0.84
     },
     {
@@ -1564,25 +1807,25 @@
     {
       "type": "right_of",
       "a": "clock",
-      "b": "theme_default_panel",
+      "b": "zone_center_notifications",
       "confidence": 0.84
     },
     {
       "type": "left_of",
-      "a": "theme_default_panel",
+      "a": "zone_center_notifications",
       "b": "clock",
       "confidence": 0.84
     },
     {
       "type": "below",
-      "a": "theme_default_panel",
+      "a": "zone_center_notifications",
       "b": "clock",
       "confidence": 0.84
     },
     {
       "type": "above",
       "a": "clock",
-      "b": "theme_default_panel",
+      "b": "zone_center_notifications",
       "confidence": 0.84
     },
     {
@@ -1607,21 +1850,61 @@
     },
     {
       "type": "below",
-      "a": "notification_theme_loaded",
+      "a": "notification_ready",
       "b": "clock",
       "confidence": 0.84
     },
     {
       "type": "above",
       "a": "clock",
-      "b": "notification_theme_loaded",
+      "b": "notification_ready",
       "confidence": 0.84
     },
     {
       "type": "aligned_left",
       "items": [
         "clock",
-        "notification_theme_loaded"
+        "notification_ready"
+      ],
+      "confidence": 0.82
+    },
+    {
+      "type": "below",
+      "a": "notification_pending",
+      "b": "clock",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "clock",
+      "b": "notification_pending",
+      "confidence": 0.84
+    },
+    {
+      "type": "aligned_left",
+      "items": [
+        "clock",
+        "notification_pending"
+      ],
+      "confidence": 0.82
+    },
+    {
+      "type": "below",
+      "a": "notification_blocked",
+      "b": "clock",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "clock",
+      "b": "notification_blocked",
+      "confidence": 0.84
+    },
+    {
+      "type": "aligned_left",
+      "items": [
+        "clock",
+        "notification_blocked"
       ],
       "confidence": 0.82
     },
@@ -1676,37 +1959,37 @@
     {
       "type": "right_of",
       "a": "clock",
-      "b": "surface_button_theme_preview",
+      "b": "surface_button_shell",
       "confidence": 0.84
     },
     {
       "type": "left_of",
-      "a": "surface_button_theme_preview",
+      "a": "surface_button_shell",
       "b": "clock",
       "confidence": 0.84
     },
     {
       "type": "below",
-      "a": "surface_button_theme_preview",
+      "a": "surface_button_shell",
       "b": "clock",
       "confidence": 0.84
     },
     {
       "type": "above",
       "a": "clock",
-      "b": "surface_button_theme_preview",
+      "b": "surface_button_shell",
       "confidence": 0.84
     },
     {
       "type": "inside",
-      "a": "theme_default_panel",
+      "a": "zone_center_notifications",
       "b": "zone_center",
       "confidence": 0.9
     },
     {
       "type": "contains",
       "a": "zone_center",
-      "b": "theme_default_panel",
+      "b": "zone_center_notifications",
       "confidence": 0.9
     },
     {
@@ -1723,14 +2006,38 @@
     },
     {
       "type": "right_of",
-      "a": "notification_theme_loaded",
+      "a": "notification_ready",
       "b": "zone_center",
       "confidence": 0.84
     },
     {
       "type": "left_of",
       "a": "zone_center",
-      "b": "notification_theme_loaded",
+      "b": "notification_ready",
+      "confidence": 0.84
+    },
+    {
+      "type": "right_of",
+      "a": "notification_pending",
+      "b": "zone_center",
+      "confidence": 0.84
+    },
+    {
+      "type": "left_of",
+      "a": "zone_center",
+      "b": "notification_pending",
+      "confidence": 0.84
+    },
+    {
+      "type": "right_of",
+      "a": "notification_blocked",
+      "b": "zone_center",
+      "confidence": 0.84
+    },
+    {
+      "type": "left_of",
+      "a": "zone_center",
+      "b": "notification_blocked",
       "confidence": 0.84
     },
     {
@@ -1784,164 +2091,252 @@
     {
       "type": "right_of",
       "a": "zone_center",
-      "b": "surface_button_theme_preview",
+      "b": "surface_button_shell",
       "confidence": 0.84
     },
     {
       "type": "left_of",
-      "a": "surface_button_theme_preview",
+      "a": "surface_button_shell",
       "b": "zone_center",
       "confidence": 0.84
     },
     {
       "type": "below",
-      "a": "surface_button_theme_preview",
+      "a": "surface_button_shell",
       "b": "zone_center",
       "confidence": 0.84
     },
     {
       "type": "above",
       "a": "zone_center",
-      "b": "surface_button_theme_preview",
+      "b": "surface_button_shell",
       "confidence": 0.84
     },
     {
       "type": "right_of",
       "a": "notification_stack",
-      "b": "theme_default_panel",
+      "b": "zone_center_notifications",
       "confidence": 0.84
     },
     {
       "type": "left_of",
-      "a": "theme_default_panel",
+      "a": "zone_center_notifications",
       "b": "notification_stack",
       "confidence": 0.84
     },
     {
       "type": "below",
       "a": "notification_stack",
-      "b": "theme_default_panel",
+      "b": "zone_center_notifications",
       "confidence": 0.84
     },
     {
       "type": "above",
-      "a": "theme_default_panel",
+      "a": "zone_center_notifications",
       "b": "notification_stack",
       "confidence": 0.84
     },
     {
       "type": "right_of",
-      "a": "notification_theme_loaded",
-      "b": "theme_default_panel",
+      "a": "notification_ready",
+      "b": "zone_center_notifications",
       "confidence": 0.84
     },
     {
       "type": "left_of",
-      "a": "theme_default_panel",
-      "b": "notification_theme_loaded",
+      "a": "zone_center_notifications",
+      "b": "notification_ready",
       "confidence": 0.84
     },
     {
       "type": "below",
-      "a": "notification_theme_loaded",
-      "b": "theme_default_panel",
+      "a": "notification_ready",
+      "b": "zone_center_notifications",
       "confidence": 0.84
     },
     {
       "type": "above",
-      "a": "theme_default_panel",
-      "b": "notification_theme_loaded",
+      "a": "zone_center_notifications",
+      "b": "notification_ready",
+      "confidence": 0.84
+    },
+    {
+      "type": "right_of",
+      "a": "notification_pending",
+      "b": "zone_center_notifications",
+      "confidence": 0.84
+    },
+    {
+      "type": "left_of",
+      "a": "zone_center_notifications",
+      "b": "notification_pending",
+      "confidence": 0.84
+    },
+    {
+      "type": "below",
+      "a": "notification_pending",
+      "b": "zone_center_notifications",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "zone_center_notifications",
+      "b": "notification_pending",
+      "confidence": 0.84
+    },
+    {
+      "type": "right_of",
+      "a": "notification_blocked",
+      "b": "zone_center_notifications",
+      "confidence": 0.84
+    },
+    {
+      "type": "left_of",
+      "a": "zone_center_notifications",
+      "b": "notification_blocked",
+      "confidence": 0.84
+    },
+    {
+      "type": "below",
+      "a": "notification_blocked",
+      "b": "zone_center_notifications",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "zone_center_notifications",
+      "b": "notification_blocked",
       "confidence": 0.84
     },
     {
       "type": "below",
       "a": "taskbar",
-      "b": "theme_default_panel",
+      "b": "zone_center_notifications",
       "confidence": 0.84
     },
     {
       "type": "above",
-      "a": "theme_default_panel",
+      "a": "zone_center_notifications",
       "b": "taskbar",
       "confidence": 0.84
     },
     {
       "type": "right_of",
-      "a": "theme_default_panel",
+      "a": "zone_center_notifications",
       "b": "taskbar_command_center_button",
       "confidence": 0.84
     },
     {
       "type": "left_of",
       "a": "taskbar_command_center_button",
-      "b": "theme_default_panel",
+      "b": "zone_center_notifications",
       "confidence": 0.84
     },
     {
       "type": "below",
       "a": "taskbar_command_center_button",
-      "b": "theme_default_panel",
+      "b": "zone_center_notifications",
       "confidence": 0.84
     },
     {
       "type": "above",
-      "a": "theme_default_panel",
+      "a": "zone_center_notifications",
       "b": "taskbar_command_center_button",
       "confidence": 0.84
     },
     {
       "type": "below",
       "a": "taskbar_surface_list",
-      "b": "theme_default_panel",
+      "b": "zone_center_notifications",
       "confidence": 0.84
     },
     {
       "type": "above",
-      "a": "theme_default_panel",
+      "a": "zone_center_notifications",
       "b": "taskbar_surface_list",
       "confidence": 0.84
     },
     {
       "type": "right_of",
-      "a": "theme_default_panel",
-      "b": "surface_button_theme_preview",
+      "a": "zone_center_notifications",
+      "b": "surface_button_shell",
       "confidence": 0.84
     },
     {
       "type": "left_of",
-      "a": "surface_button_theme_preview",
-      "b": "theme_default_panel",
+      "a": "surface_button_shell",
+      "b": "zone_center_notifications",
       "confidence": 0.84
     },
     {
       "type": "below",
-      "a": "surface_button_theme_preview",
-      "b": "theme_default_panel",
+      "a": "surface_button_shell",
+      "b": "zone_center_notifications",
       "confidence": 0.84
     },
     {
       "type": "above",
-      "a": "theme_default_panel",
-      "b": "surface_button_theme_preview",
+      "a": "zone_center_notifications",
+      "b": "surface_button_shell",
       "confidence": 0.84
     },
     {
       "type": "inside",
-      "a": "notification_theme_loaded",
+      "a": "notification_ready",
       "b": "notification_stack",
       "confidence": 0.9
     },
     {
       "type": "contains",
       "a": "notification_stack",
-      "b": "notification_theme_loaded",
+      "b": "notification_ready",
       "confidence": 0.9
     },
     {
       "type": "aligned_left",
       "items": [
         "notification_stack",
-        "notification_theme_loaded"
+        "notification_ready"
+      ],
+      "confidence": 0.82
+    },
+    {
+      "type": "inside",
+      "a": "notification_pending",
+      "b": "notification_stack",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "notification_stack",
+      "b": "notification_pending",
+      "confidence": 0.9
+    },
+    {
+      "type": "aligned_left",
+      "items": [
+        "notification_stack",
+        "notification_pending"
+      ],
+      "confidence": 0.82
+    },
+    {
+      "type": "inside",
+      "a": "notification_blocked",
+      "b": "notification_stack",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "notification_stack",
+      "b": "notification_blocked",
+      "confidence": 0.9
+    },
+    {
+      "type": "aligned_left",
+      "items": [
+        "notification_stack",
+        "notification_blocked"
       ],
       "confidence": 0.82
     },
@@ -1996,97 +2391,301 @@
     {
       "type": "right_of",
       "a": "notification_stack",
-      "b": "surface_button_theme_preview",
+      "b": "surface_button_shell",
       "confidence": 0.84
     },
     {
       "type": "left_of",
-      "a": "surface_button_theme_preview",
+      "a": "surface_button_shell",
       "b": "notification_stack",
       "confidence": 0.84
     },
     {
       "type": "below",
-      "a": "surface_button_theme_preview",
+      "a": "surface_button_shell",
       "b": "notification_stack",
       "confidence": 0.84
     },
     {
       "type": "above",
       "a": "notification_stack",
-      "b": "surface_button_theme_preview",
+      "b": "surface_button_shell",
       "confidence": 0.84
     },
     {
       "type": "below",
-      "a": "taskbar",
-      "b": "notification_theme_loaded",
+      "a": "notification_pending",
+      "b": "notification_ready",
       "confidence": 0.84
     },
     {
       "type": "above",
-      "a": "notification_theme_loaded",
+      "a": "notification_ready",
+      "b": "notification_pending",
+      "confidence": 0.84
+    },
+    {
+      "type": "aligned_left",
+      "items": [
+        "notification_ready",
+        "notification_pending"
+      ],
+      "confidence": 0.82
+    },
+    {
+      "type": "below",
+      "a": "notification_blocked",
+      "b": "notification_ready",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "notification_ready",
+      "b": "notification_blocked",
+      "confidence": 0.84
+    },
+    {
+      "type": "aligned_left",
+      "items": [
+        "notification_ready",
+        "notification_blocked"
+      ],
+      "confidence": 0.82
+    },
+    {
+      "type": "below",
+      "a": "taskbar",
+      "b": "notification_ready",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "notification_ready",
       "b": "taskbar",
       "confidence": 0.84
     },
     {
       "type": "right_of",
-      "a": "notification_theme_loaded",
+      "a": "notification_ready",
       "b": "taskbar_command_center_button",
       "confidence": 0.84
     },
     {
       "type": "left_of",
       "a": "taskbar_command_center_button",
-      "b": "notification_theme_loaded",
+      "b": "notification_ready",
       "confidence": 0.84
     },
     {
       "type": "below",
       "a": "taskbar_command_center_button",
-      "b": "notification_theme_loaded",
+      "b": "notification_ready",
       "confidence": 0.84
     },
     {
       "type": "above",
-      "a": "notification_theme_loaded",
+      "a": "notification_ready",
       "b": "taskbar_command_center_button",
       "confidence": 0.84
     },
     {
       "type": "below",
       "a": "taskbar_surface_list",
-      "b": "notification_theme_loaded",
+      "b": "notification_ready",
       "confidence": 0.84
     },
     {
       "type": "above",
-      "a": "notification_theme_loaded",
+      "a": "notification_ready",
       "b": "taskbar_surface_list",
       "confidence": 0.84
     },
     {
       "type": "right_of",
-      "a": "notification_theme_loaded",
-      "b": "surface_button_theme_preview",
+      "a": "notification_ready",
+      "b": "surface_button_shell",
       "confidence": 0.84
     },
     {
       "type": "left_of",
-      "a": "surface_button_theme_preview",
-      "b": "notification_theme_loaded",
+      "a": "surface_button_shell",
+      "b": "notification_ready",
       "confidence": 0.84
     },
     {
       "type": "below",
-      "a": "surface_button_theme_preview",
-      "b": "notification_theme_loaded",
+      "a": "surface_button_shell",
+      "b": "notification_ready",
       "confidence": 0.84
     },
     {
       "type": "above",
-      "a": "notification_theme_loaded",
-      "b": "surface_button_theme_preview",
+      "a": "notification_ready",
+      "b": "surface_button_shell",
+      "confidence": 0.84
+    },
+    {
+      "type": "below",
+      "a": "notification_blocked",
+      "b": "notification_pending",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "notification_pending",
+      "b": "notification_blocked",
+      "confidence": 0.84
+    },
+    {
+      "type": "aligned_left",
+      "items": [
+        "notification_pending",
+        "notification_blocked"
+      ],
+      "confidence": 0.82
+    },
+    {
+      "type": "below",
+      "a": "taskbar",
+      "b": "notification_pending",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "notification_pending",
+      "b": "taskbar",
+      "confidence": 0.84
+    },
+    {
+      "type": "right_of",
+      "a": "notification_pending",
+      "b": "taskbar_command_center_button",
+      "confidence": 0.84
+    },
+    {
+      "type": "left_of",
+      "a": "taskbar_command_center_button",
+      "b": "notification_pending",
+      "confidence": 0.84
+    },
+    {
+      "type": "below",
+      "a": "taskbar_command_center_button",
+      "b": "notification_pending",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "notification_pending",
+      "b": "taskbar_command_center_button",
+      "confidence": 0.84
+    },
+    {
+      "type": "below",
+      "a": "taskbar_surface_list",
+      "b": "notification_pending",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "notification_pending",
+      "b": "taskbar_surface_list",
+      "confidence": 0.84
+    },
+    {
+      "type": "right_of",
+      "a": "notification_pending",
+      "b": "surface_button_shell",
+      "confidence": 0.84
+    },
+    {
+      "type": "left_of",
+      "a": "surface_button_shell",
+      "b": "notification_pending",
+      "confidence": 0.84
+    },
+    {
+      "type": "below",
+      "a": "surface_button_shell",
+      "b": "notification_pending",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "notification_pending",
+      "b": "surface_button_shell",
+      "confidence": 0.84
+    },
+    {
+      "type": "below",
+      "a": "taskbar",
+      "b": "notification_blocked",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "notification_blocked",
+      "b": "taskbar",
+      "confidence": 0.84
+    },
+    {
+      "type": "right_of",
+      "a": "notification_blocked",
+      "b": "taskbar_command_center_button",
+      "confidence": 0.84
+    },
+    {
+      "type": "left_of",
+      "a": "taskbar_command_center_button",
+      "b": "notification_blocked",
+      "confidence": 0.84
+    },
+    {
+      "type": "below",
+      "a": "taskbar_command_center_button",
+      "b": "notification_blocked",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "notification_blocked",
+      "b": "taskbar_command_center_button",
+      "confidence": 0.84
+    },
+    {
+      "type": "below",
+      "a": "taskbar_surface_list",
+      "b": "notification_blocked",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "notification_blocked",
+      "b": "taskbar_surface_list",
+      "confidence": 0.84
+    },
+    {
+      "type": "right_of",
+      "a": "notification_blocked",
+      "b": "surface_button_shell",
+      "confidence": 0.84
+    },
+    {
+      "type": "left_of",
+      "a": "surface_button_shell",
+      "b": "notification_blocked",
+      "confidence": 0.84
+    },
+    {
+      "type": "below",
+      "a": "surface_button_shell",
+      "b": "notification_blocked",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "notification_blocked",
+      "b": "surface_button_shell",
       "confidence": 0.84
     },
     {
@@ -2123,14 +2722,14 @@
     },
     {
       "type": "inside",
-      "a": "surface_button_theme_preview",
+      "a": "surface_button_shell",
       "b": "taskbar",
       "confidence": 0.9
     },
     {
       "type": "contains",
       "a": "taskbar",
-      "b": "surface_button_theme_preview",
+      "b": "surface_button_shell",
       "confidence": 0.9
     },
     {
@@ -2147,33 +2746,33 @@
     },
     {
       "type": "right_of",
-      "a": "surface_button_theme_preview",
+      "a": "surface_button_shell",
       "b": "taskbar_command_center_button",
       "confidence": 0.84
     },
     {
       "type": "left_of",
       "a": "taskbar_command_center_button",
-      "b": "surface_button_theme_preview",
+      "b": "surface_button_shell",
       "confidence": 0.84
     },
     {
       "type": "inside",
-      "a": "surface_button_theme_preview",
+      "a": "surface_button_shell",
       "b": "taskbar_surface_list",
       "confidence": 0.9
     },
     {
       "type": "contains",
       "a": "taskbar_surface_list",
-      "b": "surface_button_theme_preview",
+      "b": "surface_button_shell",
       "confidence": 0.9
     },
     {
       "type": "aligned_left",
       "items": [
         "taskbar_surface_list",
-        "surface_button_theme_preview"
+        "surface_button_shell"
       ],
       "confidence": 0.82
     }
@@ -2220,22 +2819,44 @@
       "importance": "major"
     },
     {
-      "id": "theme_default_panel_exists",
+      "id": "notification_ready_exists",
       "type": "object_exists",
-      "object": "theme_default_panel",
+      "object": "notification_ready",
       "importance": "major"
     },
     {
-      "id": "notification_theme_loaded_exists",
+      "id": "notification_pending_exists",
       "type": "object_exists",
-      "object": "notification_theme_loaded",
+      "object": "notification_pending",
       "importance": "major"
     },
     {
-      "id": "surface_button_theme_preview_inside_taskbar_surface_list",
+      "id": "notification_blocked_exists",
+      "type": "object_exists",
+      "object": "notification_blocked",
+      "importance": "major"
+    },
+    {
+      "id": "notification_ready_inside_notification_stack",
       "type": "layout_relation",
-      "a": "surface_button_theme_preview",
-      "b": "taskbar_surface_list",
+      "a": "notification_ready",
+      "b": "notification_stack",
+      "relation": "inside",
+      "importance": "major"
+    },
+    {
+      "id": "notification_pending_inside_notification_stack",
+      "type": "layout_relation",
+      "a": "notification_pending",
+      "b": "notification_stack",
+      "relation": "inside",
+      "importance": "major"
+    },
+    {
+      "id": "notification_blocked_inside_notification_stack",
+      "type": "layout_relation",
+      "a": "notification_blocked",
+      "b": "notification_stack",
       "relation": "inside",
       "importance": "major"
     }
@@ -2309,11 +2930,11 @@
         "confidence": 0.98
       },
       {
-        "id": "promotion:theme_default_panel",
+        "id": "promotion:zone_center_notifications",
         "kind": "contract_promotion",
-        "source_ref": "theme_default_panel",
+        "source_ref": "zone_center_notifications",
         "object_refs": [
-          "theme_default_panel"
+          "zone_center_notifications"
         ],
         "confidence": 0.98
       },
@@ -2327,11 +2948,29 @@
         "confidence": 0.98
       },
       {
-        "id": "promotion:notification_theme_loaded",
+        "id": "promotion:notification_ready",
         "kind": "contract_promotion",
-        "source_ref": "notification_theme_loaded",
+        "source_ref": "notification_ready",
         "object_refs": [
-          "notification_theme_loaded"
+          "notification_ready"
+        ],
+        "confidence": 0.98
+      },
+      {
+        "id": "promotion:notification_pending",
+        "kind": "contract_promotion",
+        "source_ref": "notification_pending",
+        "object_refs": [
+          "notification_pending"
+        ],
+        "confidence": 0.98
+      },
+      {
+        "id": "promotion:notification_blocked",
+        "kind": "contract_promotion",
+        "source_ref": "notification_blocked",
+        "object_refs": [
+          "notification_blocked"
         ],
         "confidence": 0.98
       },
@@ -2363,11 +3002,11 @@
         "confidence": 0.98
       },
       {
-        "id": "promotion:surface_button_theme_preview",
+        "id": "promotion:surface_button_shell",
         "kind": "contract_promotion",
-        "source_ref": "surface_button_theme_preview",
+        "source_ref": "surface_button_shell",
         "object_refs": [
-          "surface_button_theme_preview"
+          "surface_button_shell"
         ],
         "confidence": 0.98
       }

@@ -84,20 +84,26 @@
       "importance": "major"
     },
     {
-      "source_id": "theme_default_panel",
-      "target_id": "theme_default_panel",
-      "domain_role": "theme_default_panel",
-      "importance": "major"
-    },
-    {
-      "source_id": "notification_theme_loaded",
-      "target_id": "notification_theme_loaded",
+      "source_id": "notification_ready",
+      "target_id": "notification_ready",
       "domain_role": "notification",
       "importance": "major"
     },
     {
-      "source_id": "surface_button_theme_preview",
-      "target_id": "surface_button_theme_preview",
+      "source_id": "notification_pending",
+      "target_id": "notification_pending",
+      "domain_role": "notification",
+      "importance": "major"
+    },
+    {
+      "source_id": "notification_blocked",
+      "target_id": "notification_blocked",
+      "domain_role": "notification",
+      "importance": "major"
+    },
+    {
+      "source_id": "surface_button_shell",
+      "target_id": "surface_button_shell",
       "domain_role": "surface_button",
       "importance": "major"
     }
@@ -144,22 +150,44 @@
       "importance": "major"
     },
     {
-      "id": "theme_default_panel_exists",
+      "id": "notification_ready_exists",
       "type": "object_exists",
-      "object": "theme_default_panel",
+      "object": "notification_ready",
       "importance": "major"
     },
     {
-      "id": "notification_theme_loaded_exists",
+      "id": "notification_pending_exists",
       "type": "object_exists",
-      "object": "notification_theme_loaded",
+      "object": "notification_pending",
       "importance": "major"
     },
     {
-      "id": "surface_button_theme_preview_inside_taskbar_surface_list",
+      "id": "notification_blocked_exists",
+      "type": "object_exists",
+      "object": "notification_blocked",
+      "importance": "major"
+    },
+    {
+      "id": "notification_ready_inside_notification_stack",
       "type": "layout_relation",
-      "a": "surface_button_theme_preview",
-      "b": "taskbar_surface_list",
+      "a": "notification_ready",
+      "b": "notification_stack",
+      "relation": "inside",
+      "importance": "major"
+    },
+    {
+      "id": "notification_pending_inside_notification_stack",
+      "type": "layout_relation",
+      "a": "notification_pending",
+      "b": "notification_stack",
+      "relation": "inside",
+      "importance": "major"
+    },
+    {
+      "id": "notification_blocked_inside_notification_stack",
+      "type": "layout_relation",
+      "a": "notification_blocked",
+      "b": "notification_stack",
       "relation": "inside",
       "importance": "major"
     }
