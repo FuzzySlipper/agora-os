@@ -389,8 +389,8 @@ agora-agent-health {
 
 agora-window-chrome {
     display: block;
-    width: min(42rem, 100%);
-    max-height: min(58vh, 32rem);
+    width: min(96vw, 92rem);
+    max-height: min(78vh, calc(100vh - var(--taskbar-height) - 5rem));
     overflow: auto;
     pointer-events: auto;
 }
@@ -463,6 +463,7 @@ agora-window-chrome {
     min-height: 2.7rem;
     padding: 0.55rem 0.6rem 0.55rem 0.8rem;
     cursor: pointer;
+    align-items: flex-start;
 }
 
 .window-chrome-widget__titles {
@@ -489,8 +490,10 @@ agora-window-chrome {
 
 .window-chrome-widget__controls {
     display: inline-flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
     gap: var(--agora-global-space-2);
-    flex: 0 0 auto;
+    flex: 0 1 min(58rem, 72vw);
 }
 
 .window-chrome-widget__button {

@@ -126,8 +126,10 @@ assert.equal(restoreButton.getAttribute("aria-label"), "Restore Minimized App");
 assert.ok(restoreButton.title.includes("minimized"), "minimized taskbar item advertises restore state");
 restoreButton.click();
 await Promise.resolve();
+await Promise.resolve();
 assert.deepEqual(minimizeCalls, [{ surfaceId: "view-min", enabled: false }]);
-assert.equal(focusCalls.includes("view-min"), false, "minimized taskbar click restores through canonical minimize false instead of focus-only");
+assert.ok(focusCalls.includes("view-min"), "minimized taskbar click restores and then focuses the surface");
+assert.equal(focusResults.at(-1).action, "surface.focus");
 
 const staleWidget = new TaskbarWidget({
   publish: (topic, body) => published.push({ topic, body }),

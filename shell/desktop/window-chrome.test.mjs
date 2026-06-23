@@ -189,6 +189,19 @@ widget.update({
 assert.equal(widget.querySelectorAll('[data-surface-id="view-1"]').length, 1, "queued close keeps chrome until authoritative unmap");
 assert.ok(widget.textContent.includes("Close requested"), "chrome shows close pending/readback state");
 
+widget.update({
+  surfaces: [{ id: "view-min", title: "Hidden App", app_id: "hidden", role: "toplevel", minimized: true, visibility_state: "minimized", restorable: true }],
+  agents: [],
+  notifications: [],
+  config: {},
+});
+const minimizedFocus = widget.querySelectorAll("[data-action=\"surface.focus\"]")[0];
+minimizedFocus.click();
+await new Promise((resolve) => setTimeout(resolve, 0));
+assert.deepEqual(minimizeCalls.at(-1), { surfaceId: "view-min", enabled: false }, "work surfaces focus restores minimized windows before focus");
+assert.deepEqual(focusCalls.at(-1), "view-min", "work surfaces focus then activates the restored window");
+assert.equal(results.at(-1).action, "surface.focus");
+
 function assertUniqueVisualIds(root) {
   const seen = new Map();
   const visit = (node) => {

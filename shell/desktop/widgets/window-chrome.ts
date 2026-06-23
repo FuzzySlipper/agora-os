@@ -83,6 +83,17 @@ export class WindowChromeWidget extends HTMLElement implements ShellWidget {
     }
 
     private async requestFocus(surface: SurfaceEvent): Promise<void> {
+        if (surface.minimized || surface.visibility_state === "minimized") {
+            await this.runAction(surface, "surface.focus", async () => {
+                const restore = await this.minimizeSurface(surface.id, false);
+                this.onActionResult(restore);
+                if (restore.decision === "denied") {
+                    return restore;
+                }
+                return this.focusSurface(surface.id);
+            });
+            return;
+        }
         await this.runAction(surface, "surface.focus", () => this.focusSurface(surface.id));
     }
 

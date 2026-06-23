@@ -79,16 +79,21 @@ export class TaskbarWidget extends HTMLElement implements ShellWidget {
     }
 
     private async requestFocus(surface: SurfaceEvent): Promise<void> {
-        if (surface.minimized || surface.visibility_state === "minimized") {
-            await this.requestRestore(surface);
-            return;
-        }
         if (surface.disabled) {
             return;
         }
         this.actionStatus.set(surface.id, { pending: true });
         this.render();
         try {
+            if (surface.minimized || surface.visibility_state === "minimized") {
+                const restore = await this.minimizeSurface(surface.id, false);
+                this.onFocusResult(restore);
+                if (restore.decision === "denied") {
+                    this.actionStatus.set(surface.id, { error: restore.error || restore.reason || "restore denied" });
+                    this.render();
+                    return;
+                }
+            }
             const result = await this.focusSurface(surface.id);
             if (result.decision === "denied") {
                 this.actionStatus.set(surface.id, { error: result.error || result.reason || "focus denied" });
