@@ -75,6 +75,36 @@
       "target_id": "notification_stack",
       "domain_role": "notification_stack",
       "importance": "major"
+    },
+    {
+      "source_id": "command_center",
+      "target_id": "command_center",
+      "domain_role": "command_center",
+      "importance": "critical"
+    },
+    {
+      "source_id": "command_center_panel",
+      "target_id": "command_center_panel",
+      "domain_role": "command_center_panel",
+      "importance": "critical"
+    },
+    {
+      "source_id": "command_center_input",
+      "target_id": "command_center_input",
+      "domain_role": "command_input",
+      "importance": "critical"
+    },
+    {
+      "source_id": "command_center_suggestions",
+      "target_id": "command_center_suggestions",
+      "domain_role": "command_suggestions",
+      "importance": "major"
+    },
+    {
+      "source_id": "command_center_transcript",
+      "target_id": "command_center_transcript",
+      "domain_role": "conversation_transcript",
+      "importance": "major"
     }
   ],
   "constraints": [
@@ -115,6 +145,50 @@
       "type": "layout_relation",
       "a": "taskbar_surface_list",
       "b": "taskbar",
+      "relation": "inside",
+      "importance": "major"
+    },
+    {
+      "id": "command_center_exists",
+      "type": "object_exists",
+      "object": "command_center",
+      "importance": "critical"
+    },
+    {
+      "id": "command_input_exists",
+      "type": "object_exists",
+      "object": "command_center_input",
+      "importance": "critical"
+    },
+    {
+      "id": "command_panel_inside_root",
+      "type": "layout_relation",
+      "a": "command_center_panel",
+      "b": "agora_desktop_shell",
+      "relation": "inside",
+      "importance": "critical"
+    },
+    {
+      "id": "command_input_inside_panel",
+      "type": "layout_relation",
+      "a": "command_center_input",
+      "b": "command_center_panel",
+      "relation": "inside",
+      "importance": "major"
+    },
+    {
+      "id": "suggestions_inside_panel",
+      "type": "layout_relation",
+      "a": "command_center_suggestions",
+      "b": "command_center_panel",
+      "relation": "inside",
+      "importance": "major"
+    },
+    {
+      "id": "transcript_inside_panel",
+      "type": "layout_relation",
+      "a": "command_center_transcript",
+      "b": "command_center_panel",
       "relation": "inside",
       "importance": "major"
     }

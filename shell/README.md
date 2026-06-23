@@ -113,8 +113,11 @@ from the shell config directory first:
 - Runtime packages live under
   `${SHELL_CONFIG_DIR:-/var/lib/agora-shell}/themes/<id>/theme.json`.
 - If no runtime selection exists, the bundled `agora-default` manifest is used;
-  the editable source package lives at
-  `shell/desktop/themes/agora-default/theme.json` and is copied into
+  its visual identity is **Agora Observatory** (dark teal observatory/workbench
+  with cyan primary accent and amber secondary accent). The editable source
+  package lives at `shell/desktop/themes/agora-default/theme.json`, includes
+  reference visual contracts under
+  `shell/desktop/themes/agora-default/visual-contracts/`, and is copied into
   `shell/dist/desktop/themes/` by `npm run --prefix shell build`.
 
 Theme manifests may set #3193 contract tokens, wallpaper, and optional

@@ -1,0 +1,1598 @@
+{
+  "schema": "layered-visual-contract/v0.1",
+  "scene": {
+    "id": "agora_desktop_shell_empty",
+    "type": "web_ui",
+    "viewport": {
+      "width_px": 1920,
+      "height_px": 1080
+    },
+    "coordinate_mode": "normalized_with_pixel_evidence"
+  },
+  "project": {
+    "id": "agora-os",
+    "vocabulary": "agora_desktop_shell_v0",
+    "roles": [
+      "desktop_shell_root",
+      "background",
+      "layout_grid",
+      "layout_zone",
+      "taskbar",
+      "command_center_entrypoint",
+      "surface_list",
+      "surface_button",
+      "clock",
+      "agent_health",
+      "notification_stack",
+      "command_center",
+      "command_center_panel",
+      "command_input",
+      "command_suggestions",
+      "conversation_transcript"
+    ]
+  },
+  "spaces": [
+    {
+      "id": "viewport",
+      "kind": "root",
+      "bounds": {
+        "x": 0,
+        "y": 0,
+        "w": 1,
+        "h": 1
+      }
+    }
+  ],
+  "layers": [
+    {
+      "id": "z_0",
+      "z": 0,
+      "contains": [
+        "agent_health",
+        "agora_desktop_shell",
+        "clock",
+        "notification_stack",
+        "shell_background",
+        "surface_button_smoke_terminal",
+        "taskbar",
+        "taskbar_command_center_button",
+        "taskbar_surface_list",
+        "zone_center"
+      ]
+    },
+    {
+      "id": "z_1",
+      "z": 1,
+      "contains": [
+        "shell_grid"
+      ]
+    }
+  ],
+  "objects": [
+    {
+      "id": "agora_desktop_shell",
+      "kind": "panel",
+      "role": "desktop_shell_root",
+      "domain_role": "desktop_shell_root",
+      "parent": "viewport",
+      "layer": "z_0",
+      "text": "Agora Desktop Shell empty reference scene",
+      "bounds": {
+        "space": "viewport",
+        "x": 0,
+        "y": 0,
+        "w": 1,
+        "h": 1,
+        "px": {
+          "x": 0,
+          "y": 0,
+          "w": 1920,
+          "h": 1080
+        }
+      },
+      "children": [
+        "shell_background",
+        "shell_grid"
+      ],
+      "importance": "critical",
+      "confidence": 0.98,
+      "evidence_refs": [
+        "promotion:agora_desktop_shell"
+      ],
+      "style": {
+        "background": "rgba(0, 0, 0, 0)",
+        "color": "rgb(230, 240, 238)",
+        "display": "block",
+        "font_size_px": "16",
+        "font_weight": "400",
+        "opacity": "1.00",
+        "position": "relative"
+      }
+    },
+    {
+      "id": "shell_background",
+      "kind": "panel",
+      "role": "background",
+      "domain_role": "background",
+      "parent": "agora_desktop_shell",
+      "layer": "z_0",
+      "bounds": {
+        "space": "viewport",
+        "x": 0,
+        "y": 0,
+        "w": 1,
+        "h": 1,
+        "px": {
+          "x": 0,
+          "y": 0,
+          "w": 1920,
+          "h": 1080
+        }
+      },
+      "importance": "major",
+      "confidence": 0.98,
+      "evidence_refs": [
+        "promotion:shell_background"
+      ],
+      "style": {
+        "background": "rgba(0, 0, 0, 0)",
+        "color": "rgb(230, 240, 238)",
+        "display": "block",
+        "font_size_px": "16",
+        "font_weight": "400",
+        "opacity": "1.00",
+        "position": "absolute"
+      }
+    },
+    {
+      "id": "shell_grid",
+      "kind": "panel",
+      "role": "layout_grid",
+      "domain_role": "layout_grid",
+      "parent": "agora_desktop_shell",
+      "layer": "z_1",
+      "text": "Agora desktop shell",
+      "bounds": {
+        "space": "viewport",
+        "x": 0,
+        "y": 0,
+        "w": 1,
+        "h": 1,
+        "px": {
+          "x": 0,
+          "y": 0,
+          "w": 1920,
+          "h": 1080
+        }
+      },
+      "children": [
+        "agent_health",
+        "clock",
+        "zone_center",
+        "notification_stack",
+        "taskbar"
+      ],
+      "importance": "major",
+      "confidence": 0.98,
+      "evidence_refs": [
+        "promotion:shell_grid"
+      ],
+      "style": {
+        "background": "rgba(0, 0, 0, 0)",
+        "color": "rgb(230, 240, 238)",
+        "display": "grid",
+        "font_size_px": "16",
+        "font_weight": "400",
+        "opacity": "1.00",
+        "position": "relative"
+      }
+    },
+    {
+      "id": "agent_health",
+      "kind": "panel",
+      "role": "agent_health",
+      "domain_role": "agent_health",
+      "parent": "shell_grid",
+      "layer": "z_0",
+      "text": "Agents Runner ready ready",
+      "bounds": {
+        "space": "viewport",
+        "x": 0.0125,
+        "y": 0.022222222222222223,
+        "w": 0.14583333333333334,
+        "h": 0.08888888888888889,
+        "px": {
+          "x": 24,
+          "y": 24,
+          "w": 280,
+          "h": 96
+        }
+      },
+      "importance": "major",
+      "confidence": 0.98,
+      "evidence_refs": [
+        "promotion:agent_health"
+      ],
+      "style": {
+        "background": "rgba(16, 38, 45, 0.88)",
+        "color": "rgb(230, 240, 238)",
+        "display": "block",
+        "font_size_px": "16",
+        "font_weight": "400",
+        "opacity": "1.00",
+        "position": "static"
+      }
+    },
+    {
+      "id": "clock",
+      "kind": "panel",
+      "role": "clock",
+      "domain_role": "clock",
+      "parent": "shell_grid",
+      "layer": "z_0",
+      "text": "Time12:00",
+      "bounds": {
+        "space": "viewport",
+        "x": 0.8416666666666667,
+        "y": 0.022222222222222223,
+        "w": 0.14583333333333334,
+        "h": 0.08888888888888889,
+        "px": {
+          "x": 1616,
+          "y": 24,
+          "w": 280,
+          "h": 96
+        }
+      },
+      "importance": "minor",
+      "confidence": 0.98,
+      "evidence_refs": [
+        "promotion:clock"
+      ],
+      "style": {
+        "background": "rgba(16, 38, 45, 0.88)",
+        "color": "rgb(230, 240, 238)",
+        "display": "block",
+        "font_size_px": "16",
+        "font_weight": "400",
+        "opacity": "1.00",
+        "position": "static"
+      }
+    },
+    {
+      "id": "zone_center",
+      "kind": "panel",
+      "role": "layout_zone",
+      "parent": "shell_grid",
+      "layer": "z_0",
+      "text": "Agora Observatory default theme \u2014 no surfaces open",
+      "bounds": {
+        "space": "viewport",
+        "x": 0.16666666666666666,
+        "y": 0.1259259259259259,
+        "w": 0.6666666666666666,
+        "h": 0.7703703703703704,
+        "px": {
+          "x": 320,
+          "y": 136,
+          "w": 1280,
+          "h": 832
+        }
+      },
+      "importance": "major",
+      "confidence": 0.98,
+      "evidence_refs": [
+        "promotion:zone_center"
+      ],
+      "style": {
+        "background": "rgba(16, 38, 45, 0.88)",
+        "color": "rgb(167, 187, 186)",
+        "display": "grid",
+        "font_size_px": "16",
+        "font_weight": "400",
+        "opacity": "1.00",
+        "position": "static"
+      }
+    },
+    {
+      "id": "notification_stack",
+      "kind": "panel",
+      "role": "notification_stack",
+      "domain_role": "notification_stack",
+      "parent": "shell_grid",
+      "layer": "z_0",
+      "text": "Notifications Quiet",
+      "bounds": {
+        "space": "viewport",
+        "x": 0.8416666666666667,
+        "y": 0.7574074074074074,
+        "w": 0.14583333333333334,
+        "h": 0.1388888888888889,
+        "px": {
+          "x": 1616,
+          "y": 818,
+          "w": 280,
+          "h": 150
+        }
+      },
+      "importance": "major",
+      "confidence": 0.98,
+      "evidence_refs": [
+        "promotion:notification_stack"
+      ],
+      "style": {
+        "background": "rgba(16, 38, 45, 0.88)",
+        "color": "rgb(230, 240, 238)",
+        "display": "block",
+        "font_size_px": "16",
+        "font_weight": "400",
+        "opacity": "1.00",
+        "position": "static"
+      }
+    },
+    {
+      "id": "taskbar",
+      "kind": "panel",
+      "role": "taskbar",
+      "domain_role": "taskbar",
+      "parent": "shell_grid",
+      "layer": "z_0",
+      "text": "Desktop taskbar",
+      "bounds": {
+        "space": "viewport",
+        "x": 0.0125,
+        "y": 0.9111111111111111,
+        "w": 0.975,
+        "h": 0.06666666666666667,
+        "px": {
+          "x": 24,
+          "y": 984,
+          "w": 1872,
+          "h": 72
+        }
+      },
+      "children": [
+        "taskbar_command_center_button",
+        "taskbar_surface_list"
+      ],
+      "importance": "critical",
+      "confidence": 0.98,
+      "evidence_refs": [
+        "promotion:taskbar"
+      ],
+      "style": {
+        "background": "rgba(16, 38, 45, 0.88)",
+        "color": "rgb(230, 240, 238)",
+        "display": "flex",
+        "font_size_px": "16",
+        "font_weight": "400",
+        "opacity": "1.00",
+        "position": "static"
+      }
+    },
+    {
+      "id": "taskbar_command_center_button",
+      "kind": "button",
+      "role": "command_center_entrypoint",
+      "domain_role": "command_center_entrypoint",
+      "parent": "taskbar",
+      "layer": "z_0",
+      "text": "\u2318 Command Center",
+      "bounds": {
+        "space": "viewport",
+        "x": 0.022395833333333334,
+        "y": 0.9268518518518518,
+        "w": 0.08541666666666667,
+        "h": 0.03611111111111111,
+        "px": {
+          "x": 43,
+          "y": 1001,
+          "w": 164,
+          "h": 39
+        }
+      },
+      "importance": "critical",
+      "confidence": 0.98,
+      "evidence_refs": [
+        "promotion:taskbar_command_center_button"
+      ],
+      "style": {
+        "background": "rgba(0, 0, 0, 0)",
+        "color": "rgb(6, 17, 18)",
+        "display": "block",
+        "font_size_px": "13",
+        "font_weight": "760",
+        "opacity": "1.00",
+        "position": "static"
+      }
+    },
+    {
+      "id": "taskbar_surface_list",
+      "kind": "panel",
+      "role": "surface_list",
+      "domain_role": "surface_list",
+      "parent": "taskbar",
+      "layer": "z_0",
+      "text": "Terminal",
+      "bounds": {
+        "space": "viewport",
+        "x": 0.11510416666666666,
+        "y": 0.9277777777777778,
+        "w": 0.041666666666666664,
+        "h": 0.03425925925925926,
+        "px": {
+          "x": 221,
+          "y": 1002,
+          "w": 80,
+          "h": 37
+        }
+      },
+      "children": [
+        "surface_button_smoke_terminal"
+      ],
+      "importance": "major",
+      "confidence": 0.98,
+      "evidence_refs": [
+        "promotion:taskbar_surface_list"
+      ],
+      "style": {
+        "background": "rgba(0, 0, 0, 0)",
+        "color": "rgb(230, 240, 238)",
+        "display": "flex",
+        "font_size_px": "16",
+        "font_weight": "400",
+        "opacity": "1.00",
+        "position": "static"
+      }
+    },
+    {
+      "id": "surface_button_smoke_terminal",
+      "kind": "button",
+      "role": "surface_button",
+      "parent": "taskbar_surface_list",
+      "layer": "z_0",
+      "text": "Terminal",
+      "bounds": {
+        "space": "viewport",
+        "x": 0.11510416666666666,
+        "y": 0.9277777777777778,
+        "w": 0.041666666666666664,
+        "h": 0.03425925925925926,
+        "px": {
+          "x": 221,
+          "y": 1002,
+          "w": 80,
+          "h": 37
+        }
+      },
+      "importance": "major",
+      "confidence": 0.98,
+      "evidence_refs": [
+        "promotion:surface_button_smoke_terminal"
+      ],
+      "style": {
+        "background": "rgba(167, 187, 186, 0.11)",
+        "color": "rgb(230, 240, 238)",
+        "display": "block",
+        "font_size_px": "13",
+        "font_weight": "400",
+        "opacity": "1.00",
+        "position": "static"
+      }
+    }
+  ],
+  "relations": [
+    {
+      "type": "inside",
+      "a": "agora_desktop_shell",
+      "b": "shell_background",
+      "confidence": 0.9
+    },
+    {
+      "type": "inside",
+      "a": "shell_background",
+      "b": "agora_desktop_shell",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "agora_desktop_shell",
+      "b": "shell_background",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "shell_background",
+      "b": "agora_desktop_shell",
+      "confidence": 0.9
+    },
+    {
+      "type": "aligned_left",
+      "items": [
+        "agora_desktop_shell",
+        "shell_background"
+      ],
+      "confidence": 0.82
+    },
+    {
+      "type": "inside",
+      "a": "agora_desktop_shell",
+      "b": "shell_grid",
+      "confidence": 0.9
+    },
+    {
+      "type": "inside",
+      "a": "shell_grid",
+      "b": "agora_desktop_shell",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "agora_desktop_shell",
+      "b": "shell_grid",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "shell_grid",
+      "b": "agora_desktop_shell",
+      "confidence": 0.9
+    },
+    {
+      "type": "aligned_left",
+      "items": [
+        "agora_desktop_shell",
+        "shell_grid"
+      ],
+      "confidence": 0.82
+    },
+    {
+      "type": "inside",
+      "a": "agent_health",
+      "b": "agora_desktop_shell",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "agora_desktop_shell",
+      "b": "agent_health",
+      "confidence": 0.9
+    },
+    {
+      "type": "aligned_left",
+      "items": [
+        "agora_desktop_shell",
+        "agent_health"
+      ],
+      "confidence": 0.82
+    },
+    {
+      "type": "inside",
+      "a": "clock",
+      "b": "agora_desktop_shell",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "agora_desktop_shell",
+      "b": "clock",
+      "confidence": 0.9
+    },
+    {
+      "type": "inside",
+      "a": "zone_center",
+      "b": "agora_desktop_shell",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "agora_desktop_shell",
+      "b": "zone_center",
+      "confidence": 0.9
+    },
+    {
+      "type": "inside",
+      "a": "notification_stack",
+      "b": "agora_desktop_shell",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "agora_desktop_shell",
+      "b": "notification_stack",
+      "confidence": 0.9
+    },
+    {
+      "type": "inside",
+      "a": "taskbar",
+      "b": "agora_desktop_shell",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "agora_desktop_shell",
+      "b": "taskbar",
+      "confidence": 0.9
+    },
+    {
+      "type": "aligned_left",
+      "items": [
+        "agora_desktop_shell",
+        "taskbar"
+      ],
+      "confidence": 0.82
+    },
+    {
+      "type": "inside",
+      "a": "taskbar_command_center_button",
+      "b": "agora_desktop_shell",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "agora_desktop_shell",
+      "b": "taskbar_command_center_button",
+      "confidence": 0.9
+    },
+    {
+      "type": "inside",
+      "a": "taskbar_surface_list",
+      "b": "agora_desktop_shell",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "agora_desktop_shell",
+      "b": "taskbar_surface_list",
+      "confidence": 0.9
+    },
+    {
+      "type": "inside",
+      "a": "surface_button_smoke_terminal",
+      "b": "agora_desktop_shell",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "agora_desktop_shell",
+      "b": "surface_button_smoke_terminal",
+      "confidence": 0.9
+    },
+    {
+      "type": "inside",
+      "a": "shell_background",
+      "b": "shell_grid",
+      "confidence": 0.9
+    },
+    {
+      "type": "inside",
+      "a": "shell_grid",
+      "b": "shell_background",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "shell_background",
+      "b": "shell_grid",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "shell_grid",
+      "b": "shell_background",
+      "confidence": 0.9
+    },
+    {
+      "type": "aligned_left",
+      "items": [
+        "shell_background",
+        "shell_grid"
+      ],
+      "confidence": 0.82
+    },
+    {
+      "type": "inside",
+      "a": "agent_health",
+      "b": "shell_background",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "shell_background",
+      "b": "agent_health",
+      "confidence": 0.9
+    },
+    {
+      "type": "aligned_left",
+      "items": [
+        "shell_background",
+        "agent_health"
+      ],
+      "confidence": 0.82
+    },
+    {
+      "type": "inside",
+      "a": "clock",
+      "b": "shell_background",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "shell_background",
+      "b": "clock",
+      "confidence": 0.9
+    },
+    {
+      "type": "inside",
+      "a": "zone_center",
+      "b": "shell_background",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "shell_background",
+      "b": "zone_center",
+      "confidence": 0.9
+    },
+    {
+      "type": "inside",
+      "a": "notification_stack",
+      "b": "shell_background",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "shell_background",
+      "b": "notification_stack",
+      "confidence": 0.9
+    },
+    {
+      "type": "inside",
+      "a": "taskbar",
+      "b": "shell_background",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "shell_background",
+      "b": "taskbar",
+      "confidence": 0.9
+    },
+    {
+      "type": "aligned_left",
+      "items": [
+        "shell_background",
+        "taskbar"
+      ],
+      "confidence": 0.82
+    },
+    {
+      "type": "inside",
+      "a": "taskbar_command_center_button",
+      "b": "shell_background",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "shell_background",
+      "b": "taskbar_command_center_button",
+      "confidence": 0.9
+    },
+    {
+      "type": "inside",
+      "a": "taskbar_surface_list",
+      "b": "shell_background",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "shell_background",
+      "b": "taskbar_surface_list",
+      "confidence": 0.9
+    },
+    {
+      "type": "inside",
+      "a": "surface_button_smoke_terminal",
+      "b": "shell_background",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "shell_background",
+      "b": "surface_button_smoke_terminal",
+      "confidence": 0.9
+    },
+    {
+      "type": "inside",
+      "a": "agent_health",
+      "b": "shell_grid",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "shell_grid",
+      "b": "agent_health",
+      "confidence": 0.9
+    },
+    {
+      "type": "aligned_left",
+      "items": [
+        "shell_grid",
+        "agent_health"
+      ],
+      "confidence": 0.82
+    },
+    {
+      "type": "inside",
+      "a": "clock",
+      "b": "shell_grid",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "shell_grid",
+      "b": "clock",
+      "confidence": 0.9
+    },
+    {
+      "type": "inside",
+      "a": "zone_center",
+      "b": "shell_grid",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "shell_grid",
+      "b": "zone_center",
+      "confidence": 0.9
+    },
+    {
+      "type": "inside",
+      "a": "notification_stack",
+      "b": "shell_grid",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "shell_grid",
+      "b": "notification_stack",
+      "confidence": 0.9
+    },
+    {
+      "type": "inside",
+      "a": "taskbar",
+      "b": "shell_grid",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "shell_grid",
+      "b": "taskbar",
+      "confidence": 0.9
+    },
+    {
+      "type": "aligned_left",
+      "items": [
+        "shell_grid",
+        "taskbar"
+      ],
+      "confidence": 0.82
+    },
+    {
+      "type": "inside",
+      "a": "taskbar_command_center_button",
+      "b": "shell_grid",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "shell_grid",
+      "b": "taskbar_command_center_button",
+      "confidence": 0.9
+    },
+    {
+      "type": "inside",
+      "a": "taskbar_surface_list",
+      "b": "shell_grid",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "shell_grid",
+      "b": "taskbar_surface_list",
+      "confidence": 0.9
+    },
+    {
+      "type": "inside",
+      "a": "surface_button_smoke_terminal",
+      "b": "shell_grid",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "shell_grid",
+      "b": "surface_button_smoke_terminal",
+      "confidence": 0.9
+    },
+    {
+      "type": "right_of",
+      "a": "clock",
+      "b": "agent_health",
+      "confidence": 0.84
+    },
+    {
+      "type": "left_of",
+      "a": "agent_health",
+      "b": "clock",
+      "confidence": 0.84
+    },
+    {
+      "type": "right_of",
+      "a": "zone_center",
+      "b": "agent_health",
+      "confidence": 0.84
+    },
+    {
+      "type": "left_of",
+      "a": "agent_health",
+      "b": "zone_center",
+      "confidence": 0.84
+    },
+    {
+      "type": "below",
+      "a": "zone_center",
+      "b": "agent_health",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "agent_health",
+      "b": "zone_center",
+      "confidence": 0.84
+    },
+    {
+      "type": "right_of",
+      "a": "notification_stack",
+      "b": "agent_health",
+      "confidence": 0.84
+    },
+    {
+      "type": "left_of",
+      "a": "agent_health",
+      "b": "notification_stack",
+      "confidence": 0.84
+    },
+    {
+      "type": "below",
+      "a": "notification_stack",
+      "b": "agent_health",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "agent_health",
+      "b": "notification_stack",
+      "confidence": 0.84
+    },
+    {
+      "type": "below",
+      "a": "taskbar",
+      "b": "agent_health",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "agent_health",
+      "b": "taskbar",
+      "confidence": 0.84
+    },
+    {
+      "type": "aligned_left",
+      "items": [
+        "agent_health",
+        "taskbar"
+      ],
+      "confidence": 0.82
+    },
+    {
+      "type": "below",
+      "a": "taskbar_command_center_button",
+      "b": "agent_health",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "agent_health",
+      "b": "taskbar_command_center_button",
+      "confidence": 0.84
+    },
+    {
+      "type": "aligned_left",
+      "items": [
+        "agent_health",
+        "taskbar_command_center_button"
+      ],
+      "confidence": 0.82
+    },
+    {
+      "type": "below",
+      "a": "taskbar_surface_list",
+      "b": "agent_health",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "agent_health",
+      "b": "taskbar_surface_list",
+      "confidence": 0.84
+    },
+    {
+      "type": "below",
+      "a": "surface_button_smoke_terminal",
+      "b": "agent_health",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "agent_health",
+      "b": "surface_button_smoke_terminal",
+      "confidence": 0.84
+    },
+    {
+      "type": "right_of",
+      "a": "clock",
+      "b": "zone_center",
+      "confidence": 0.84
+    },
+    {
+      "type": "left_of",
+      "a": "zone_center",
+      "b": "clock",
+      "confidence": 0.84
+    },
+    {
+      "type": "below",
+      "a": "zone_center",
+      "b": "clock",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "clock",
+      "b": "zone_center",
+      "confidence": 0.84
+    },
+    {
+      "type": "below",
+      "a": "notification_stack",
+      "b": "clock",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "clock",
+      "b": "notification_stack",
+      "confidence": 0.84
+    },
+    {
+      "type": "aligned_left",
+      "items": [
+        "clock",
+        "notification_stack"
+      ],
+      "confidence": 0.82
+    },
+    {
+      "type": "below",
+      "a": "taskbar",
+      "b": "clock",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "clock",
+      "b": "taskbar",
+      "confidence": 0.84
+    },
+    {
+      "type": "right_of",
+      "a": "clock",
+      "b": "taskbar_command_center_button",
+      "confidence": 0.84
+    },
+    {
+      "type": "left_of",
+      "a": "taskbar_command_center_button",
+      "b": "clock",
+      "confidence": 0.84
+    },
+    {
+      "type": "below",
+      "a": "taskbar_command_center_button",
+      "b": "clock",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "clock",
+      "b": "taskbar_command_center_button",
+      "confidence": 0.84
+    },
+    {
+      "type": "right_of",
+      "a": "clock",
+      "b": "taskbar_surface_list",
+      "confidence": 0.84
+    },
+    {
+      "type": "left_of",
+      "a": "taskbar_surface_list",
+      "b": "clock",
+      "confidence": 0.84
+    },
+    {
+      "type": "below",
+      "a": "taskbar_surface_list",
+      "b": "clock",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "clock",
+      "b": "taskbar_surface_list",
+      "confidence": 0.84
+    },
+    {
+      "type": "right_of",
+      "a": "clock",
+      "b": "surface_button_smoke_terminal",
+      "confidence": 0.84
+    },
+    {
+      "type": "left_of",
+      "a": "surface_button_smoke_terminal",
+      "b": "clock",
+      "confidence": 0.84
+    },
+    {
+      "type": "below",
+      "a": "surface_button_smoke_terminal",
+      "b": "clock",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "clock",
+      "b": "surface_button_smoke_terminal",
+      "confidence": 0.84
+    },
+    {
+      "type": "right_of",
+      "a": "notification_stack",
+      "b": "zone_center",
+      "confidence": 0.84
+    },
+    {
+      "type": "left_of",
+      "a": "zone_center",
+      "b": "notification_stack",
+      "confidence": 0.84
+    },
+    {
+      "type": "below",
+      "a": "taskbar",
+      "b": "zone_center",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "zone_center",
+      "b": "taskbar",
+      "confidence": 0.84
+    },
+    {
+      "type": "right_of",
+      "a": "zone_center",
+      "b": "taskbar_command_center_button",
+      "confidence": 0.84
+    },
+    {
+      "type": "left_of",
+      "a": "taskbar_command_center_button",
+      "b": "zone_center",
+      "confidence": 0.84
+    },
+    {
+      "type": "below",
+      "a": "taskbar_command_center_button",
+      "b": "zone_center",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "zone_center",
+      "b": "taskbar_command_center_button",
+      "confidence": 0.84
+    },
+    {
+      "type": "right_of",
+      "a": "zone_center",
+      "b": "taskbar_surface_list",
+      "confidence": 0.84
+    },
+    {
+      "type": "left_of",
+      "a": "taskbar_surface_list",
+      "b": "zone_center",
+      "confidence": 0.84
+    },
+    {
+      "type": "below",
+      "a": "taskbar_surface_list",
+      "b": "zone_center",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "zone_center",
+      "b": "taskbar_surface_list",
+      "confidence": 0.84
+    },
+    {
+      "type": "right_of",
+      "a": "zone_center",
+      "b": "surface_button_smoke_terminal",
+      "confidence": 0.84
+    },
+    {
+      "type": "left_of",
+      "a": "surface_button_smoke_terminal",
+      "b": "zone_center",
+      "confidence": 0.84
+    },
+    {
+      "type": "below",
+      "a": "surface_button_smoke_terminal",
+      "b": "zone_center",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "zone_center",
+      "b": "surface_button_smoke_terminal",
+      "confidence": 0.84
+    },
+    {
+      "type": "below",
+      "a": "taskbar",
+      "b": "notification_stack",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "notification_stack",
+      "b": "taskbar",
+      "confidence": 0.84
+    },
+    {
+      "type": "right_of",
+      "a": "notification_stack",
+      "b": "taskbar_command_center_button",
+      "confidence": 0.84
+    },
+    {
+      "type": "left_of",
+      "a": "taskbar_command_center_button",
+      "b": "notification_stack",
+      "confidence": 0.84
+    },
+    {
+      "type": "below",
+      "a": "taskbar_command_center_button",
+      "b": "notification_stack",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "notification_stack",
+      "b": "taskbar_command_center_button",
+      "confidence": 0.84
+    },
+    {
+      "type": "right_of",
+      "a": "notification_stack",
+      "b": "taskbar_surface_list",
+      "confidence": 0.84
+    },
+    {
+      "type": "left_of",
+      "a": "taskbar_surface_list",
+      "b": "notification_stack",
+      "confidence": 0.84
+    },
+    {
+      "type": "below",
+      "a": "taskbar_surface_list",
+      "b": "notification_stack",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "notification_stack",
+      "b": "taskbar_surface_list",
+      "confidence": 0.84
+    },
+    {
+      "type": "right_of",
+      "a": "notification_stack",
+      "b": "surface_button_smoke_terminal",
+      "confidence": 0.84
+    },
+    {
+      "type": "left_of",
+      "a": "surface_button_smoke_terminal",
+      "b": "notification_stack",
+      "confidence": 0.84
+    },
+    {
+      "type": "below",
+      "a": "surface_button_smoke_terminal",
+      "b": "notification_stack",
+      "confidence": 0.84
+    },
+    {
+      "type": "above",
+      "a": "notification_stack",
+      "b": "surface_button_smoke_terminal",
+      "confidence": 0.84
+    },
+    {
+      "type": "inside",
+      "a": "taskbar_command_center_button",
+      "b": "taskbar",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "taskbar",
+      "b": "taskbar_command_center_button",
+      "confidence": 0.9
+    },
+    {
+      "type": "aligned_left",
+      "items": [
+        "taskbar",
+        "taskbar_command_center_button"
+      ],
+      "confidence": 0.82
+    },
+    {
+      "type": "inside",
+      "a": "taskbar_surface_list",
+      "b": "taskbar",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "taskbar",
+      "b": "taskbar_surface_list",
+      "confidence": 0.9
+    },
+    {
+      "type": "inside",
+      "a": "surface_button_smoke_terminal",
+      "b": "taskbar",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "taskbar",
+      "b": "surface_button_smoke_terminal",
+      "confidence": 0.9
+    },
+    {
+      "type": "right_of",
+      "a": "taskbar_surface_list",
+      "b": "taskbar_command_center_button",
+      "confidence": 0.84
+    },
+    {
+      "type": "left_of",
+      "a": "taskbar_command_center_button",
+      "b": "taskbar_surface_list",
+      "confidence": 0.84
+    },
+    {
+      "type": "right_of",
+      "a": "surface_button_smoke_terminal",
+      "b": "taskbar_command_center_button",
+      "confidence": 0.84
+    },
+    {
+      "type": "left_of",
+      "a": "taskbar_command_center_button",
+      "b": "surface_button_smoke_terminal",
+      "confidence": 0.84
+    },
+    {
+      "type": "inside",
+      "a": "taskbar_surface_list",
+      "b": "surface_button_smoke_terminal",
+      "confidence": 0.9
+    },
+    {
+      "type": "inside",
+      "a": "surface_button_smoke_terminal",
+      "b": "taskbar_surface_list",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "taskbar_surface_list",
+      "b": "surface_button_smoke_terminal",
+      "confidence": 0.9
+    },
+    {
+      "type": "contains",
+      "a": "surface_button_smoke_terminal",
+      "b": "taskbar_surface_list",
+      "confidence": 0.9
+    },
+    {
+      "type": "aligned_left",
+      "items": [
+        "taskbar_surface_list",
+        "surface_button_smoke_terminal"
+      ],
+      "confidence": 0.82
+    }
+  ],
+  "constraints": [
+    {
+      "id": "root_exists",
+      "type": "object_exists",
+      "object": "agora_desktop_shell",
+      "importance": "critical"
+    },
+    {
+      "id": "taskbar_exists",
+      "type": "object_exists",
+      "object": "taskbar",
+      "importance": "critical"
+    },
+    {
+      "id": "command_entrypoint_exists",
+      "type": "object_exists",
+      "object": "taskbar_command_center_button",
+      "importance": "critical"
+    },
+    {
+      "id": "background_exists",
+      "type": "object_exists",
+      "object": "shell_background",
+      "importance": "major"
+    },
+    {
+      "id": "taskbar_inside_root",
+      "type": "layout_relation",
+      "a": "taskbar",
+      "b": "agora_desktop_shell",
+      "relation": "inside",
+      "importance": "major"
+    },
+    {
+      "id": "surface_list_inside_taskbar",
+      "type": "layout_relation",
+      "a": "taskbar_surface_list",
+      "b": "taskbar",
+      "relation": "inside",
+      "importance": "major"
+    }
+  ],
+  "evidence": {
+    "source_type": "contract_promotion",
+    "generated_by": "visual-contract-service",
+    "overall_confidence": 0.9800000000000003,
+    "records": [
+      {
+        "id": "promotion:agora_desktop_shell",
+        "kind": "contract_promotion",
+        "source_ref": "agora_desktop_shell",
+        "object_refs": [
+          "agora_desktop_shell"
+        ],
+        "confidence": 0.98
+      },
+      {
+        "id": "promotion:shell_background",
+        "kind": "contract_promotion",
+        "source_ref": "shell_background",
+        "object_refs": [
+          "shell_background"
+        ],
+        "confidence": 0.98
+      },
+      {
+        "id": "promotion:shell_grid",
+        "kind": "contract_promotion",
+        "source_ref": "shell_grid",
+        "object_refs": [
+          "shell_grid"
+        ],
+        "confidence": 0.98
+      },
+      {
+        "id": "promotion:agent_health",
+        "kind": "contract_promotion",
+        "source_ref": "agent_health",
+        "object_refs": [
+          "agent_health"
+        ],
+        "confidence": 0.98
+      },
+      {
+        "id": "promotion:clock",
+        "kind": "contract_promotion",
+        "source_ref": "clock",
+        "object_refs": [
+          "clock"
+        ],
+        "confidence": 0.98
+      },
+      {
+        "id": "promotion:zone_center",
+        "kind": "contract_promotion",
+        "source_ref": "zone_center",
+        "object_refs": [
+          "zone_center"
+        ],
+        "confidence": 0.98
+      },
+      {
+        "id": "promotion:notification_stack",
+        "kind": "contract_promotion",
+        "source_ref": "notification_stack",
+        "object_refs": [
+          "notification_stack"
+        ],
+        "confidence": 0.98
+      },
+      {
+        "id": "promotion:taskbar",
+        "kind": "contract_promotion",
+        "source_ref": "taskbar",
+        "object_refs": [
+          "taskbar"
+        ],
+        "confidence": 0.98
+      },
+      {
+        "id": "promotion:taskbar_command_center_button",
+        "kind": "contract_promotion",
+        "source_ref": "taskbar_command_center_button",
+        "object_refs": [
+          "taskbar_command_center_button"
+        ],
+        "confidence": 0.98
+      },
+      {
+        "id": "promotion:taskbar_surface_list",
+        "kind": "contract_promotion",
+        "source_ref": "taskbar_surface_list",
+        "object_refs": [
+          "taskbar_surface_list"
+        ],
+        "confidence": 0.98
+      },
+      {
+        "id": "promotion:surface_button_smoke_terminal",
+        "kind": "contract_promotion",
+        "source_ref": "surface_button_smoke_terminal",
+        "object_refs": [
+          "surface_button_smoke_terminal"
+        ],
+        "confidence": 0.98
+      }
+    ]
+  }
+}

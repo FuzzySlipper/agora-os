@@ -10,9 +10,13 @@ The harness uses the Den Services `visual-contract` service documented in `den-s
 shell/desktop/visual-contracts/
 ├── README.md
 ├── fixtures/
-│   └── empty-desktop-smoke.html
+│   ├── command-center-smoke.html
+│   ├── empty-desktop-smoke.html
+│   └── theme-default-smoke.html
 ├── scenes/
-│   └── empty-desktop.promote.template.json
+│   ├── command-center.promote.template.json
+│   ├── empty-desktop.promote.template.json
+│   └── theme-default.promote.template.json
 └── scripts/
     ├── collect-scene.mjs
     ├── compare-scene.mjs
@@ -211,8 +215,12 @@ Long-lived references should live under theme packages or this directory once th
 
 ```text
 shell/desktop/themes/agora-default/visual-contracts/empty-desktop.contract.json
+shell/desktop/themes/agora-default/visual-contracts/theme-default.contract.json
+shell/desktop/themes/agora-default/visual-contracts/command-center-open.contract.json
 shell/desktop/visual-contracts/references/agora-default.empty-desktop.contract.json
 ```
+
+The `agora-default` package currently stores the Series B baseline references in the theme package because they are part of the bundled default visual identity. Regenerate them with `collect-scene.mjs` + `compare-scene.mjs`, then copy `candidate.promoted.contract.json` to the matching theme package contract path after review.
 
 Do not commit candidate/review artifacts from `/tmp`. Commit only reviewed reference contracts and reusable scene templates.
 

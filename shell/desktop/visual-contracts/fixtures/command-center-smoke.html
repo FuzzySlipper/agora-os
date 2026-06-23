@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Agora Desktop Shell empty reference</title>
+  <title>Agora Command Center reference</title>
   <style>
     :root {
       color-scheme: dark;
@@ -40,6 +40,14 @@
     .status-rail { display: inline-flex; gap: 8px; margin-top: 10px; align-items: center; color: var(--agora-muted); }
     .dot { width: 11px; height: 11px; border-radius: 999px; background: var(--agora-accent); box-shadow: 0 0 18px rgba(106, 215, 210, 0.50); }
 
+    .command-center-scrim { position: absolute; inset: 0; z-index: 5; display: grid; place-items: center; background: rgba(6, 17, 18, 0.46); backdrop-filter: blur(7px); }
+    .command-center-panel { width: min(760px, calc(100vw - 96px)); min-height: 520px; border: 1px solid rgba(124, 227, 220, 0.32); border-radius: 22px; background: linear-gradient(145deg, rgba(16, 38, 45, 0.96), rgba(8, 26, 31, 0.94)); box-shadow: 0 28px 82px rgba(0, 0, 0, 0.48), 0 0 42px rgba(106, 215, 210, 0.12); padding: 22px; }
+    .command-center-input { width: 100%; min-height: 48px; border: 1px solid var(--agora-accent-bright); border-radius: 14px; background: rgba(6, 17, 18, 0.88); color: var(--agora-text); padding: 13px 16px; box-shadow: 0 0 0 2px rgba(124, 227, 220, 0.28); }
+    .command-center-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 18px; }
+    .command-card { border: 1px solid rgba(167, 187, 186, 0.14); border-radius: 16px; background: rgba(7, 17, 20, 0.80); padding: 16px; min-height: 270px; }
+    .suggestion { border-left: 3px solid var(--agora-amber); padding: 10px 12px; margin-top: 10px; background: rgba(216, 166, 87, 0.10); border-radius: 10px; }
+    .transcript-line { margin-top: 10px; color: var(--agora-muted); }
+
   </style>
 </head>
 <body>
@@ -56,6 +64,24 @@
           <button class="surface-button" data-visual-id="surface_button_smoke_terminal" data-testid="surface_button_smoke_terminal" data-visual-role="surface_button">Terminal</button>
         </div>
       </nav>
+    </section>
+    <section class="command-center-scrim" data-visual-id="command_center" data-testid="command_center" data-visual-role="command_center" aria-label="Command Center open">
+      <div class="command-center-panel" data-visual-id="command_center_panel" data-testid="command_center_panel" data-visual-role="command_center_panel">
+        <span class="label">Agora Observatory</span>
+        <input class="command-center-input" data-visual-id="command_center_input" data-testid="command_center_input" data-visual-role="command_input" value="summarize active shell state" aria-label="Command input">
+        <div class="command-center-columns">
+          <section class="command-card" data-visual-id="command_center_suggestions" data-testid="command_center_suggestions" data-visual-role="command_suggestions">
+            <span class="label">Suggestions</span>
+            <div class="suggestion">Inspect task state</div>
+            <div class="suggestion">Open visual contract report</div>
+          </section>
+          <section class="command-card" data-visual-id="command_center_transcript" data-testid="command_center_transcript" data-visual-role="conversation_transcript">
+            <span class="label">Transcript</span>
+            <p class="transcript-line">Runner: default theme loaded through manifest.</p>
+            <p class="transcript-line">System: reference contract capture ready.</p>
+          </section>
+        </div>
+      </div>
     </section>
   </main>
 </body>

@@ -212,11 +212,20 @@ const defaultBus = new FakeBus();
 const defaultController = createThemeController(defaultBus, defaultDocument);
 const defaultSummary = defaultController.applyManifest(defaultManifest, "config");
 assert.equal(defaultSummary.theme_id, "agora-default");
+assert.equal(defaultManifest.name, "Agora Observatory");
 assert.equal(defaultSummary.skipped, 0);
+assert.equal(defaultManifest.tokens["semantic.color.accent.primary"], "#6AD7D2");
+assert.equal(defaultManifest.tokens["semantic.color.accent.secondary"], "#D8A657");
+assert.equal(defaultManifest.tokens["component.command_center.panel.border"], "rgba(124, 227, 220, 0.32)");
+assert.equal(defaultManifest.tokens["global.shadow.overlay"].includes("rgba(106, 215, 210"), true);
+assert.equal(JSON.stringify(defaultManifest.tokens).includes("#F472B6"), false);
+assert.equal(JSON.stringify(defaultManifest.tokens).includes("244, 114, 182"), false);
 assert.equal(
   defaultDocument.documentElement.style.getPropertyValue("--agora-component-command-center-panel-background"),
   defaultManifest.tokens["component.command_center.panel.background"],
 );
+assert.equal(defaultDocument.documentElement.style.getPropertyValue("--agora-semantic-color-accent-secondary"), "#D8A657");
+assert.equal(defaultDocument.documentElement.style.getPropertyValue("--agora-state-danger-control-background"), "rgba(255, 107, 95, 0.16)");
 assert.equal(defaultDocument.background.style.backgroundImage, defaultManifest.assets.wallpaper.value);
 
 const unsafeGradientDocument = new FakeDocument();
