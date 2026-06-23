@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agora Desktop Shell visual contract smoke</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --agora-bg: #080b12;
+      --agora-panel: rgba(15, 23, 42, 0.92);
+      --agora-border: rgba(148, 163, 184, 0.22);
+      --agora-accent: #76e4f7;
+      --agora-text: #edf3ff;
+      --agora-muted: #94a3b8;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: var(--agora-bg); color: var(--agora-text); font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+    .desktop-shell { position: relative; width: 100vw; height: 100vh; overflow: hidden; isolation: isolate; }
+    .shell-background { position: absolute; inset: 0; z-index: 0; background: radial-gradient(circle at 18% 12%, rgba(118, 228, 247, 0.20), transparent 34%), radial-gradient(circle at 82% 28%, rgba(129, 140, 248, 0.18), transparent 30%), linear-gradient(135deg, #05070d 0%, #080b12 52%, #0b1220 100%); }
+    .shell-grid { position: relative; z-index: 1; display: grid; grid-template-rows: 96px 1fr 72px; grid-template-columns: 280px 1fr 280px; width: 100%; height: 100%; padding: 24px; gap: 16px; }
+    .shell-zone { border: 1px solid var(--agora-border); border-radius: 18px; background: var(--agora-panel); box-shadow: 0 18px 48px rgba(0,0,0,0.34); backdrop-filter: blur(14px); }
+    .pos-top-left { grid-column: 1; grid-row: 1; padding: 18px; }
+    .pos-top-right { grid-column: 3; grid-row: 1; padding: 18px; text-align: right; }
+    .pos-center { grid-column: 2; grid-row: 2; display: grid; place-items: center; color: var(--agora-muted); }
+    .pos-bottom-right { grid-column: 3; grid-row: 2; align-self: end; min-height: 150px; padding: 18px; }
+    .pos-bottom { grid-column: 1 / -1; grid-row: 3; display: flex; align-items: center; gap: 14px; padding: 0 18px; }
+    .command-button { border: 0; border-radius: 999px; padding: 12px 18px; background: linear-gradient(135deg, var(--agora-accent), #a78bfa); color: #020617; font-weight: 800; }
+    .surface-list { display: flex; gap: 10px; }
+    .surface-button { border: 1px solid var(--agora-border); border-radius: 12px; padding: 10px 14px; background: rgba(15, 23, 42, 0.78); color: var(--agora-text); }
+    .label { display: block; color: var(--agora-muted); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; }
+    .clock { font-size: 24px; font-weight: 700; }
+  </style>
+</head>
+<body>
+  <main class="desktop-shell" data-visual-id="agora_desktop_shell" data-testid="agora_desktop_shell" data-visual-role="desktop_shell_root" aria-label="Agora Desktop Shell smoke scene">
+    <section class="shell-background" aria-hidden="true" data-visual-id="shell_background" data-testid="shell_background" data-visual-role="background"></section>
+    <section class="shell-grid" aria-label="Agora desktop shell" data-visual-id="shell_grid" data-testid="shell_grid" data-visual-role="layout_grid">
+      <aside class="shell-zone pos-top-left" data-visual-id="agent_health" data-testid="agent_health" data-visual-role="agent_health"><span class="label">Agents</span> Runner ready</aside>
+      <aside class="shell-zone pos-top-right" data-visual-id="clock" data-testid="clock" data-visual-role="clock"><span class="label">Time</span><span class="clock">12:00</span></aside>
+      <section class="shell-zone pos-center" data-visual-id="zone_center" data-testid="zone_center" data-visual-role="layout_zone">No surfaces open</section>
+      <aside class="shell-zone pos-bottom-right" data-visual-id="notification_stack" data-testid="notification_stack" data-visual-role="notification_stack"><span class="label">Notifications</span> Quiet</aside>
+      <nav class="shell-zone pos-bottom" aria-label="Desktop taskbar" data-visual-id="taskbar" data-testid="taskbar" data-visual-role="taskbar">
+        <button class="command-button" data-visual-id="taskbar_command_center_button" data-testid="taskbar_command_center_button" data-visual-role="command_center_entrypoint">⌘ Command Center</button>
+        <div class="surface-list" data-visual-id="taskbar_surface_list" data-testid="taskbar_surface_list" data-visual-role="surface_list">
+          <button class="surface-button" data-visual-id="surface_button_smoke_terminal" data-testid="surface_button_smoke_terminal" data-visual-role="surface_button">Terminal</button>
+        </div>
+      </nav>
+    </section>
+  </main>
+</body>
+</html>

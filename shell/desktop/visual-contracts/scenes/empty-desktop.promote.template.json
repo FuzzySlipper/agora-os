@@ -1,0 +1,38 @@
+{
+  "project": {
+    "id": "agora-os",
+    "vocabulary": "agora_desktop_shell_v0",
+    "roles": [
+      "desktop_shell_root",
+      "background",
+      "layout_grid",
+      "layout_zone",
+      "taskbar",
+      "command_center_entrypoint",
+      "surface_list",
+      "surface_button",
+      "clock",
+      "agent_health",
+      "notification_stack"
+    ]
+  },
+  "objects": [
+    { "source_id": "agora_desktop_shell", "target_id": "agora_desktop_shell", "domain_role": "desktop_shell_root", "importance": "critical" },
+    { "source_id": "shell_background", "target_id": "shell_background", "domain_role": "background", "importance": "major" },
+    { "source_id": "shell_grid", "target_id": "shell_grid", "domain_role": "layout_grid", "importance": "major" },
+    { "source_id": "taskbar", "target_id": "taskbar", "domain_role": "taskbar", "importance": "critical" },
+    { "source_id": "taskbar_command_center_button", "target_id": "taskbar_command_center_button", "domain_role": "command_center_entrypoint", "importance": "critical" },
+    { "source_id": "taskbar_surface_list", "target_id": "taskbar_surface_list", "domain_role": "surface_list", "importance": "major" },
+    { "source_id": "clock", "target_id": "clock", "domain_role": "clock", "importance": "minor" },
+    { "source_id": "agent_health", "target_id": "agent_health", "domain_role": "agent_health", "importance": "major" },
+    { "source_id": "notification_stack", "target_id": "notification_stack", "domain_role": "notification_stack", "importance": "major" }
+  ],
+  "constraints": [
+    { "id": "root_exists", "type": "object_exists", "object": "agora_desktop_shell", "importance": "critical" },
+    { "id": "taskbar_exists", "type": "object_exists", "object": "taskbar", "importance": "critical" },
+    { "id": "command_entrypoint_exists", "type": "object_exists", "object": "taskbar_command_center_button", "importance": "critical" },
+    { "id": "background_exists", "type": "object_exists", "object": "shell_background", "importance": "major" },
+    { "id": "taskbar_inside_root", "type": "layout_relation", "a": "taskbar", "b": "agora_desktop_shell", "relation": "inside", "importance": "major" },
+    { "id": "surface_list_inside_taskbar", "type": "layout_relation", "a": "taskbar_surface_list", "b": "taskbar", "relation": "inside", "importance": "major" }
+  ]
+}
