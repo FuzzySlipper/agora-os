@@ -1,4 +1,5 @@
 import type { DesktopShellState, ShellNotification, ShellWidget } from "../../shared/types.js";
+import { applyVisualMarker, visualID } from "../visual-markers.js";
 
 const MAX_VISIBLE = 5;
 const DISMISS_AFTER_MS = 10_000;
@@ -11,6 +12,7 @@ export class NotificationCenter extends HTMLElement implements ShellWidget {
 
     connectedCallback(): void {
         this.classList.add("notification-center");
+        applyVisualMarker(this, "notification_stack", "notification_stack");
     }
 
     mount(container: HTMLElement): void {
@@ -38,6 +40,7 @@ export class NotificationCenter extends HTMLElement implements ShellWidget {
     private renderNotification(notification: ShellNotification): HTMLElement {
         const item = document.createElement("article");
         item.className = `notification-center__item notification-center__item--${notification.level ?? "info"}`;
+        applyVisualMarker(item, visualID("notification", notification.id), "notification");
         item.dataset.notificationId = notification.id;
         const title = document.createElement("strong");
         title.className = "notification-center__title";

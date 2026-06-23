@@ -1,18 +1,155 @@
 :root {
-    --shell-bg: #080b12;
-    --shell-text: #edf3ff;
-    --shell-muted: #94a3b8;
-    --shell-accent: #76e4f7;
-    --taskbar-bg: rgba(10, 14, 24, 0.88);
-    --taskbar-height: 56px;
-    --clock-color: #f8fbff;
-    --notif-bg: rgba(17, 24, 39, 0.92);
-    --health-dot-size: 0.7rem;
-    --shell-border: rgba(148, 163, 184, 0.24);
-    color-scheme: dark;
-    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-}
+    /* Agora Desktop Shell visual token inventory (Series A v0.1).
+       Canonical tokens follow the ADR mapping: dotted manifest keys become --agora-* CSS
+       properties. Compatibility aliases are kept for existing runtime shell.theme payloads. */
+    --agora-global-color-neutral-0: #020617;
+    --agora-global-color-neutral-900: #080b12;
+    --agora-global-color-neutral-800: #0f172a;
+    --agora-global-color-neutral-700: #1f2937;
+    --agora-global-color-neutral-500: #64748b;
+    --agora-global-color-neutral-400: #94a3b8;
+    --agora-global-color-neutral-100: #e5e7eb;
+    --agora-global-color-neutral-50: #f8fafc;
+    --agora-global-color-cyan-300: #76e4f7;
+    --agora-global-color-sky-300: #7dd3fc;
+    --agora-global-color-pink-400: #f472b6;
+    --agora-global-color-violet-300: #c4b5fd;
+    --agora-global-color-success-400: #34d399;
+    --agora-global-color-warning-400: #fbbf24;
+    --agora-global-color-danger-400: #f87171;
+    --agora-global-color-danger-200: #fecaca;
+    --agora-global-font-family-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --agora-global-font-size-xs: 0.72rem;
+    --agora-global-font-size-sm: 0.82rem;
+    --agora-global-font-size-md: 0.9rem;
+    --agora-global-font-size-lg: 1.35rem;
+    --agora-global-font-weight-strong: 800;
+    --agora-global-font-weight-label: 650;
+    --agora-global-space-1: 0.25rem;
+    --agora-global-space-2: 0.35rem;
+    --agora-global-space-3: 0.5rem;
+    --agora-global-space-4: 0.6rem;
+    --agora-global-space-5: 0.75rem;
+    --agora-global-space-6: 0.8rem;
+    --agora-global-space-7: 0.9rem;
+    --agora-global-space-8: 1rem;
+    --agora-global-space-10: 1.1rem;
+    --agora-global-space-12: 1.5rem;
+    --agora-global-radius-pill: 999px;
+    --agora-global-radius-control-sm: 0.55rem;
+    --agora-global-radius-control-md: 0.7rem;
+    --agora-global-radius-control-lg: 0.8rem;
+    --agora-global-radius-panel-sm: 0.9rem;
+    --agora-global-radius-panel: 1rem;
+    --agora-global-radius-panel-lg: 1.1rem;
+    --agora-global-radius-overlay: 24px;
+    --agora-global-blur-panel: blur(18px);
+    --agora-global-blur-overlay: blur(22px);
+    --agora-global-blur-scrim: blur(8px);
+    --agora-global-shadow-panel: 0 18px 48px rgba(0, 0, 0, 0.38);
+    --agora-global-shadow-widget: 0 18px 48px rgba(0, 0, 0, 0.30);
+    --agora-global-shadow-notification: 0 16px 44px rgba(0, 0, 0, 0.32);
+    --agora-global-shadow-overlay: 0 28px 80px rgba(0, 0, 0, 0.45), 0 0 40px rgba(244, 114, 182, 0.14);
 
+    --agora-semantic-color-background-canvas: var(--agora-global-color-neutral-900);
+    --agora-semantic-color-background-canvas-deep: #05070d;
+    --agora-semantic-color-background-canvas-low: #0b1220;
+    --agora-semantic-color-background-panel: rgba(15, 23, 42, 0.72);
+    --agora-semantic-color-background-panel-muted: rgba(15, 23, 42, 0.58);
+    --agora-semantic-color-background-panel-overlay: rgba(15, 23, 42, 0.82);
+    --agora-semantic-color-text-primary: #edf3ff;
+    --agora-semantic-color-text-secondary: var(--agora-global-color-neutral-400);
+    --agora-semantic-color-text-on-accent: #02131a;
+    --agora-semantic-color-border-subtle: rgba(148, 163, 184, 0.24);
+    --agora-semantic-color-border-muted: rgba(148, 163, 184, 0.18);
+    --agora-semantic-color-accent-primary: var(--agora-global-color-cyan-300);
+    --agora-semantic-color-accent-secondary: var(--agora-global-color-pink-400);
+    --agora-semantic-color-success: var(--agora-global-color-success-400);
+    --agora-semantic-color-warning: var(--agora-global-color-warning-400);
+    --agora-semantic-color-danger: var(--agora-global-color-danger-400);
+    --agora-semantic-color-danger-text: var(--agora-global-color-danger-200);
+    --agora-semantic-radius-panel: var(--agora-global-radius-panel);
+    --agora-semantic-radius-control: var(--agora-global-radius-control-md);
+    --agora-semantic-elevation-panel: var(--agora-global-shadow-panel);
+    --agora-semantic-elevation-overlay: var(--agora-global-shadow-overlay);
+    --agora-semantic-backdrop-panel: var(--agora-global-blur-panel);
+    --agora-semantic-backdrop-overlay: var(--agora-global-blur-overlay);
+    --agora-semantic-backdrop-scrim: var(--agora-global-blur-scrim);
+
+    --agora-component-background-wallpaper: radial-gradient(circle at 18% 12%, rgba(118, 228, 247, 0.20), transparent 34%), radial-gradient(circle at 82% 28%, rgba(129, 140, 248, 0.18), transparent 30%), linear-gradient(135deg, var(--agora-semantic-color-background-canvas-deep) 0%, var(--agora-semantic-color-background-canvas) 52%, var(--agora-semantic-color-background-canvas-low) 100%);
+    --agora-component-widget-container-background: var(--agora-semantic-color-background-panel-muted);
+    --agora-component-widget-container-border: var(--agora-semantic-color-border-subtle);
+    --agora-component-widget-container-radius: var(--agora-semantic-radius-panel);
+    --agora-component-widget-container-shadow: var(--agora-global-shadow-widget);
+    --agora-component-taskbar-background: rgba(10, 14, 24, 0.88);
+    --agora-component-taskbar-height: 56px;
+    --agora-component-taskbar-border: var(--agora-semantic-color-border-subtle);
+    --agora-component-taskbar-radius: var(--agora-semantic-radius-panel);
+    --agora-component-taskbar-shadow: var(--agora-semantic-elevation-panel);
+    --agora-component-taskbar-launcher-background: var(--agora-semantic-color-accent-primary);
+    --agora-component-taskbar-launcher-color: var(--agora-semantic-color-text-on-accent);
+    --agora-component-surface-button-background: rgba(148, 163, 184, 0.16);
+    --agora-component-surface-button-border: transparent;
+    --agora-component-clock-color: var(--agora-global-color-neutral-50);
+    --agora-component-agent-health-dot-size: 0.7rem;
+    --agora-component-notification-background: rgba(17, 24, 39, 0.92);
+    --agora-component-notification-radius: var(--agora-semantic-radius-panel);
+    --agora-component-notification-shadow: var(--agora-global-shadow-notification);
+    --agora-component-window-chrome-frame-background: rgba(10, 14, 24, 0.74);
+    --agora-component-window-chrome-surface-background: var(--agora-semantic-color-background-panel);
+    --agora-component-window-chrome-surface-border: rgba(148, 163, 184, 0.22);
+    --agora-component-window-chrome-button-background: rgba(148, 163, 184, 0.14);
+    --agora-component-window-chrome-button-border: rgba(148, 163, 184, 0.28);
+    --agora-component-command-center-scrim-background: rgba(2, 6, 23, 0.42);
+    --agora-component-command-center-panel-background: linear-gradient(145deg, rgba(15, 23, 42, 0.96), rgba(31, 41, 55, 0.94));
+    --agora-component-command-center-panel-border: rgba(244, 114, 182, 0.42);
+    --agora-component-command-center-control-background: var(--agora-semantic-color-background-panel-overlay);
+    --agora-component-command-center-input-background: rgba(2, 6, 23, 0.84);
+
+    --agora-state-focus-border: var(--agora-semantic-color-accent-primary);
+    --agora-state-focus-ring: 0 0 0 2px rgba(118, 228, 247, 0.20);
+    --agora-state-accent-glow: 0 0 18px var(--agora-semantic-color-accent-primary);
+    --agora-state-success-glow: 0 0 14px rgba(52, 211, 153, 0.8);
+    --agora-state-warning-glow: 0 0 14px rgba(251, 191, 36, 0.75);
+    --agora-state-danger-glow: 0 0 14px rgba(248, 113, 113, 0.75);
+    --agora-state-danger-control-background: rgba(248, 113, 113, 0.18);
+    --agora-state-accent-control-background: rgba(244, 114, 182, 0.18);
+    --agora-state-hover-background: rgba(14, 165, 233, 0.14);
+    --agora-state-hover-border: rgba(125, 211, 252, 0.56);
+    --agora-state-pending-opacity: 0.72;
+    --agora-state-disabled-opacity: 0.62;
+    --agora-state-disabled-cursor: not-allowed;
+    --agora-state-success-color: var(--agora-semantic-color-success);
+    --agora-state-warning-color: var(--agora-semantic-color-warning);
+    --agora-state-error-color: var(--agora-semantic-color-danger-text);
+    --agora-state-error-border: rgba(248, 113, 113, 0.34);
+    --agora-state-error-background: rgba(127, 29, 29, 0.22);
+
+    --agora-motion-duration-fast: 120ms;
+    --agora-motion-duration-normal: 180ms;
+    --agora-motion-easing-standard: cubic-bezier(0.2, 0.8, 0.2, 1);
+    --agora-density-control-height-sm: 1.85rem;
+    --agora-density-control-height-md: 2.2rem;
+    --agora-density-control-height-lg: 2.4rem;
+    --agora-density-panel-padding: 1rem;
+    --agora-density-row-gap: 0.6rem;
+    --agora-density-shell-gap: 1rem;
+    --agora-density-taskbar-height: var(--agora-component-taskbar-height);
+
+    /* Compatibility aliases, eventually generated from canonical tokens. */
+    --shell-bg: var(--agora-semantic-color-background-canvas);
+    --shell-text: var(--agora-semantic-color-text-primary);
+    --shell-muted: var(--agora-semantic-color-text-secondary);
+    --shell-accent: var(--agora-semantic-color-accent-primary);
+    --taskbar-bg: var(--agora-component-taskbar-background);
+    --taskbar-height: var(--agora-component-taskbar-height);
+    --clock-color: var(--agora-component-clock-color);
+    --notif-bg: var(--agora-component-notification-background);
+    --health-dot-size: var(--agora-component-agent-health-dot-size);
+    --shell-border: var(--agora-semantic-color-border-subtle);
+    color-scheme: dark;
+    font-family: var(--agora-global-font-family-sans);
+}
 * {
     box-sizing: border-box;
 }
@@ -43,10 +180,7 @@ body {
     inset: 0 !important;
     z-index: 0 !important;
     pointer-events: none !important;
-    background:
-        radial-gradient(circle at 18% 12%, rgba(118, 228, 247, 0.20), transparent 34%),
-        radial-gradient(circle at 82% 28%, rgba(129, 140, 248, 0.18), transparent 30%),
-        linear-gradient(135deg, #05070d 0%, var(--shell-bg) 52%, #0b1220 100%);
+    background: var(--agora-component-background-wallpaper);
 }
 
 .shell-grid {
@@ -62,8 +196,8 @@ body {
         "center center center"
         "bottom-right bottom-right bottom-right"
         "bottom bottom bottom";
-    gap: 1rem;
-    padding: 1rem 1rem calc(var(--taskbar-height) + 1rem);
+    gap: var(--agora-density-shell-gap);
+    padding: var(--agora-density-panel-padding) var(--agora-density-panel-padding) calc(var(--taskbar-height) + var(--agora-density-panel-padding));
 }
 
 .shell-zone {
@@ -85,11 +219,11 @@ body {
     max-width: 100%;
     max-height: 100%;
     border: 1px solid var(--shell-border);
-    border-radius: 1rem;
+    border-radius: var(--agora-semantic-radius-panel);
     overflow: hidden;
-    background: rgba(15, 23, 42, 0.58);
-    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.30);
-    backdrop-filter: blur(18px);
+    background: var(--agora-component-widget-container-background);
+    box-shadow: var(--agora-component-widget-container-shadow);
+    backdrop-filter: var(--agora-semantic-backdrop-panel);
 }
 
 .injected-widget {
@@ -134,14 +268,14 @@ body {
 .shell-zone--top-left,
 .pos-top-left[data-widget-slot="agent-health"] {
     display: inline-flex;
-    gap: 0.5rem;
+    gap: var(--agora-global-space-3);
     align-items: center;
-    padding: 0.55rem 0.8rem;
+    padding: 0.55rem var(--agora-global-space-6);
     border: 1px solid var(--shell-border);
-    border-radius: 999px;
-    background: rgba(15, 23, 42, 0.68);
+    border-radius: var(--agora-global-radius-pill);
+    background: var(--agora-semantic-color-background-panel);
     color: var(--shell-muted);
-    backdrop-filter: blur(18px);
+    backdrop-filter: var(--agora-semantic-backdrop-panel);
 }
 
 .shell-zone--bottom-right,
@@ -154,29 +288,29 @@ body {
     z-index: 10 !important;
     display: flex !important;
     align-items: center !important;
-    gap: 1rem !important;
-    padding: 0 1rem !important;
+    gap: var(--agora-density-shell-gap) !important;
+    padding: 0 var(--agora-density-panel-padding) !important;
     border: 1px solid var(--shell-border) !important;
-    border-radius: 1rem !important;
+    border-radius: var(--agora-component-taskbar-radius) !important;
     background: var(--taskbar-bg) !important;
-    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.38) !important;
-    backdrop-filter: blur(22px) !important;
+    box-shadow: var(--agora-component-taskbar-shadow) !important;
+    backdrop-filter: var(--agora-semantic-backdrop-overlay) !important;
 }
 
 .shell-clock,
 agora-clock {
     display: block;
     min-width: 5rem;
-    padding: 0.55rem 0.8rem;
+    padding: 0.55rem var(--agora-global-space-6);
     border: 1px solid var(--shell-border);
-    border-radius: 999px;
-    background: rgba(15, 23, 42, 0.68);
+    border-radius: var(--agora-global-radius-pill);
+    background: var(--agora-semantic-color-background-panel);
     color: var(--clock-color);
     font-size: 0.95rem;
-    font-weight: 650;
+    font-weight: var(--agora-global-font-weight-label);
     letter-spacing: 0.04em;
     text-align: center;
-    backdrop-filter: blur(18px);
+    backdrop-filter: var(--agora-semantic-backdrop-panel);
 }
 
 agora-agent-health {
@@ -191,32 +325,32 @@ agora-agent-health {
 
 .agent-health-widget__dots {
     display: inline-flex;
-    gap: 0.35rem;
+    gap: var(--agora-global-space-2);
     align-items: center;
 }
 
 .agent-health-widget__dot,
 .shell-health-dot {
-    width: var(--health-dot-size);
-    height: var(--health-dot-size);
-    border-radius: 999px;
-    background: var(--shell-accent);
-    box-shadow: 0 0 18px var(--shell-accent);
+    width: var(--agora-component-agent-health-dot-size);
+    height: var(--agora-component-agent-health-dot-size);
+    border-radius: var(--agora-global-radius-pill);
+    background: var(--agora-component-taskbar-launcher-background);
+    box-shadow: var(--agora-state-accent-glow);
 }
 
 .agent-health-widget__dot--active {
-    background: #34d399;
-    box-shadow: 0 0 14px rgba(52, 211, 153, 0.8);
+    background: var(--agora-state-success-color);
+    box-shadow: var(--agora-state-success-glow);
 }
 
 .agent-health-widget__dot--idle {
-    background: #fbbf24;
-    box-shadow: 0 0 14px rgba(251, 191, 36, 0.75);
+    background: var(--agora-state-warning-color);
+    box-shadow: var(--agora-state-warning-glow);
 }
 
 .agent-health-widget__dot--offline {
-    background: #f87171;
-    box-shadow: 0 0 14px rgba(248, 113, 113, 0.75);
+    background: var(--agora-semantic-color-danger);
+    box-shadow: var(--agora-state-danger-glow);
 }
 
 agora-window-chrome {
@@ -229,10 +363,10 @@ agora-window-chrome {
 
 .window-chrome-widget__frame {
     border: 1px solid var(--shell-border);
-    border-radius: 1.1rem;
-    background: rgba(10, 14, 24, 0.74);
-    box-shadow: 0 24px 70px rgba(0, 0, 0, 0.42);
-    backdrop-filter: blur(22px);
+    border-radius: var(--agora-global-radius-panel-lg);
+    background: var(--agora-component-window-chrome-frame-background);
+    box-shadow: var(--agora-semantic-elevation-overlay);
+    backdrop-filter: var(--agora-semantic-backdrop-overlay);
     overflow: hidden;
 }
 
@@ -241,23 +375,23 @@ agora-window-chrome {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 0.75rem;
+    gap: var(--agora-global-space-5);
 }
 
 .window-chrome-widget__header {
     padding: 0.75rem 0.9rem;
-    border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+    border-bottom: 1px solid var(--agora-semantic-color-border-muted);
     color: var(--shell-text);
     font-size: 0.86rem;
-    font-weight: 800;
+    font-weight: var(--agora-global-font-weight-strong);
     letter-spacing: 0.04em;
     text-transform: uppercase;
 }
 
 .window-chrome-widget__subtitle {
     color: var(--shell-muted);
-    font-size: 0.72rem;
-    font-weight: 650;
+    font-size: var(--agora-global-font-size-xs);
+    font-weight: var(--agora-global-font-weight-label);
     text-transform: none;
     letter-spacing: 0;
 }
@@ -265,25 +399,25 @@ agora-window-chrome {
 .window-chrome-widget__list {
     display: flex;
     flex-direction: column;
-    gap: 0.6rem;
+    gap: var(--agora-density-row-gap);
     padding: 0.8rem;
 }
 
 .window-chrome-widget__surface {
-    border: 1px solid rgba(148, 163, 184, 0.22);
-    border-radius: 0.9rem;
-    background: rgba(15, 23, 42, 0.72);
+    border: 1px solid var(--agora-component-window-chrome-surface-border);
+    border-radius: var(--agora-global-radius-panel-sm);
+    background: var(--agora-component-window-chrome-surface-background);
     color: var(--shell-text);
     overflow: hidden;
 }
 
 .window-chrome-widget__surface--focused {
-    border-color: var(--shell-accent);
-    box-shadow: 0 0 0 2px rgba(118, 228, 247, 0.18);
+    border-color: var(--agora-state-focus-border);
+    box-shadow: var(--agora-state-focus-ring);
 }
 
 .window-chrome-widget__surface--error {
-    border-color: #f87171;
+    border-color: var(--agora-semantic-color-danger);
 }
 
 .window-chrome-widget__titlebar {
@@ -304,44 +438,44 @@ agora-window-chrome {
 }
 
 .window-chrome-widget__title {
-    font-size: 0.9rem;
-    font-weight: 800;
+    font-size: var(--agora-global-font-size-md);
+    font-weight: var(--agora-global-font-weight-strong);
 }
 
 .window-chrome-widget__meta,
 .window-chrome-widget__status {
     color: var(--shell-muted);
-    font-size: 0.72rem;
+    font-size: var(--agora-global-font-size-xs);
 }
 
 .window-chrome-widget__controls {
     display: inline-flex;
-    gap: 0.35rem;
+    gap: var(--agora-global-space-2);
     flex: 0 0 auto;
 }
 
 .window-chrome-widget__button {
     min-width: 2rem;
-    height: 1.85rem;
+    height: var(--agora-density-control-height-sm);
     padding: 0 0.55rem;
-    border: 1px solid rgba(148, 163, 184, 0.28);
-    border-radius: 0.55rem;
-    background: rgba(148, 163, 184, 0.14);
+    border: 1px solid var(--agora-component-window-chrome-button-border);
+    border-radius: var(--agora-global-radius-control-sm);
+    background: var(--agora-component-window-chrome-button-background);
     color: var(--shell-text);
     font: inherit;
     font-size: 0.74rem;
-    font-weight: 800;
+    font-weight: var(--agora-global-font-weight-strong);
     cursor: pointer;
 }
 
 .window-chrome-widget__button--close {
-    background: rgba(248, 113, 113, 0.18);
-    color: #fecaca;
+    background: var(--agora-state-danger-control-background);
+    color: var(--agora-state-error-color);
 }
 
 .window-chrome-widget__button:disabled {
     cursor: progress;
-    opacity: 0.6;
+    opacity: var(--agora-state-disabled-opacity);
 }
 
 .window-chrome-widget__status {
@@ -354,28 +488,28 @@ agora-taskbar {
 
 .taskbar-widget__launch,
 .shell-launcher {
-    width: 2.4rem;
-    height: 2.4rem;
+    width: var(--agora-density-control-height-lg);
+    height: var(--agora-density-control-height-lg);
     border: 0;
-    border-radius: 0.8rem;
-    background: var(--shell-accent);
-    color: #02131a;
+    border-radius: var(--agora-global-radius-control-lg);
+    background: var(--agora-component-taskbar-launcher-background);
+    color: var(--agora-component-taskbar-launcher-color);
     font: inherit;
-    font-weight: 800;
+    font-weight: var(--agora-global-font-weight-strong);
     cursor: pointer;
 }
 
 .taskbar-widget__surface {
-    min-width: 2.4rem;
+    min-width: var(--agora-density-control-height-lg);
     max-width: 14rem;
-    height: 2.2rem;
+    height: var(--agora-density-control-height-md);
     display: inline-flex;
     align-items: center;
-    gap: 0.45rem;
+    gap: var(--agora-global-space-3);
     overflow: hidden;
     border: 1px solid transparent;
-    border-radius: 0.7rem;
-    background: rgba(148, 163, 184, 0.16);
+    border-radius: var(--agora-semantic-radius-control);
+    background: var(--agora-component-surface-button-background);
     color: var(--shell-text);
     font: inherit;
     font-weight: 700;
@@ -383,27 +517,27 @@ agora-taskbar {
 }
 
 .taskbar-widget__surface--focused {
-    border-color: var(--shell-accent);
-    box-shadow: 0 0 0 2px rgba(118, 228, 247, 0.20);
+    border-color: var(--agora-state-focus-border);
+    box-shadow: var(--agora-state-focus-ring);
 }
 
 .taskbar-widget__surface--pending,
 .taskbar-widget__surface--closing {
-    opacity: 0.72;
+    opacity: var(--agora-state-pending-opacity);
 }
 
 .taskbar-widget__surface--closing {
-    border-color: #fbbf24;
+    border-color: var(--agora-state-warning-color);
 }
 
 .taskbar-widget__surface--error,
 .taskbar-widget__surface--disabled {
-    border-color: #f87171;
-    color: #fecaca;
+    border-color: var(--agora-semantic-color-danger);
+    color: var(--agora-state-error-color);
 }
 
 .taskbar-widget__surface:disabled {
-    cursor: not-allowed;
+    cursor: var(--agora-state-disabled-cursor);
 }
 
 .taskbar-widget__surface-label {
@@ -412,13 +546,13 @@ agora-taskbar {
     text-overflow: ellipsis;
     white-space: nowrap;
     font-size: 0.78rem;
-    font-weight: 650;
+    font-weight: var(--agora-global-font-weight-label);
 }
 
 .taskbar-widget__surfaces {
     display: flex;
     flex: 1;
-    gap: 0.45rem;
+    gap: var(--agora-global-space-3);
     min-width: 0;
     overflow: hidden;
 }
@@ -426,24 +560,24 @@ agora-taskbar {
 .taskbar-widget__session,
 .shell-surface-count {
     color: var(--shell-muted);
-    font-size: 0.9rem;
+    font-size: var(--agora-global-font-size-md);
     white-space: nowrap;
 }
 
 agora-notification-center {
     display: flex;
     flex-direction: column;
-    gap: 0.6rem;
+    gap: var(--agora-density-row-gap);
 }
 
 .notification-center__item,
 .shell-notification,
 .shell-zone--bottom-right > * {
     border: 1px solid var(--shell-border);
-    border-radius: 1rem;
+    border-radius: var(--agora-semantic-radius-panel);
     background: var(--notif-bg);
-    box-shadow: 0 16px 44px rgba(0, 0, 0, 0.32);
-    backdrop-filter: blur(18px);
+    box-shadow: var(--agora-component-notification-shadow);
+    backdrop-filter: var(--agora-semantic-backdrop-panel);
 }
 
 .notification-center__title {
@@ -456,7 +590,7 @@ agora-notification-center {
 .notification-center__message {
     margin: 0;
     color: var(--shell-muted);
-    font-size: 0.82rem;
+    font-size: var(--agora-global-font-size-sm);
     line-height: 1.35;
 }
 
@@ -466,120 +600,120 @@ agora-notification-center {
     display: grid;
     place-items: center;
     z-index: 60;
-    background: rgba(2, 6, 23, 0.42);
-    backdrop-filter: blur(8px);
+    background: var(--agora-component-command-center-scrim-background);
+    backdrop-filter: var(--agora-semantic-backdrop-scrim);
 }
 
 .command-center-widget__panel {
     width: min(760px, calc(100vw - 64px));
     max-height: min(720px, calc(100vh - 120px));
     overflow: auto;
-    border: 1px solid rgba(244, 114, 182, 0.42);
-    border-radius: 24px;
-    background: linear-gradient(145deg, rgba(15, 23, 42, 0.96), rgba(31, 41, 55, 0.94));
-    color: #e5e7eb;
-    box-shadow: 0 28px 80px rgba(0, 0, 0, 0.45), 0 0 40px rgba(244, 114, 182, 0.14);
-    padding: 22px;
+    border: 1px solid var(--agora-component-command-center-panel-border);
+    border-radius: var(--agora-global-radius-overlay);
+    background: var(--agora-component-command-center-panel-background);
+    color: var(--agora-global-color-neutral-100);
+    box-shadow: var(--agora-semantic-elevation-overlay);
+    padding: var(--agora-global-space-12);
 }
 
 .command-center-widget__header {
     display: flex;
     align-items: start;
     justify-content: space-between;
-    gap: 16px;
-    margin-bottom: 16px;
+    gap: var(--agora-global-space-8);
+    margin-bottom: var(--agora-global-space-8);
 }
 
 .command-center-widget__header strong {
     display: block;
-    font-size: 1.35rem;
+    font-size: var(--agora-global-font-size-lg);
 }
 
 .command-center-widget__header span,
 .command-center-widget__empty,
 .command-center-widget__row-meta {
-    color: #94a3b8;
+    color: var(--agora-semantic-color-text-secondary);
     font-size: 0.86rem;
 }
 
 .command-center-widget__close,
 .command-center-widget__submit,
 .command-center-widget__row {
-    border: 1px solid rgba(148, 163, 184, 0.26);
-    border-radius: 12px;
-    background: rgba(15, 23, 42, 0.82);
-    color: #e5e7eb;
+    border: 1px solid var(--agora-semantic-color-border-subtle);
+    border-radius: var(--agora-semantic-radius-control);
+    background: var(--agora-component-command-center-control-background);
+    color: var(--agora-global-color-neutral-100);
 }
 
 .command-center-widget__close {
     width: 34px;
     height: 34px;
-    font-size: 1.35rem;
+    font-size: var(--agora-global-font-size-lg);
 }
 
 .command-center-widget__prompt {
     display: flex;
-    gap: 10px;
-    margin-bottom: 18px;
+    gap: var(--agora-global-space-4);
+    margin-bottom: var(--agora-global-space-10);
 }
 
 .command-center-widget__prompt input {
     flex: 1;
     min-width: 0;
-    border: 1px solid rgba(244, 114, 182, 0.34);
-    border-radius: 16px;
-    background: rgba(2, 6, 23, 0.84);
-    color: #f8fafc;
-    padding: 12px 14px;
+    border: 1px solid var(--agora-component-command-center-panel-border);
+    border-radius: var(--agora-semantic-radius-panel);
+    background: var(--agora-component-command-center-input-background);
+    color: var(--agora-global-color-neutral-50);
+    padding: 0.75rem 0.875rem;
 }
 
 .command-center-widget__submit {
     padding: 0 18px;
-    background: rgba(244, 114, 182, 0.18);
-    border-color: rgba(244, 114, 182, 0.38);
+    background: var(--agora-state-accent-control-background);
+    border-color: var(--agora-component-command-center-panel-border);
 }
 
 .command-center-widget__suggestions,
 .command-center-widget__transcript {
     display: grid;
-    gap: 8px;
-    margin-top: 14px;
+    gap: var(--agora-global-space-3);
+    margin-top: var(--agora-global-space-7);
 }
 
 .command-center-widget__suggestions h3,
 .command-center-widget__transcript h3 {
     margin: 0 0 4px;
-    font-size: 0.82rem;
+    font-size: var(--agora-global-font-size-sm);
     letter-spacing: 0.12em;
     text-transform: uppercase;
-    color: #c4b5fd;
+    color: var(--agora-global-color-violet-300);
 }
 
 .command-center-widget__row {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    gap: 16px;
+    gap: var(--agora-global-space-8);
     width: 100%;
-    padding: 11px 13px;
+    padding: 0.6875rem 0.8125rem;
     text-align: left;
 }
 
 .command-center-widget__row:not(:disabled):hover {
-    border-color: rgba(125, 211, 252, 0.56);
-    background: rgba(14, 165, 233, 0.14);
+    border-color: var(--agora-state-hover-border);
+    background: var(--agora-state-hover-background);
 }
 
 .command-center-widget__row--disabled,
 .command-center-widget__row:disabled {
-    opacity: 0.62;
-    cursor: not-allowed;
+    opacity: var(--agora-state-disabled-opacity);
+    cursor: var(--agora-state-disabled-cursor);
 }
 
 .command-center-widget__turn {
-    border-left: 3px solid rgba(125, 211, 252, 0.52);
+    border-left: 3px solid var(--agora-state-hover-border);
     padding: 7px 10px;
-    background: rgba(15, 23, 42, 0.54);
+    background: var(--agora-semantic-color-background-panel-muted);
     border-radius: 10px;
 }
 
@@ -588,13 +722,13 @@ agora-notification-center {
 }
 
 .command-center-widget__turn--pending {
-    border-left-color: #fbbf24;
+    border-left-color: var(--agora-state-warning-color);
 }
 
 .command-center-widget__error {
-    color: #fecaca;
-    border: 1px solid rgba(248, 113, 113, 0.34);
-    border-radius: 12px;
+    color: var(--agora-state-error-color);
+    border: 1px solid var(--agora-state-error-border);
+    border-radius: var(--agora-semantic-radius-control);
     padding: 8px 10px;
-    background: rgba(127, 29, 29, 0.22);
+    background: var(--agora-state-error-background);
 }

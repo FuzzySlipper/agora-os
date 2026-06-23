@@ -1,4 +1,5 @@
 import type { DesktopShellState, ShellWidget, SurfaceActionResponse, SurfaceEvent } from "../../shared/types.js";
+import { applyVisualMarker, visualID } from "../visual-markers.js";
 
 export type ShellPublisher = (topic: string, body: unknown) => void;
 export type SurfaceFocusAction = (surfaceId: string) => Promise<SurfaceActionResponse>;
@@ -55,6 +56,7 @@ export class TaskbarWidget extends HTMLElement implements ShellWidget {
 
     connectedCallback(): void {
         this.classList.add("taskbar-widget");
+        applyVisualMarker(this, "taskbar", "taskbar");
     }
 
     mount(container: HTMLElement): void {
@@ -134,11 +136,13 @@ export class TaskbarWidget extends HTMLElement implements ShellWidget {
     private render(): void {
         this.replaceChildren();
         const launch = button("taskbar-widget__launch", "⌘", "Open Command Center");
+        applyVisualMarker(launch, "taskbar_command_center_button", "command_center_entrypoint");
         launch.title = "Command Center: ask Agora, launch apps, run shell actions";
         launch.dataset.action = "shell.command_center.toggle";
         launch.addEventListener("click", () => this.onOpenCommandCenter());
         const surfaceList = document.createElement("div");
         surfaceList.className = "taskbar-widget__surfaces";
+        applyVisualMarker(surfaceList, "taskbar_surface_list", "surface_list");
         for (const item of this.surfaces) {
             const surface = item.surface;
             const status = this.actionStatus.get(surface.id);
@@ -164,6 +168,7 @@ export class TaskbarWidget extends HTMLElement implements ShellWidget {
             const isRestore = Boolean(surface.minimized || surface.visibility_state === "minimized");
             const icon = button(classes.join(" "), item.icon, `${isRestore ? "Restore" : "Focus"} ${item.label}`);
             icon.title = status?.error || surface.action_error || item.title;
+            applyVisualMarker(icon, visualID("surface_button", surface.id), "surface_button");
             icon.dataset.surfaceId = surface.id;
             icon.dataset.action = isRestore ? "surface.minimize" : "surface.focus";
             icon.disabled = Boolean(surface.disabled || status?.pending);

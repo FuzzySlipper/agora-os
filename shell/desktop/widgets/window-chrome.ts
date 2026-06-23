@@ -1,4 +1,5 @@
 import type { DesktopShellState, ShellWidget, SurfaceActionResponse, SurfaceEvent } from "../../shared/types.js";
+import { applyVisualMarker, visualID } from "../visual-markers.js";
 import { createSurfaceFocusAction, SurfaceFocusError, type SurfaceFocusAction } from "./taskbar.js";
 
 export type SurfaceCloseAction = (surfaceId: string) => Promise<SurfaceActionResponse>;
@@ -57,6 +58,7 @@ export class WindowChromeWidget extends HTMLElement implements ShellWidget {
 
     connectedCallback(): void {
         this.classList.add("window-chrome-widget");
+        applyVisualMarker(this, "window_chrome_host", "window_chrome_host");
     }
 
     mount(container: HTMLElement): void {
@@ -158,6 +160,7 @@ export class WindowChromeWidget extends HTMLElement implements ShellWidget {
         const frame = document.createElement("section");
         frame.className = "window-chrome-widget__frame";
         frame.setAttribute("aria-label", "Agora-managed window chrome");
+        applyVisualMarker(frame, "window_chrome", "window_chrome");
 
         const header = document.createElement("header");
         header.className = "window-chrome-widget__header";
@@ -188,6 +191,7 @@ export class WindowChromeWidget extends HTMLElement implements ShellWidget {
         if (status?.error || surface.action_error) {
             row.classList.add("window-chrome-widget__surface--error");
         }
+        applyVisualMarker(row, visualID("window_chrome_surface", surface.id), "surface_chrome");
         row.dataset.surfaceId = surface.id;
 
         const titlebar = document.createElement("div");
@@ -207,6 +211,7 @@ export class WindowChromeWidget extends HTMLElement implements ShellWidget {
 
         const controls = document.createElement("div");
         controls.className = "window-chrome-widget__controls";
+        applyVisualMarker(controls, visualID("window_chrome_controls", surface.id), "surface_controls");
         for (const move of [
             { label: "←", dx: -32, dy: 0, name: "left" },
             { label: "→", dx: 32, dy: 0, name: "right" },

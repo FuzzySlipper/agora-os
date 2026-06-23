@@ -111,6 +111,7 @@ const widget = new WindowChromeWidget({
     return { action: "surface.minimize", surface_id: surfaceId, decision: "accepted", target_state: { minimized: enabled }, result_state: { minimized: enabled }, minimized: enabled, surface: { surface: { id: surfaceId, title: "ASHA Studio", minimized: enabled, visibility_state: enabled ? "minimized" : "visible" } } };
   },
 });
+widget.connectedCallback();
 widget.mount(new FakeElement("section"));
 widget.update({
   surfaces: [
@@ -123,7 +124,12 @@ widget.update({
 });
 
 assert.equal(widget.querySelectorAll("[data-surface-id=\"view-shell\"]").length, 0, "shell surface is filtered from work-surface chrome");
+assertUniqueVisualIds(widget);
+assert.equal(widget.dataset.visualId, "window_chrome_host");
+const chromeRow = widget.querySelectorAll("[data-surface-id=\"view-1\"]")[0];
 assert.equal(widget.querySelectorAll("[data-surface-id=\"view-1\"]").length, 1, "work surface has chrome");
+assert.equal(chromeRow.dataset.visualId, "window_chrome_surface_view-1");
+assert.equal(chromeRow.dataset.visualRole, "surface_chrome");
 assert.ok(widget.textContent.includes("ASHA Studio"), "chrome shows readable title");
 assert.ok(widget.textContent.includes("800×600"), "chrome shows geometry readback");
 
@@ -182,5 +188,19 @@ widget.update({
 });
 assert.equal(widget.querySelectorAll('[data-surface-id="view-1"]').length, 1, "queued close keeps chrome until authoritative unmap");
 assert.ok(widget.textContent.includes("Close requested"), "chrome shows close pending/readback state");
+
+function assertUniqueVisualIds(root) {
+  const seen = new Map();
+  const visit = (node) => {
+    if (node.dataset?.visualId) {
+      assert.equal(seen.has(node.dataset.visualId), false, `duplicate visual id ${node.dataset.visualId}`);
+      seen.set(node.dataset.visualId, node);
+    }
+    for (const child of node.children ?? []) visit(child);
+  };
+  visit(root);
+  assert.ok(seen.has("window_chrome"), "frame uses canonical window_chrome visual id");
+  assert.ok(seen.has("window_chrome_host"), "host wrapper uses distinct visual id");
+}
 
 console.log("window chrome widget tests passed");

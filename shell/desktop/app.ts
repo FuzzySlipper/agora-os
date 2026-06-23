@@ -74,6 +74,12 @@ export class ShellApp {
         this.root = container;
         this.mounted = true;
         this.root.classList.add("desktop-shell");
+        this.root.dataset.visualId = "agora_desktop_shell";
+        this.root.dataset.visualRole = "desktop_shell_root";
+        this.root.setAttribute("data-visual-id", "agora_desktop_shell");
+        this.root.setAttribute("data-visual-role", "desktop_shell_root");
+        this.root.dataset.testid = "agora_desktop_shell";
+        this.root.setAttribute("data-testid", "agora_desktop_shell");
         this.root.innerHTML = shellLayout();
         for (const widget of this.widgets.values()) {
             this.mountWidget(widget);
@@ -267,16 +273,16 @@ export class ShellApp {
 
 function shellLayout(): string {
     return `
-        <section class="shell-background" aria-hidden="true"></section>
-        <section class="shell-grid" aria-label="Agora desktop shell">
-            <div class="shell-widget-container shell-zone pos-top-left" data-widget-slot="agent-health"></div>
-            <div class="shell-widget-container shell-zone pos-top-right" data-widget-slot="clock"></div>
-            <div class="shell-widget-container shell-zone pos-center">
+        <section class="shell-background" aria-hidden="true" data-visual-id="shell_background" data-testid="shell_background" data-visual-role="background"></section>
+        <section class="shell-grid" aria-label="Agora desktop shell" data-visual-id="shell_grid" data-testid="shell_grid" data-visual-role="layout_grid">
+            <div class="shell-widget-container shell-zone pos-top-left" data-widget-slot="agent-health" data-visual-id="zone_top_left" data-testid="zone_top_left" data-visual-role="layout_zone"></div>
+            <div class="shell-widget-container shell-zone pos-top-right" data-widget-slot="clock" data-visual-id="zone_top_right" data-testid="zone_top_right" data-visual-role="layout_zone"></div>
+            <div class="shell-widget-container shell-zone pos-center" data-visual-id="zone_center" data-testid="zone_center" data-visual-role="layout_zone">
                 <div data-widget-slot="window-chrome"></div>
                 <div data-widget-slot="command-center"></div>
             </div>
-            <div class="shell-widget-container shell-zone pos-bottom-right" data-widget-slot="notifications"></div>
-            <nav class="shell-widget-container shell-taskbar pos-bottom" data-widget-slot="taskbar" aria-label="Desktop taskbar"></nav>
+            <div class="shell-widget-container shell-zone pos-bottom-right" data-widget-slot="notifications" data-visual-id="zone_bottom_right" data-testid="zone_bottom_right" data-visual-role="layout_zone"></div>
+            <nav class="shell-widget-container shell-taskbar pos-bottom" data-widget-slot="taskbar" aria-label="Desktop taskbar" data-visual-id="zone_bottom" data-testid="zone_bottom" data-visual-role="layout_zone"></nav>
         </section>`;
 }
 

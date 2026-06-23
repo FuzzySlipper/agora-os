@@ -1,5 +1,6 @@
 import type { BusEnvelope } from "../shared/types.js";
 import { applyWidgetContainerLayout } from "./layout.js";
+import { applyVisualMarker, visualID } from "./visual-markers.js";
 
 export interface WidgetBus {
     subscribe<TBody = unknown>(topic: string, handler: (envelope: BusEnvelope<TBody>) => void): void;
@@ -134,12 +135,14 @@ export class WidgetController {
         }
         const container = this.documentRef.createElement("section");
         container.className = "shell-widget-container injected-widget-container";
+        applyVisualMarker(container, visualID("widget", normalized.name), "widget");
         container.dataset.widgetSlot = normalized.name;
         container.setAttribute("aria-label", normalized.title ?? normalized.name);
         applyWidgetContainerLayout(container, normalized.position ?? "center", true);
 
         const iframe = this.documentRef.createElement("iframe");
         iframe.className = "injected-widget";
+        applyVisualMarker(iframe, visualID("widget_frame", normalized.name), "widget_frame");
         iframe.name = `agora-widget-${normalized.name}`;
         iframe.src = `/api/shell/widget-proxy/${encodeURIComponent(normalized.name)}/index.html`;
         iframe.setAttribute("sandbox", "allow-scripts allow-same-origin");

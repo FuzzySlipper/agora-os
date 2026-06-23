@@ -21,6 +21,8 @@ export interface ThemeAppliedSummary {
 
 const THEME_LINK_ATTRIBUTE = "data-agora-theme-link";
 const CUSTOM_PROPERTY_RE = /^(?:--)?[a-zA-Z][a-zA-Z0-9_-]*$/;
+const TOKEN_PATH_RE = /^[a-zA-Z][a-zA-Z0-9]*(?:[._-][a-zA-Z0-9]+)*$/;
+const CONTRACT_TOKEN_NAMESPACES = new Set(["global", "semantic", "component", "state", "motion", "density", "extension"]);
 
 export class ThemeController {
     private readonly bus: ThemeBus;
@@ -174,10 +176,22 @@ export function createThemeController(bus: ThemeBus, documentRef: Document = doc
 
 function normalizeCustomPropertyName(rawKey: string): string | null {
     const trimmed = rawKey.trim();
-    if (!CUSTOM_PROPERTY_RE.test(trimmed)) {
-        return null;
+    if (CUSTOM_PROPERTY_RE.test(trimmed)) {
+        return trimmed.startsWith("--") ? trimmed : `--${trimmed}`;
     }
-    return trimmed.startsWith("--") ? trimmed : `--${trimmed}`;
+    // Theme manifests send contract token paths such as
+    // "component.taskbar.background". Map supported namespaces to the canonical
+    // CSS token namespace used in styles.css, while accepting a leading
+    // "agora." prefix as compatibility input only.
+    if (TOKEN_PATH_RE.test(trimmed) && trimmed.includes(".")) {
+        const normalized = trimmed.startsWith("agora.") ? trimmed.slice("agora.".length) : trimmed;
+        const namespace = normalized.split(/[._-]/, 1)[0];
+        if (!CONTRACT_TOKEN_NAMESPACES.has(namespace)) {
+            return null;
+        }
+        return `--agora-${normalized.replace(/[._]+/g, "-")}`;
+    }
+    return null;
 }
 
 function isThemeValue(value: unknown): value is string | number {

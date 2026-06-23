@@ -1,4 +1,5 @@
 import type { DesktopShellState, ShellWidget } from "../../shared/types.js";
+import { applyVisualMarker } from "../visual-markers.js";
 
 export class ClockWidget extends HTMLElement implements ShellWidget {
     readonly id = "clock";
@@ -7,6 +8,7 @@ export class ClockWidget extends HTMLElement implements ShellWidget {
 
     connectedCallback(): void {
         this.classList.add("clock-widget");
+        applyVisualMarker(this, "clock", "clock");
         this.start();
     }
 

@@ -1,4 +1,5 @@
 import type { AgentInfo, DesktopShellState, ShellWidget } from "../../shared/types.js";
+import { applyVisualMarker, visualID } from "../visual-markers.js";
 
 export class AgentHealthWidget extends HTMLElement implements ShellWidget {
     readonly id = "agent-health";
@@ -6,6 +7,7 @@ export class AgentHealthWidget extends HTMLElement implements ShellWidget {
 
     connectedCallback(): void {
         this.classList.add("agent-health-widget");
+        applyVisualMarker(this, "agent_health", "agent_health");
     }
 
     mount(container: HTMLElement): void {
@@ -23,6 +25,7 @@ export class AgentHealthWidget extends HTMLElement implements ShellWidget {
         const dots = el("span", "agent-health-widget__dots");
         for (const agent of agents) {
             const dot = el("span", `agent-health-widget__dot agent-health-widget__dot--${statusClass(agent.status)}`);
+            applyVisualMarker(dot, visualID("agent_status", agentLabel(agent)), "status_indicator");
             dot.title = `${agentLabel(agent)}: ${agent.status}`;
             dot.setAttribute("aria-label", dot.title);
             dots.append(dot);

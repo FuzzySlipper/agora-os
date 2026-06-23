@@ -1,4 +1,5 @@
 import type { AppCatalogEntry, AppCatalogListResponse, AppLaunchActionResponse, CommandCenterState, ConversationTurnRequest, DesktopShellState, ShellWidget, SurfaceActionResponse, SurfaceEvent } from "../../shared/types.js";
+import { applyVisualMarker, visualID } from "../visual-markers.js";
 import { createSurfaceFocusAction, createSurfaceRaiseAction, SurfaceFocusError, type SurfaceFocusAction, type SurfaceRaiseAction } from "./taskbar.js";
 
 export type ShellPublisher = (topic: string, body: unknown) => void;
@@ -57,6 +58,7 @@ export class CommandCenterWidget extends HTMLElement implements ShellWidget {
 
     connectedCallback(): void {
         this.classList.add("command-center-widget");
+        applyVisualMarker(this, "command_center_host", "command_center_host");
     }
 
     mount(container: HTMLElement): void {
@@ -181,6 +183,7 @@ export class CommandCenterWidget extends HTMLElement implements ShellWidget {
         }
         const scrim = document.createElement("div");
         scrim.className = "command-center-widget__scrim";
+        applyVisualMarker(scrim, "command_center_scrim", "command_center");
         scrim.addEventListener("click", (event) => {
             if (event.target === scrim) {
                 this.close();
@@ -192,6 +195,7 @@ export class CommandCenterWidget extends HTMLElement implements ShellWidget {
         panel.setAttribute("role", "dialog");
         panel.setAttribute("aria-modal", "true");
         panel.setAttribute("aria-label", "Command Center");
+        applyVisualMarker(panel, "command_center", "command_center");
         panel.addEventListener("keydown", (event) => {
             if (event instanceof KeyboardEvent && event.key === "Escape") {
                 event.preventDefault();
@@ -215,6 +219,7 @@ export class CommandCenterWidget extends HTMLElement implements ShellWidget {
         input.placeholder = "Ask or type a command…";
         input.value = this.commandCenter.query ?? "";
         input.setAttribute("aria-label", "Ask Agora or type a command");
+        applyVisualMarker(input, "command_center_input", "command_input");
         const submit = button("command-center-widget__submit", "Ask", "Submit prompt");
         submit.type = "submit";
         form.append(input, submit);
@@ -225,6 +230,7 @@ export class CommandCenterWidget extends HTMLElement implements ShellWidget {
 
         const suggestions = document.createElement("section");
         suggestions.className = "command-center-widget__suggestions";
+        applyVisualMarker(suggestions, "command_center_suggestions", "command_suggestions");
         const suggestionsTitle = document.createElement("h3");
         suggestionsTitle.textContent = "Suggested";
         const appRows = this.apps.length > 0 ? this.apps.map((app) => this.appRow(app)) : [loadingAppsRow(this.loadingApps)];
@@ -250,6 +256,7 @@ export class CommandCenterWidget extends HTMLElement implements ShellWidget {
         const label = surfaceLabel(surface);
         const row = button("command-center-widget__row", `Focus: ${label}`, `Focus ${label}`);
         row.dataset.action = "surface.focus";
+        applyVisualMarker(row, visualID("command_center_surface_focus", surface.id), "surface_button");
         row.dataset.surfaceId = surface.id;
         row.addEventListener("click", () => { void this.focusSurfaceRow(surface); });
         const meta = document.createElement("span");
@@ -263,6 +270,7 @@ export class CommandCenterWidget extends HTMLElement implements ShellWidget {
         const label = surfaceLabel(surface);
         const row = button("command-center-widget__row", `Raise: ${label}`, `Raise ${label} without changing focus`);
         row.dataset.action = "surface.raise";
+        applyVisualMarker(row, visualID("command_center_surface_raise", surface.id), "surface_button");
         row.dataset.surfaceId = surface.id;
         row.addEventListener("click", () => { void this.raiseSurfaceRow(surface); });
         const meta = document.createElement("span");
@@ -277,6 +285,7 @@ export class CommandCenterWidget extends HTMLElement implements ShellWidget {
         const label = ready ? `Launch: ${app.label}` : `Launch: ${app.label}`;
         const row = button(`command-center-widget__row${ready ? "" : " command-center-widget__row--disabled"}`, label, `Launch ${app.label}`);
         row.dataset.action = "app.launch";
+        applyVisualMarker(row, visualID("command_center_app", app.id), "app_launch_button");
         row.dataset.catalogId = app.id;
         row.disabled = !ready || this.launchingCatalogId === app.id;
         row.addEventListener("click", () => { void this.launchAppRow(app); });
@@ -290,6 +299,7 @@ export class CommandCenterWidget extends HTMLElement implements ShellWidget {
     private transcriptNode(): HTMLElement {
         const box = document.createElement("section");
         box.className = "command-center-widget__transcript";
+        applyVisualMarker(box, "command_center_transcript", "conversation_transcript");
         const title = document.createElement("h3");
         title.textContent = "Conversation";
         box.append(title);

@@ -114,6 +114,10 @@ bus.emit("shell.apply_theme", {
     "taskbar-bg": "#222222",
     "--clock-color": "#88ccff",
     "shell-accent": 42,
+    "component.taskbar.background": "#101827",
+    "semantic.color.text.primary": "#f0f7ff",
+    "agora.component.taskbar.launcher.background": "#76e4f7",
+    "unknown.namespace.value": "ignored",
     "bad property": "ignored",
     "empty-value": "",
   },
@@ -125,6 +129,10 @@ bus.emit("shell.apply_theme", {
 assert.equal(documentRef.documentElement.style.getPropertyValue("--taskbar-bg"), "#222222");
 assert.equal(documentRef.documentElement.style.getPropertyValue("--clock-color"), "#88ccff");
 assert.equal(documentRef.documentElement.style.getPropertyValue("--shell-accent"), "42");
+assert.equal(documentRef.documentElement.style.getPropertyValue("--agora-component-taskbar-background"), "#101827");
+assert.equal(documentRef.documentElement.style.getPropertyValue("--agora-semantic-color-text-primary"), "#f0f7ff");
+assert.equal(documentRef.documentElement.style.getPropertyValue("--agora-component-taskbar-launcher-background"), "#76e4f7");
+assert.equal(documentRef.documentElement.style.getPropertyValue("--agora-unknown-namespace-value"), "");
 assert.equal(documentRef.documentElement.style.getPropertyValue("--bad property"), "");
 assert.equal(documentRef.documentElement.style.getPropertyValue("--empty-value"), "");
 assert.equal(documentRef.background.style.backgroundImage, 'url("/shell/user/wallpaper.png")');
@@ -138,10 +146,13 @@ assert.deepEqual(applied.body.properties, {
   "--taskbar-bg": "#222222",
   "--clock-color": "#88ccff",
   "--shell-accent": "42",
+  "--agora-component-taskbar-background": "#101827",
+  "--agora-semantic-color-text-primary": "#f0f7ff",
+  "--agora-component-taskbar-launcher-background": "#76e4f7",
 });
 assert.equal(applied.body.wallpaper_url, "/shell/user/wallpaper.png");
 assert.equal(applied.body.css_url, "/shell/user/theme.css");
-assert.equal(applied.body.skipped, 2);
+assert.equal(applied.body.skipped, 3);
 
 bus.emit("shell.reset_theme", {});
 assert.equal(documentRef.documentElement.style.getPropertyValue("--taskbar-bg"), "");

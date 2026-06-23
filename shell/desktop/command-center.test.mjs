@@ -103,6 +103,7 @@ const widget = new CommandCenterWidget({
     return { action: "surface.raise", surface_id: surfaceId, decision: "accepted", focused_surface_id: "view-1", result_state: { stack: { is_top_in_stack: true } } };
   },
 });
+widget.connectedCallback();
 const container = new FakeElement("section");
 widget.mount(container);
 widget.update({
@@ -119,6 +120,9 @@ for (let i = 0; i < 5 && !widget.textContent.includes("Launch: Terminal"); i += 
   await Promise.resolve();
 }
 assert.ok(widget.textContent.includes("Command Center"), "open state renders visible overlay");
+assertUniqueVisualIds(widget);
+assert.equal(widget.dataset.visualId, "command_center_host");
+assert.equal(widget.querySelectorAll('[data-action="surface.raise"]').length, 2, "each surface has a raise row");
 assert.equal(published.length, 0, "opening Command Center publishes no invisible conversation placeholder");
 assert.ok(widget.textContent.includes("Launch: Terminal"), "ready app launch row is visible");
 assert.ok(widget.textContent.includes("terminal"), "ready app launch row shows catalog id, not raw command");
@@ -139,6 +143,8 @@ assert.deepEqual(focusCalls, ["view-2"], "surface row invokes canonical focus ac
 assert.equal(focusResults.at(-1).action, "surface.focus");
 
 const raiseSurfaceRow = widget.querySelectorAll('[data-action="surface.raise"]').find((row) => row.dataset.surfaceId === "view-2");
+assert.equal(raiseSurfaceRow.dataset.visualId, "command_center_surface_raise_view-2");
+assert.equal(raiseSurfaceRow.dataset.visualRole, "surface_button");
 raiseSurfaceRow.click();
 await Promise.resolve();
 assert.deepEqual(raiseCalls, ["view-2"], "surface raise row invokes canonical no-focus raise action");
@@ -190,4 +196,18 @@ assert.ok(widget.textContent.includes("Agora: Two surfaces are visible."), "tran
 
 widget.querySelectorAll("button")[0].click();
 assert.equal(closed, 1, "close button requests local close state");
+function assertUniqueVisualIds(root) {
+  const seen = new Map();
+  const visit = (node) => {
+    if (node.dataset?.visualId) {
+      assert.equal(seen.has(node.dataset.visualId), false, `duplicate visual id ${node.dataset.visualId}`);
+      seen.set(node.dataset.visualId, node);
+    }
+    for (const child of node.children ?? []) visit(child);
+  };
+  visit(root);
+  assert.ok(seen.has("command_center"), "visible panel uses canonical command_center visual id");
+  assert.ok(seen.has("command_center_host"), "host wrapper uses distinct visual id");
+}
+
 console.log("command center widget tests passed");

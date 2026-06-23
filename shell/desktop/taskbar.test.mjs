@@ -101,6 +101,8 @@ assert.equal(published.some((entry) => entry.topic === "conversation.turn.reques
 const view1Button = widget.querySelectorAll('[data-surface-id="view-1"]')[0];
 const view2Button = widget.querySelectorAll('[data-surface-id="view-2"]')[0];
 assert.equal(view1Button.dataset.action, "surface.focus");
+assert.equal(view1Button.dataset.visualId, "surface_button_view-1");
+assert.equal(view1Button.dataset.visualRole, "surface_button");
 assert.equal(view1Button.getAttribute("aria-label"), "Focus ASHA Studio · asha");
 assert.ok(view1Button.textContent.includes("ASHA Studio · asha"), "duplicate taskbar labels include app id");
 assert.ok(view2Button.textContent.includes("ASHA Studio · asha-copy"), "second duplicate taskbar label is also disambiguated");
