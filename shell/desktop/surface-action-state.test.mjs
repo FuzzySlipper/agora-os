@@ -51,6 +51,13 @@ const disabled = state.surfaces.find((surface) => surface.id === "view-1");
 assert.equal(disabled.disabled, true, "non-stale denial disables entry");
 assert.equal(disabled.action_error, "focus not confirmed");
 
+applySurfaceActionEvent(state, {
+  topic: "shell.action.completed",
+  body: { action: "surface.raise", surface_id: "view-1", decision: "accepted", result_state: { stack: { is_top_in_stack: true, stack_index: 0, stack_count: 3 } }, surface: { surface: { id: "view-1", title: "Agora Desktop Shell", stack_index: 0, stack_count: 3, is_top_in_stack: true } } },
+});
+assert.equal(state.surfaces.find((surface) => surface.id === "view-1").is_top_in_stack, true, "raise completion updates stack readback");
+assert.equal(state.surfaces.find((surface) => surface.id === "view-1").disabled, false, "raise completion clears disabled state");
+
 state.surfaces.push({ id: "view-3", title: "Throwaway", focused: false });
 applySurfaceActionEvent(state, {
   topic: "shell.action.completed",

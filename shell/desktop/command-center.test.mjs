@@ -92,7 +92,7 @@ const widget = new CommandCenterWidget({
   ],
   launchApp: async (catalogId) => {
     launchedApps.push(catalogId);
-    return { action: "app.launch", catalog_id: catalogId, decision: "accepted", launch_id: "launch-test", pid: 1234 };
+    return { action: "app.launch", catalog_id: catalogId, decision: "accepted", launch_id: "launch-test", pid: 1234, surface: { surface: { id: "view-launched", title: "Terminal" } } };
   },
   focusSurface: async (surfaceId) => {
     focusCalls.push(surfaceId);
@@ -131,23 +131,38 @@ assert.ok(widget.textContent.includes("not installed/allowlisted on this host (#
 
 const terminalRow = widget.querySelectorAll('[data-catalog-id="terminal"]')[0];
 terminalRow.click();
-await Promise.resolve();
+await new Promise((resolve) => setTimeout(resolve, 0));
 assert.deepEqual(launchedApps, ["terminal"], "ready app row launches by catalog id only");
 assert.equal(appLaunchResults.at(-1).action, "app.launch");
 assert.equal(appLaunchResults.at(-1).launch_id, "launch-test");
+assert.deepEqual(focusCalls, ["view-launched"], "successful app launch focuses the new surface");
+assert.deepEqual(raiseCalls, ["view-launched"], "successful app launch raises the new surface above the shell");
+assert.equal(closed, 1, "successful app launch closes Command Center so the new surface is visible");
+widget.update({
+  surfaces: [
+    { id: "view-1", title: "Agora Desktop Shell", focused: true },
+    { id: "view-2", title: "ASHA Studio", focused: false },
+  ],
+  agents: [],
+  notifications: [],
+  config: {},
+  commandCenter: { open: true, transcript: [] },
+});
 
 const focusSurfaceRow = widget.querySelectorAll('[data-action="surface.focus"]').find((row) => row.dataset.surfaceId === "view-2");
 focusSurfaceRow.click();
-await Promise.resolve();
-assert.deepEqual(focusCalls, ["view-2"], "surface row invokes canonical focus action");
-assert.equal(focusResults.at(-1).action, "surface.focus");
+await new Promise((resolve) => setTimeout(resolve, 0));
+assert.deepEqual(focusCalls, ["view-launched", "view-2"], "surface row invokes canonical focus action");
+assert.deepEqual(raiseCalls, ["view-launched", "view-2"], "surface row raises after focus so the surface is visible above the shell");
+assert.equal(focusResults.at(-2).action, "surface.focus");
+assert.equal(focusResults.at(-1).action, "surface.raise");
 
 const raiseSurfaceRow = widget.querySelectorAll('[data-action="surface.raise"]').find((row) => row.dataset.surfaceId === "view-2");
 assert.equal(raiseSurfaceRow.dataset.visualId, "command_center_surface_raise_view-2");
 assert.equal(raiseSurfaceRow.dataset.visualRole, "surface_button");
 raiseSurfaceRow.click();
 await Promise.resolve();
-assert.deepEqual(raiseCalls, ["view-2"], "surface raise row invokes canonical no-focus raise action");
+assert.deepEqual(raiseCalls, ["view-launched", "view-2", "view-2"], "surface raise row invokes canonical no-focus raise action");
 assert.equal(focusResults.at(-1).action, "surface.raise");
 
 const deniedResults = [];
@@ -155,6 +170,7 @@ const staleResult = { action: "surface.focus", surface_id: "view-stale", decisio
 const deniedWidget = new CommandCenterWidget({
   onFocusResult: (result) => deniedResults.push(result),
   focusSurface: async () => { throw new SurfaceFocusError(staleResult); },
+  loadApps: async () => [],
 });
 deniedWidget.mount(new FakeElement("section"));
 deniedWidget.update({
@@ -165,7 +181,7 @@ deniedWidget.update({
   commandCenter: { open: true, transcript: [] },
 });
 deniedWidget.querySelectorAll('[data-surface-id="view-stale"]')[0].click();
-await Promise.resolve();
+await new Promise((resolve) => setTimeout(resolve, 0));
 assert.deepEqual(deniedResults, [staleResult], "denied canonical focus result is delivered for shell readback reconciliation");
 assert.ok(deniedWidget.textContent.includes("surface is stale"), "denied focus also remains visible as a local error");
 
@@ -195,7 +211,7 @@ assert.ok(widget.textContent.includes("You: What is on this desktop?"), "transcr
 assert.ok(widget.textContent.includes("Agora: Two surfaces are visible."), "transcript shows conversation response");
 
 widget.querySelectorAll("button")[0].click();
-assert.equal(closed, 1, "close button requests local close state");
+assert.equal(closed, 2, "close button requests local close state");
 function assertUniqueVisualIds(root) {
   const seen = new Map();
   const visit = (node) => {

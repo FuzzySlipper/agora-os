@@ -68,6 +68,7 @@ const { WindowChromeWidget } = await import("../dist/desktop/widgets/window-chro
 
 const results = [];
 const focusCalls = [];
+const raiseCalls = [];
 const closeCalls = [];
 const moveCalls = [];
 const tileCalls = [];
@@ -80,6 +81,10 @@ const widget = new WindowChromeWidget({
   focusSurface: async (surfaceId) => {
     focusCalls.push(surfaceId);
     return { action: "surface.focus", surface_id: surfaceId, decision: "accepted", focused_surface_id: surfaceId };
+  },
+  raiseSurface: async (surfaceId) => {
+    raiseCalls.push(surfaceId);
+    return { action: "surface.raise", surface_id: surfaceId, decision: "accepted", result_state: { stack: { is_top_in_stack: true, stack_index: 0, stack_count: 2 } } };
   },
   closeSurface: async (surfaceId) => {
     closeCalls.push(surfaceId);
@@ -134,20 +139,27 @@ assert.ok(widget.textContent.includes("ASHA Studio"), "chrome shows readable tit
 assert.ok(widget.textContent.includes("800×600"), "chrome shows geometry readback");
 
 widget.querySelectorAll("[data-action=\"surface.focus\"]")[0].click();
-await Promise.resolve();
+await new Promise((resolve) => setTimeout(resolve, 0));
 assert.deepEqual(focusCalls, ["view-1"]);
+assert.deepEqual(raiseCalls, ["view-1"], "Work Surfaces focus raises the activated window above the fullscreen shell");
+assert.equal(results.at(-3).action, "surface.focus");
+assert.equal(results.at(-2).action, "surface.raise");
 assert.equal(results.at(-1).action, "surface.focus");
 
 widget.querySelectorAll("[data-action=\"surface.move\"]").find((button) => button.dataset.dx === "32").click();
-await Promise.resolve();
+await new Promise((resolve) => setTimeout(resolve, 0));
 assert.deepEqual(moveCalls, [{ surfaceId: "view-1", geometry: { x: 33, y: 2, width: 800, height: 600 } }]);
+assert.deepEqual(focusCalls.slice(-1), ["view-1"], "Work Surfaces arrows activate after moving so the result is visible");
+assert.deepEqual(raiseCalls.slice(-1), ["view-1"], "Work Surfaces arrows raise after moving so the result is visible");
 assert.equal(results.at(-1).action, "surface.move");
 assert.equal(results.at(-1).result_geometry.x, 33);
 
 assert.equal(widget.querySelectorAll("[data-action=\"surface.resize\"]").length, 0, "resize controls are not visible in the grid/tile slice");
 widget.querySelectorAll("[data-action=\"surface.tile\"]").find((button) => button.dataset.row === "0" && button.dataset.col === "1").click();
-await Promise.resolve();
+await new Promise((resolve) => setTimeout(resolve, 0));
 assert.deepEqual(tileCalls, [{ surfaceId: "view-1", region: { rows: 2, cols: 2, row: 0, col: 1 } }]);
+assert.deepEqual(focusCalls.slice(-1), ["view-1"], "Work Surfaces tile activates after placement so the result is visible");
+assert.deepEqual(raiseCalls.slice(-1), ["view-1"], "Work Surfaces tile raises after placement so the result is visible");
 assert.equal(results.at(-1).action, "surface.tile");
 assert.equal(results.at(-1).result_geometry.x, 960);
 
@@ -200,6 +212,9 @@ minimizedFocus.click();
 await new Promise((resolve) => setTimeout(resolve, 0));
 assert.deepEqual(minimizeCalls.at(-1), { surfaceId: "view-min", enabled: false }, "work surfaces focus restores minimized windows before focus");
 assert.deepEqual(focusCalls.at(-1), "view-min", "work surfaces focus then activates the restored window");
+assert.deepEqual(raiseCalls.at(-1), "view-min", "work surfaces focus raises the restored window above the shell");
+assert.equal(results.at(-3).action, "surface.focus");
+assert.equal(results.at(-2).action, "surface.raise");
 assert.equal(results.at(-1).action, "surface.focus");
 
 function assertUniqueVisualIds(root) {

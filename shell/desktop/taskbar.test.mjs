@@ -65,6 +65,7 @@ const { TaskbarWidget } = await import("../dist/desktop/widgets/taskbar.js");
 const published = [];
 const focusResults = [];
 const focusCalls = [];
+const raiseCalls = [];
 const minimizeCalls = [];
 let commandCenterOpenCount = 0;
 const widget = new TaskbarWidget({
@@ -74,6 +75,10 @@ const widget = new TaskbarWidget({
   focusSurface: async (surfaceId) => {
     focusCalls.push(surfaceId);
     return { action: "surface.focus", surface_id: surfaceId, decision: "accepted", focused_surface_id: surfaceId };
+  },
+  raiseSurface: async (surfaceId) => {
+    raiseCalls.push(surfaceId);
+    return { action: "surface.raise", surface_id: surfaceId, decision: "accepted", result_state: { stack: { is_top_in_stack: true } } };
   },
   minimizeSurface: async (surfaceId, enabled) => {
     minimizeCalls.push({ surfaceId, enabled });
@@ -108,9 +113,11 @@ assert.ok(view1Button.textContent.includes("ASHA Studio · asha"), "duplicate ta
 assert.ok(view2Button.textContent.includes("ASHA Studio · asha-copy"), "second duplicate taskbar label is also disambiguated");
 assert.ok(view1Button.title.includes("view-1"), "full title includes surface id for disambiguation");
 view1Button.click();
-await Promise.resolve();
+await new Promise((resolve) => setTimeout(resolve, 0));
 assert.deepEqual(focusCalls, ["view-1"]);
-assert.equal(focusResults.at(-1).action, "surface.focus");
+assert.deepEqual(raiseCalls, ["view-1"], "taskbar activation raises focused surfaces above the shell");
+assert.equal(focusResults.at(-2).action, "surface.focus");
+assert.equal(focusResults.at(-1).action, "surface.raise");
 assert.equal(published.some((entry) => entry.topic === "shell.action.completed" || entry.topic === "shell.action.denied"), false, "taskbar does not spoof authoritative shell.action results");
 assert.equal(published.some((entry) => entry.topic === "compositor.advisory.surface.highlight_requested"), false, "taskbar no longer publishes advisory highlight only");
 
@@ -125,11 +132,12 @@ assert.equal(restoreButton.dataset.action, "surface.minimize");
 assert.equal(restoreButton.getAttribute("aria-label"), "Restore Minimized App");
 assert.ok(restoreButton.title.includes("minimized"), "minimized taskbar item advertises restore state");
 restoreButton.click();
-await Promise.resolve();
-await Promise.resolve();
+await new Promise((resolve) => setTimeout(resolve, 0));
 assert.deepEqual(minimizeCalls, [{ surfaceId: "view-min", enabled: false }]);
 assert.ok(focusCalls.includes("view-min"), "minimized taskbar click restores and then focuses the surface");
-assert.equal(focusResults.at(-1).action, "surface.focus");
+assert.ok(raiseCalls.includes("view-min"), "minimized taskbar click raises the restored surface above the shell");
+assert.equal(focusResults.at(-2).action, "surface.focus");
+assert.equal(focusResults.at(-1).action, "surface.raise");
 
 const staleWidget = new TaskbarWidget({
   publish: (topic, body) => published.push({ topic, body }),

@@ -1,6 +1,6 @@
 import type { DesktopShellState, ShellWidget, SurfaceActionResponse, SurfaceEvent } from "../../shared/types.js";
 import { applyVisualMarker, visualID } from "../visual-markers.js";
-import { createSurfaceFocusAction, SurfaceFocusError, type SurfaceFocusAction } from "./taskbar.js";
+import { createSurfaceFocusAction, createSurfaceRaiseAction, SurfaceFocusError, type SurfaceFocusAction, type SurfaceRaiseAction } from "./taskbar.js";
 
 export type SurfaceCloseAction = (surfaceId: string) => Promise<SurfaceActionResponse>;
 export type SurfaceMoveAction = (surfaceId: string, geometry: { x: number; y: number; width?: number; height?: number }) => Promise<SurfaceActionResponse>;
@@ -13,6 +13,7 @@ export type SurfaceMinimizeAction = (surfaceId: string, enabled: boolean) => Pro
 
 export interface WindowChromeWidgetOptions {
     focusSurface?: SurfaceFocusAction;
+    raiseSurface?: SurfaceRaiseAction;
     closeSurface?: SurfaceCloseAction;
     moveSurface?: SurfaceMoveAction;
     tileSurface?: SurfaceTileAction;
@@ -32,6 +33,7 @@ export class WindowChromeWidget extends HTMLElement implements ShellWidget {
     readonly id = "window-chrome";
     readonly layer = 20;
     private focusSurface: SurfaceFocusAction;
+    private raiseSurface: SurfaceRaiseAction;
     private closeSurface: SurfaceCloseAction;
     private moveSurface: SurfaceMoveAction;
     private tileSurface: SurfaceTileAction;
@@ -46,6 +48,7 @@ export class WindowChromeWidget extends HTMLElement implements ShellWidget {
     constructor(options: WindowChromeWidgetOptions = {}) {
         super();
         this.focusSurface = options.focusSurface ?? createSurfaceFocusAction();
+        this.raiseSurface = options.raiseSurface ?? createSurfaceRaiseAction();
         this.closeSurface = options.closeSurface ?? createSurfaceCloseAction();
         this.moveSurface = options.moveSurface ?? createSurfaceMoveAction();
         this.tileSurface = options.tileSurface ?? createSurfaceTileAction();
@@ -82,6 +85,20 @@ export class WindowChromeWidget extends HTMLElement implements ShellWidget {
         this.render();
     }
 
+    private async activateSurface(surfaceId: string): Promise<SurfaceActionResponse> {
+        const focus = await this.focusSurface(surfaceId);
+        this.onActionResult(focus);
+        if (focus.decision === "denied") {
+            return focus;
+        }
+        const raised = await this.raiseSurface(surfaceId);
+        this.onActionResult(raised);
+        if (raised.decision === "denied") {
+            return raised;
+        }
+        return focus;
+    }
+
     private async requestFocus(surface: SurfaceEvent): Promise<void> {
         if (surface.minimized || surface.visibility_state === "minimized") {
             await this.runAction(surface, "surface.focus", async () => {
@@ -90,11 +107,11 @@ export class WindowChromeWidget extends HTMLElement implements ShellWidget {
                 if (restore.decision === "denied") {
                     return restore;
                 }
-                return this.focusSurface(surface.id);
+                return this.activateSurface(surface.id);
             });
             return;
         }
-        await this.runAction(surface, "surface.focus", () => this.focusSurface(surface.id));
+        await this.runAction(surface, "surface.focus", () => this.activateSurface(surface.id));
     }
 
     private async requestClose(surface: SurfaceEvent): Promise<void> {
@@ -108,21 +125,33 @@ export class WindowChromeWidget extends HTMLElement implements ShellWidget {
             this.render();
             return;
         }
-        await this.runAction(surface, "surface.move", () => this.moveSurface(surface.id, {
-            x: geometry.x + dx,
-            y: geometry.y + dy,
-            width: geometry.width,
-            height: geometry.height,
-        }));
+        await this.runAction(surface, "surface.move", async () => {
+            const result = await this.moveSurface(surface.id, {
+                x: geometry.x + dx,
+                y: geometry.y + dy,
+                width: geometry.width,
+                height: geometry.height,
+            });
+            if (result.decision !== "denied") {
+                await this.activateSurface(surface.id);
+            }
+            return result;
+        });
     }
 
     private async requestTile(surface: SurfaceEvent, row: number, col: number): Promise<void> {
-        await this.runAction(surface, "surface.tile", () => this.tileSurface(surface.id, {
-            rows: 2,
-            cols: 2,
-            row,
-            col,
-        }));
+        await this.runAction(surface, "surface.tile", async () => {
+            const result = await this.tileSurface(surface.id, {
+                rows: 2,
+                cols: 2,
+                row,
+                col,
+            });
+            if (result.decision !== "denied") {
+                await this.activateSurface(surface.id);
+            }
+            return result;
+        });
     }
 
     private async requestAlwaysOnTop(surface: SurfaceEvent): Promise<void> {

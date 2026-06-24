@@ -10,6 +10,7 @@ export interface TaskbarWidgetOptions {
     publish?: ShellPublisher;
     focusSurface?: SurfaceFocusAction;
     minimizeSurface?: SurfaceMinimizeAction;
+    raiseSurface?: SurfaceRaiseAction;
     onFocusResult?: (result: SurfaceActionResponse) => void;
     onOpenCommandCenter?: () => void;
 }
@@ -32,6 +33,7 @@ export class TaskbarWidget extends HTMLElement implements ShellWidget {
     private publish: ShellPublisher;
     private focusSurface: SurfaceFocusAction;
     private minimizeSurface: SurfaceMinimizeAction;
+    private raiseSurface: SurfaceRaiseAction;
     private onFocusResult: (result: SurfaceActionResponse) => void;
     private onOpenCommandCenter: () => void;
     private surfaces: SurfaceTaskbarItem[] = [];
@@ -43,6 +45,7 @@ export class TaskbarWidget extends HTMLElement implements ShellWidget {
             this.publish = options;
             this.focusSurface = createSurfaceFocusAction();
             this.minimizeSurface = createSurfaceMinimizeAction();
+            this.raiseSurface = createSurfaceRaiseAction();
             this.onFocusResult = () => undefined;
             this.onOpenCommandCenter = () => undefined;
             return;
@@ -50,6 +53,7 @@ export class TaskbarWidget extends HTMLElement implements ShellWidget {
         this.publish = options.publish ?? (() => undefined);
         this.focusSurface = options.focusSurface ?? createSurfaceFocusAction();
         this.minimizeSurface = options.minimizeSurface ?? createSurfaceMinimizeAction();
+        this.raiseSurface = options.raiseSurface ?? createSurfaceRaiseAction();
         this.onFocusResult = options.onFocusResult ?? (() => undefined);
         this.onOpenCommandCenter = options.onOpenCommandCenter ?? (() => undefined);
     }
@@ -78,6 +82,20 @@ export class TaskbarWidget extends HTMLElement implements ShellWidget {
         this.render();
     }
 
+    private async activateSurface(surfaceId: string): Promise<SurfaceActionResponse> {
+        const focus = await this.focusSurface(surfaceId);
+        this.onFocusResult(focus);
+        if (focus.decision === "denied") {
+            return focus;
+        }
+        const raised = await this.raiseSurface(surfaceId);
+        this.onFocusResult(raised);
+        if (raised.decision === "denied") {
+            return raised;
+        }
+        return focus;
+    }
+
     private async requestFocus(surface: SurfaceEvent): Promise<void> {
         if (surface.disabled) {
             return;
@@ -94,13 +112,12 @@ export class TaskbarWidget extends HTMLElement implements ShellWidget {
                     return;
                 }
             }
-            const result = await this.focusSurface(surface.id);
+            const result = await this.activateSurface(surface.id);
             if (result.decision === "denied") {
-                this.actionStatus.set(surface.id, { error: result.error || result.reason || "focus denied" });
+                this.actionStatus.set(surface.id, { error: result.error || result.reason || "activate denied" });
             } else {
                 this.actionStatus.delete(surface.id);
             }
-            this.onFocusResult(result);
         } catch (error) {
             const result = error instanceof SurfaceFocusError ? error.result : undefined;
             const message = result?.error || result?.reason || (error instanceof Error ? error.message : String(error));

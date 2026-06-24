@@ -121,12 +121,29 @@ export class CommandCenterWidget extends HTMLElement implements ShellWidget {
         this.onPromptSubmit(request);
     }
 
+    private async activateSurface(surfaceId: string): Promise<SurfaceActionResponse> {
+        const focus = await this.focusSurface(surfaceId);
+        this.onFocusResult(focus);
+        if (focus.decision === "denied") {
+            return focus;
+        }
+        const raised = await this.raiseSurface(surfaceId);
+        this.onFocusResult(raised);
+        if (raised.decision === "denied") {
+            return raised;
+        }
+        return focus;
+    }
+
     private async focusSurfaceRow(surface: SurfaceEvent): Promise<void> {
         this.localError = undefined;
         this.render();
         try {
-            const result = await this.focusSurface(surface.id);
-            this.onFocusResult(result);
+            const result = await this.activateSurface(surface.id);
+            if (result.decision === "denied") {
+                this.localError = result.error || result.reason || `Focus denied for ${surfaceLabel(surface)}`;
+                this.render();
+            }
         } catch (error) {
             const result = error instanceof SurfaceFocusError ? error.result : undefined;
             if (result) {
@@ -167,6 +184,14 @@ export class CommandCenterWidget extends HTMLElement implements ShellWidget {
             this.onAppLaunchResult(result);
             if (result.decision === "denied") {
                 this.localError = result.error || result.reason || `Launch denied for ${app.label}`;
+            } else if (result.surface?.surface?.id) {
+                const activation = await this.activateSurface(result.surface.surface.id);
+                if (activation.decision === "denied") {
+                    this.localError = activation.error || activation.reason || `Launch succeeded but activate denied for ${app.label}`;
+                } else {
+                    this.commandCenter = { ...this.commandCenter, open: false };
+                    this.onClose();
+                }
             }
         } catch (error) {
             this.localError = error instanceof Error ? error.message : String(error);
