@@ -2452,7 +2452,7 @@ func TestDispatchAssignSurfaceTagPlacesSurfaceAndDecoratesReadback(t *testing.T)
 	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{
 		Type:    schema.PluginMessageSurfaceEvent,
 		Event:   schema.SurfaceEventMapped,
-		Surface: schema.CompositorSurface{ID: "view-layout", WayfireViewID: 60, Visible: boolPtr(true), Geometry: &schema.SurfaceGeometry{X: 40, Y: 50, Width: 800, Height: 600}},
+		Surface: schema.CompositorSurface{ID: "view-layout", WayfireViewID: 60, Visible: boolPtr(true), Geometry: &schema.SurfaceGeometry{X: 40, Y: 50, Width: 200, Height: 100}},
 		Client:  schema.CompositorClientIdentity{UID: 60001},
 	})
 	var discard schema.CompositorPolicyUpsert
@@ -2477,13 +2477,13 @@ func TestDispatchAssignSurfaceTagPlacesSurfaceAndDecoratesReadback(t *testing.T)
 	if err := dec.Decode(&msg); err != nil {
 		t.Fatalf("decode place_surface: %v", err)
 	}
-	if msg.Type != string(schema.PluginMessagePlaceSurface) || msg.SurfaceID != "view-layout" || msg.Geometry.X != 1190 || msg.Geometry.Y != 562 || msg.Geometry.Width != 730 || msg.Geometry.Height != 518 {
+	if msg.Type != string(schema.PluginMessagePlaceSurface) || msg.SurfaceID != "view-layout" || msg.Geometry.X != 1455 || msg.Geometry.Y != 771 || msg.Geometry.Width != 200 || msg.Geometry.Height != 100 {
 		t.Fatalf("unexpected place_surface message: %+v", msg)
 	}
 	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{
 		Type:    schema.PluginMessageSurfaceEvent,
 		Event:   schema.SurfaceEventFocused,
-		Surface: schema.CompositorSurface{ID: "view-layout", WayfireViewID: 60, Visible: boolPtr(true), Geometry: &schema.SurfaceGeometry{X: 1190, Y: 562, Width: 730, Height: 518}},
+		Surface: schema.CompositorSurface{ID: "view-layout", WayfireViewID: 60, Visible: boolPtr(true), Geometry: &schema.SurfaceGeometry{X: 1455, Y: 771, Width: 200, Height: 100}},
 		Client:  schema.CompositorClientIdentity{UID: 60001},
 	})
 	if err := json.NewEncoder(client).Encode(schema.CompositorPlacePluginResponse{Type: string(schema.PluginMessagePlaceResponse), RequestID: msg.RequestID, SurfaceID: "view-layout", OK: true}); err != nil {
@@ -2501,7 +2501,7 @@ func TestDispatchAssignSurfaceTagPlacesSurfaceAndDecoratesReadback(t *testing.T)
 		if err := json.Unmarshal(resp.Body, &result); err != nil {
 			t.Fatalf("unmarshal response: %v", err)
 		}
-		if result.Decision != schema.SurfaceActionAccepted || len(result.Placements) != 1 || result.Placements[0].ZoneID != "terminal" || result.Placements[0].ResultGeometry == nil || result.Placements[0].ResultGeometry.Width != 730 {
+		if result.Decision != schema.SurfaceActionAccepted || len(result.Placements) != 1 || result.Placements[0].ZoneID != "terminal" || result.Placements[0].TargetGeometry == nil || result.Placements[0].TargetGeometry.Width != 200 || result.Placements[0].ResultGeometry == nil || result.Placements[0].ResultGeometry.Width != 200 {
 			t.Fatalf("unexpected placement result: %+v", result)
 		}
 	case <-time.After(700 * time.Millisecond):

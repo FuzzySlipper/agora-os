@@ -121,11 +121,15 @@ func (b *Bridge) AssignSurfaceTag(actorUID uint32, req schema.AssignSurfaceTagRe
 		return b.publishLayoutDenied(req, actor, uid, err, schema.ErrorLayoutZoneNotFound, nil)
 	}
 	region := b.layoutRegionGeometry(tracked.OutputID, layout.Region)
-	target, err := schema.ResolveZoneGeometry(region, layout.Region.Insets, zone)
+	zoneGeometry, err := schema.ResolveZoneGeometry(region, layout.Region.Insets, zone)
 	if err != nil {
 		err = compositorError(schema.ErrorInvalidLayoutGeometry, "%v", err)
 		return b.publishLayoutDenied(req, actor, uid, err, schema.ErrorInvalidLayoutGeometry, nil)
 	}
+	// Arbitrary xdg-toplevel resizing is not a reliable live Wayfire substrate.
+	// Reuse the proven surface.tile behavior: preserve the current client size when
+	// it fits and center/place that toplevel inside the selected layout zone.
+	target := centeredTileGeometry(zoneGeometry, tracked.Geometry)
 	if err := b.placeSurface(req.SurfaceID, target, time.Duration(req.WaitTimeoutMs)*time.Millisecond, true); err != nil {
 		class, _ := classifyError(err)
 		if class == schema.ErrorFrameTimeout {
