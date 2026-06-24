@@ -27,6 +27,15 @@ const (
 	ErrorAppCommandUnavailable   = "app_command_unavailable"
 	ErrorInvalidCoordinates      = "invalid_coordinates"
 	ErrorProtocolError           = "protocol_error"
+	ErrorLayoutTagNotFound       = "layout_tag_not_found"
+	ErrorLayoutZoneNotFound      = "layout_zone_not_found"
+	ErrorLayoutNotFound          = "layout_not_found"
+	ErrorArrangementNotFound     = "arrangement_not_found"
+	ErrorUnsupportedLayoutMode   = "unsupported_layout_mode"
+	ErrorInvalidLayoutGeometry   = "invalid_layout_geometry"
+	ErrorLayoutReadbackTimeout   = "layout_readback_timeout"
+	ErrorSurfaceNotManaged       = "surface_not_managed"
+	ErrorSurfaceNotInTag         = "surface_not_in_tag"
 )
 
 const (
@@ -83,6 +92,9 @@ const (
 	MethodGrantViewport       = "grant_viewport"
 	MethodRevokeViewport      = "revoke_viewport"
 	MethodCheckSurfaceAccess  = "check_surface_access"
+	MethodListLayoutZones     = "layout.zones.list"
+	MethodAssignSurfaceTag    = "layout.tag.assign_surface"
+	MethodGetArrangement      = "layout.arrangement.get"
 )
 
 const (
@@ -100,6 +112,8 @@ const (
 
 	TopicShellActionCompleted = "shell.action.completed"
 	TopicShellActionDenied    = "shell.action.denied"
+	TopicShellLayoutApplied   = "shell.layout.applied"
+	TopicShellLayoutDenied    = "shell.layout.denied"
 )
 
 type CompositorPluginMessageType string
@@ -202,6 +216,8 @@ type CompositorSurface struct {
 	Minimized        *bool                      `json:"minimized,omitempty"`
 	Restorable       *bool                      `json:"restorable,omitempty"`
 	VisibilityState  string                     `json:"visibility_state,omitempty"`
+	ManagementState  SurfaceManagementState     `json:"management_state,omitempty"`
+	Placement        *SurfacePlacement          `json:"placement,omitempty"`
 }
 
 type CompositorClientIdentity struct {

@@ -70,6 +70,8 @@ func main() {
 		err = cmdSetViewProperty(args[1:], *pretty)
 	case "surface":
 		err = cmdSurface(args[1:], *pretty)
+	case "layout":
+		err = cmdLayout(args[1:], *pretty)
 	case "shell":
 		err = cmdShell(args[1:], *pretty)
 	case "list-surfaces":
@@ -111,6 +113,7 @@ Commands:
   clear-input-context  Return the compositor input stream to human mode
   set-view-property  Set a tracked surface view property such as always_on_top
   surface            Run semantic surface actions such as focus and close
+  layout             Inspect and apply tag/zone layout arrangements
   shell              Manage desktop shell themes, wallpaper, and widgets
   list-surfaces      List tracked compositor surfaces
 

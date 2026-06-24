@@ -156,6 +156,9 @@ type Bridge struct {
 	surfaceOutput     map[string]string
 	appCommandSeq     uint64
 	appCommandResults map[string]schema.AppCommandResponse
+	layoutDefinitions map[string]schema.LayoutDefinition
+	layoutTags        map[string]schema.LayoutTag
+	surfacePlacements map[string]schema.SurfacePlacement
 }
 
 func New(bus publisher, cfg Config) (*Bridge, error) {
@@ -185,6 +188,9 @@ func New(bus publisher, cfg Config) (*Bridge, error) {
 		outputs:           make(map[string]schema.LogicalOutput),
 		surfaceOutput:     make(map[string]string),
 		appCommandResults: make(map[string]schema.AppCommandResponse),
+		layoutDefinitions: builtinLayoutDefinitions(),
+		layoutTags:        builtinLayoutTags(),
+		surfacePlacements: make(map[string]schema.SurfacePlacement),
 	}, nil
 }
 
@@ -3287,6 +3293,17 @@ func (b *Bridge) decorateSurfaceLocked(surface schema.CompositorTrackedSurface) 
 	}
 	sort.Slice(grantState.GrantedUIDs, func(i, j int) bool { return grantState.GrantedUIDs[i] < grantState.GrantedUIDs[j] })
 	surface.GrantState = grantState
+	if placement, ok := b.surfacePlacements[surface.Surface.ID]; ok {
+		copyPlacement := placement
+		surface.Surface.ManagementState = placement.ManagementState
+		surface.Surface.Placement = &copyPlacement
+	} else if surface.Surface.Placement == nil {
+		placement := unmanagedPlacement(surface)
+		surface.Surface.ManagementState = placement.ManagementState
+		surface.Surface.Placement = &placement
+	} else if surface.Surface.ManagementState == "" {
+		surface.Surface.ManagementState = surface.Surface.Placement.ManagementState
+	}
 	return surface
 }
 
@@ -3528,6 +3545,40 @@ func (b *Bridge) dispatch(peerUID uint32, req schema.Request) (schema.Response, 
 		return okResponse(out), nil
 	case schema.MethodListOutputs:
 		return okResponse(schema.ListOutputsResponse{Outputs: b.ListOutputs()}), nil
+	case schema.MethodListLayoutZones:
+		var body schema.ListLayoutZonesRequest
+		if len(req.Body) > 0 {
+			if err := json.Unmarshal(req.Body, &body); err != nil {
+				return schema.Response{}, fmt.Errorf("bad body: %w", err)
+			}
+		}
+		resp, err := b.ListLayoutZones(body)
+		if err != nil {
+			return schema.Response{}, err
+		}
+		return okResponse(resp), nil
+	case schema.MethodAssignSurfaceTag:
+		var body schema.AssignSurfaceTagRequest
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			return schema.Response{}, fmt.Errorf("bad body: %w", err)
+		}
+		resp, err := b.AssignSurfaceTag(peerUID, body)
+		if err != nil {
+			return schema.Response{}, err
+		}
+		return okResponse(resp), nil
+	case schema.MethodGetArrangement:
+		var body schema.GetArrangementRequest
+		if len(req.Body) > 0 {
+			if err := json.Unmarshal(req.Body, &body); err != nil {
+				return schema.Response{}, fmt.Errorf("bad body: %w", err)
+			}
+		}
+		resp, err := b.GetArrangement(body)
+		if err != nil {
+			return schema.Response{}, err
+		}
+		return okResponse(resp), nil
 	case schema.MethodMoveSurfaceToOutput:
 		var body schema.MoveSurfaceToOutputRequest
 		if err := json.Unmarshal(req.Body, &body); err != nil {

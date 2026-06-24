@@ -2436,6 +2436,223 @@ func TestDispatchTileSurfaceRejectsInvalidRegion(t *testing.T) {
 	}
 }
 
+func TestDispatchAssignSurfaceTagPlacesSurfaceAndDecoratesReadback(t *testing.T) {
+	pub := &fakePublisher{}
+	bridge, err := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	server, client, cleanup := unixSocketPair(t)
+	defer cleanup()
+
+	go bridge.HandlePluginConn(server)
+	dec := json.NewDecoder(client)
+	readInitialSync(t, dec)
+
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{
+		Type:    schema.PluginMessageSurfaceEvent,
+		Event:   schema.SurfaceEventMapped,
+		Surface: schema.CompositorSurface{ID: "view-layout", WayfireViewID: 60, Visible: boolPtr(true), Geometry: &schema.SurfaceGeometry{X: 40, Y: 50, Width: 800, Height: 600}},
+		Client:  schema.CompositorClientIdentity{UID: 60001},
+	})
+	var discard schema.CompositorPolicyUpsert
+	_ = dec.Decode(&discard)
+
+	body, err := json.Marshal(schema.AssignSurfaceTagRequest{SurfaceID: "view-layout", TagID: schema.DefaultLayoutTagID, LayoutID: schema.BuiltinDevStandardLayoutID, ZoneID: "terminal", WaitTimeoutMs: 500})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	respCh := make(chan schema.Response, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		resp, err := bridge.dispatch(60002, schema.Request{Method: schema.MethodAssignSurfaceTag, Body: body})
+		if err != nil {
+			errCh <- err
+			return
+		}
+		respCh <- resp
+	}()
+
+	var msg schema.CompositorPlaceSurface
+	if err := dec.Decode(&msg); err != nil {
+		t.Fatalf("decode place_surface: %v", err)
+	}
+	if msg.Type != string(schema.PluginMessagePlaceSurface) || msg.SurfaceID != "view-layout" || msg.Geometry.X != 1190 || msg.Geometry.Y != 562 || msg.Geometry.Width != 730 || msg.Geometry.Height != 518 {
+		t.Fatalf("unexpected place_surface message: %+v", msg)
+	}
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{
+		Type:    schema.PluginMessageSurfaceEvent,
+		Event:   schema.SurfaceEventFocused,
+		Surface: schema.CompositorSurface{ID: "view-layout", WayfireViewID: 60, Visible: boolPtr(true), Geometry: &schema.SurfaceGeometry{X: 1190, Y: 562, Width: 730, Height: 518}},
+		Client:  schema.CompositorClientIdentity{UID: 60001},
+	})
+	if err := json.NewEncoder(client).Encode(schema.CompositorPlacePluginResponse{Type: string(schema.PluginMessagePlaceResponse), RequestID: msg.RequestID, SurfaceID: "view-layout", OK: true}); err != nil {
+		t.Fatalf("encode place response: %v", err)
+	}
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("dispatch returned error: %v", err)
+	case resp := <-respCh:
+		if !resp.OK {
+			t.Fatalf("dispatch response not OK: %+v", resp)
+		}
+		var result schema.PlacementResult
+		if err := json.Unmarshal(resp.Body, &result); err != nil {
+			t.Fatalf("unmarshal response: %v", err)
+		}
+		if result.Decision != schema.SurfaceActionAccepted || len(result.Placements) != 1 || result.Placements[0].ZoneID != "terminal" || result.Placements[0].ResultGeometry == nil || result.Placements[0].ResultGeometry.Width != 730 {
+			t.Fatalf("unexpected placement result: %+v", result)
+		}
+	case <-time.After(700 * time.Millisecond):
+		t.Fatal("timed out waiting for dispatch response")
+	}
+	if len(pub.events) == 0 || pub.events[len(pub.events)-1].topic != schema.TopicShellLayoutApplied {
+		t.Fatalf("shell layout applied event was not published: %+v", pub.events)
+	}
+	surfaces := bridge.ListSurfaces()
+	if len(surfaces) != 1 || surfaces[0].Surface.ManagementState != schema.SurfaceManaged || surfaces[0].Surface.Placement == nil || surfaces[0].Surface.Placement.ManagementState != schema.SurfaceManaged || surfaces[0].Surface.Placement.ZoneID != "terminal" {
+		t.Fatalf("surface readback missing managed placement: %+v", surfaces)
+	}
+}
+
+func TestDispatchAssignSurfaceTagRejectsUnsupportedMode(t *testing.T) {
+	pub := &fakePublisher{}
+	bridge, err := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	body, err := json.Marshal(schema.AssignSurfaceTagRequest{SurfaceID: "view-layout", TagID: schema.DefaultLayoutTagID, Mode: schema.LayoutModeGrid})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	if _, err := bridge.dispatch(60002, schema.Request{Method: schema.MethodAssignSurfaceTag, Body: body}); err == nil {
+		t.Fatal("expected unsupported mode denial")
+	} else {
+		class, _ := classifyError(err)
+		if class != schema.ErrorUnsupportedLayoutMode {
+			t.Fatalf("got error class %q (%v), want %q", class, err, schema.ErrorUnsupportedLayoutMode)
+		}
+	}
+	if len(pub.events) == 0 || pub.events[len(pub.events)-1].topic != schema.TopicShellLayoutDenied {
+		t.Fatalf("shell layout denial was not published: %+v", pub.events)
+	}
+}
+
+func TestDispatchListLayoutZonesReturnsResolvedBuiltin(t *testing.T) {
+	bridge, err := New(nil, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	resp, err := bridge.dispatch(60002, schema.Request{Method: schema.MethodListLayoutZones, Body: json.RawMessage(`{}`)})
+	if err != nil {
+		t.Fatalf("dispatch list zones: %v", err)
+	}
+	if !resp.OK {
+		t.Fatalf("response not OK: %+v", resp)
+	}
+	var body schema.ListLayoutZonesResponse
+	if err := json.Unmarshal(resp.Body, &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if body.Layout.LayoutID != schema.BuiltinDevStandardLayoutID || len(body.Zones) != 3 || body.Zones[0].ResolvedGeometry == nil {
+		t.Fatalf("unexpected zones response: %+v", body)
+	}
+}
+
+func TestDispatchAssignSurfaceTagDenialClasses(t *testing.T) {
+	tests := []struct {
+		name      string
+		request   schema.AssignSurfaceTagRequest
+		setup     func(*Bridge)
+		wantClass string
+	}{
+		{name: "surface not found", request: schema.AssignSurfaceTagRequest{SurfaceID: "missing", TagID: schema.DefaultLayoutTagID, LayoutID: schema.BuiltinDevStandardLayoutID}, wantClass: schema.ErrorSurfaceNotFound},
+		{name: "tag not found", request: schema.AssignSurfaceTagRequest{SurfaceID: "view-layout", TagID: "missing-tag", LayoutID: schema.BuiltinDevStandardLayoutID}, setup: addVisibleLayoutSurface, wantClass: schema.ErrorLayoutTagNotFound},
+		{name: "zone not found", request: schema.AssignSurfaceTagRequest{SurfaceID: "view-layout", TagID: schema.DefaultLayoutTagID, LayoutID: schema.BuiltinDevStandardLayoutID, ZoneID: "missing-zone"}, setup: addVisibleLayoutSurface, wantClass: schema.ErrorLayoutZoneNotFound},
+		{name: "unsupported mode", request: schema.AssignSurfaceTagRequest{SurfaceID: "view-layout", TagID: schema.DefaultLayoutTagID, LayoutID: schema.BuiltinDevStandardLayoutID, Mode: schema.LayoutModeGrid}, setup: addVisibleLayoutSurface, wantClass: schema.ErrorUnsupportedLayoutMode},
+		{name: "invalid geometry", request: schema.AssignSurfaceTagRequest{SurfaceID: "view-layout", TagID: schema.DefaultLayoutTagID, LayoutID: "invalid-layout", ZoneID: "bad"}, setup: func(bridge *Bridge) {
+			addVisibleLayoutSurface(bridge)
+			bridge.layoutDefinitions["invalid-layout"] = schema.LayoutDefinition{LayoutID: "invalid-layout", Name: "Invalid", Mode: schema.LayoutModeManual, Region: schema.LayoutRegion{RegionID: "main"}, Zones: []schema.LayoutZone{{ZoneID: "bad", Name: "Bad", RelativeGeometry: schema.NormalizedRect{X: 0.9, Y: 0, Width: 0.2, Height: 1}}}}
+		}, wantClass: schema.ErrorInvalidLayoutGeometry},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			pub := &fakePublisher{}
+			bridge, err := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			if tc.setup != nil {
+				tc.setup(bridge)
+			}
+			body, err := json.Marshal(tc.request)
+			if err != nil {
+				t.Fatalf("marshal request: %v", err)
+			}
+			_, err = bridge.dispatch(60002, schema.Request{Method: schema.MethodAssignSurfaceTag, Body: body})
+			if err == nil {
+				t.Fatalf("expected %s", tc.wantClass)
+			}
+			class, _ := classifyError(err)
+			if class != tc.wantClass {
+				t.Fatalf("got class %q (%v), want %q", class, err, tc.wantClass)
+			}
+			if len(pub.events) == 0 || pub.events[len(pub.events)-1].topic != schema.TopicShellLayoutDenied {
+				t.Fatalf("shell layout denial was not published: %+v", pub.events)
+			}
+		})
+	}
+}
+
+func TestDispatchAssignSurfaceTagReadbackTimeoutClass(t *testing.T) {
+	pub := &fakePublisher{}
+	bridge, err := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	server, client, cleanup := unixSocketPair(t)
+	defer cleanup()
+	go bridge.HandlePluginConn(server)
+	dec := json.NewDecoder(client)
+	readInitialSync(t, dec)
+	addVisibleLayoutSurface(bridge)
+	var discard schema.CompositorPolicyUpsert
+	_ = dec.Decode(&discard)
+	body, err := json.Marshal(schema.AssignSurfaceTagRequest{SurfaceID: "view-layout", TagID: schema.DefaultLayoutTagID, LayoutID: schema.BuiltinDevStandardLayoutID, ZoneID: "editor", WaitTimeoutMs: 20})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := bridge.dispatch(60002, schema.Request{Method: schema.MethodAssignSurfaceTag, Body: body})
+		errCh <- err
+	}()
+	var msg schema.CompositorPlaceSurface
+	if err := dec.Decode(&msg); err != nil {
+		t.Fatalf("decode place_surface: %v", err)
+	}
+	if err := json.NewEncoder(client).Encode(schema.CompositorPlacePluginResponse{Type: string(schema.PluginMessagePlaceResponse), RequestID: msg.RequestID, SurfaceID: "view-layout", OK: true}); err != nil {
+		t.Fatalf("encode place response: %v", err)
+	}
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatal("expected readback timeout")
+		}
+		class, _ := classifyError(err)
+		if class != schema.ErrorLayoutReadbackTimeout {
+			t.Fatalf("got class %q (%v), want %q", class, err, schema.ErrorLayoutReadbackTimeout)
+		}
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("timed out waiting for dispatch error")
+	}
+}
+
+func addVisibleLayoutSurface(bridge *Bridge) {
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{Type: schema.PluginMessageSurfaceEvent, Event: schema.SurfaceEventMapped, Surface: schema.CompositorSurface{ID: "view-layout", WayfireViewID: 60, Visible: boolPtr(true), Geometry: &schema.SurfaceGeometry{X: 40, Y: 50, Width: 800, Height: 600}}, Client: schema.CompositorClientIdentity{UID: 60001}})
+}
+
 func TestDispatchResizeSurfaceRoutesToPluginAndPublishesAction(t *testing.T) {
 	pub := &fakePublisher{}
 	bridge, err := New(pub, Config{AllowedPluginUID: uint32(os.Getuid())})

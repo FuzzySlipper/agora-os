@@ -143,6 +143,35 @@ func TestBuildLaunchRequestRejectsInvalidRole(t *testing.T) {
 	}
 }
 
+func TestBuildLayoutZonesRequest(t *testing.T) {
+	t.Parallel()
+
+	req, err := buildListLayoutZonesRequest([]string{"--layout", schema.BuiltinDevStandardLayoutID, "--tag", "default", "--output", "agent-a"})
+	if err != nil {
+		t.Fatalf("buildListLayoutZonesRequest returned error: %v", err)
+	}
+	if req.LayoutID != schema.BuiltinDevStandardLayoutID || req.TagID != "default" || req.OutputID != "agent-a" {
+		t.Fatalf("unexpected request %+v", req)
+	}
+}
+
+func TestBuildLayoutAssignSurfaceTagRequest(t *testing.T) {
+	t.Parallel()
+
+	req, err := buildAssignSurfaceTagRequest([]string{"--surface", "view-42", "--tag", "default", "--zone", "terminal", "--layout", schema.BuiltinDevStandardLayoutID, "--mode", "manual", "--timeout-ms", "1500", "--audit-correlation-id", "turn:test"})
+	if err != nil {
+		t.Fatalf("buildAssignSurfaceTagRequest returned error: %v", err)
+	}
+	if req.SurfaceID != "view-42" || req.TagID != "default" || req.ZoneID != "terminal" || req.LayoutID != schema.BuiltinDevStandardLayoutID || req.Mode != schema.LayoutModeManual || req.WaitTimeoutMs != 1500 || req.AuditCorrelationID != "turn:test" {
+		t.Fatalf("unexpected request %+v", req)
+	}
+
+	_, err = buildAssignSurfaceTagRequest([]string{"--tag", "default"})
+	if err == nil {
+		t.Fatal("expected missing surface error")
+	}
+}
+
 func TestBuildSetViewPropertyRequestParsesAlwaysOnTop(t *testing.T) {
 	t.Parallel()
 

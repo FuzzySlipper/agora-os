@@ -25,6 +25,28 @@ export interface SurfaceStackState {
     z_order_generation?: number;
 }
 
+export interface SurfacePlacement {
+    surface_id: string;
+    management_state: "managed" | "unmanaged" | "transient" | string;
+    primary_tag_id?: string;
+    tag_ids?: string[];
+    layout_id?: string;
+    region_id?: string;
+    zone_id?: string;
+    zone_number?: number;
+    mode?: "manual" | "grid" | "master_stack" | "monocle" | string;
+    target_geometry?: SurfaceGeometry;
+    result_geometry?: SurfaceGeometry;
+    placement_reason?: string;
+    applied_by?: string;
+    applied_at?: string;
+    actor?: string;
+    actor_uid?: number;
+    audit_correlation_id?: string;
+    request_id?: string;
+    warnings?: string[];
+}
+
 export interface SurfaceEvent {
     id: string;
     title?: string;
@@ -42,6 +64,7 @@ export interface SurfaceEvent {
     minimized?: boolean;
     restorable?: boolean;
     visibility_state?: "visible" | "minimized" | string;
+    management_state?: "managed" | "unmanaged" | "transient" | string;
     output_id?: string;
     workspace?: SurfaceWorkspace;
     stack_layer?: string;
@@ -49,6 +72,7 @@ export interface SurfaceEvent {
     stack_count?: number;
     is_top_in_stack?: boolean;
     z_order_generation?: number;
+    placement?: SurfacePlacement;
 }
 
 export type SurfaceActionDecision = "accepted" | "denied" | string;
