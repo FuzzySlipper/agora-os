@@ -82,15 +82,32 @@ terminates the launch on SIGTERM, and exits non-zero if the surface or process
 disappears. systemd then satisfies the crash-restart requirement with
 `Restart=on-failure` and `RestartSec=3s`.
 
-The default launch is a fullscreen toplevel WebKit window (`AGORA_SHELL_ROLE` is
-`toplevel`) because den-k8plus physical-display testing showed WebKitGTK inside
-GtkLayerShell can map successfully while presenting black/no frames on this
-Wayfire stack. Plain GTK layer-shell surfaces and WebKit toplevel surfaces render
-correctly, so the service defaults to the visible fallback. To opt back into the
-layer-shell path for debugging after the compositor/WebKit issue is fixed, set
-`AGORA_SHELL_ROLE=panel` and, if desired, `AGORA_SHELL_EXPECTED_APP_ID=agora-webview`.
+The default launch is still the fullscreen toplevel WebKit fallback
+(`AGORA_SHELL_MODE=toplevel`, `AGORA_SHELL_ROLE=toplevel`) because it is the
+known-safe production rollback path. Split shell is now available as an explicit
+opt-in supervisor mode, but it is not the default:
 
-Canonical visible fallback shape:
+```sh
+AGORA_SHELL_MODE=split /usr/local/bin/agora-shell-panel-supervisor
+```
+
+In split mode the supervisor launches and monitors independent webviews for:
+
+| Surface | URL query | Role | Title | App id | Failure policy |
+|---|---|---|---|---|---|
+| Background | `?surface=background` | `background` | `AGORA-SHELL-BACKGROUND` | `io.agoraos.ShellBackground` | log/continue if dock is healthy |
+| Dock | `?surface=dock` | `panel` | `AGORA-SHELL-DOCK` | `io.agoraos.ShellDock` | fail the service so systemd restarts it |
+| Overlay | deferred/on-demand | `overlay` | `AGORA-SHELL-OVERLAY` | `io.agoraos.ShellOverlay` | reserved identity only in this slice |
+
+The split supervisor uses launch id + expected app id + returned surface id as
+the primary identity evidence; title matching is only advisory. On supervisor
+stop it terminates every launch it created. The background can also be disabled
+for a canary with `AGORA_SHELL_BACKGROUND_ENABLED=false` while keeping the dock
+running.
+
+Rollback is one environment/config change: unset `AGORA_SHELL_MODE` or set
+`AGORA_SHELL_MODE=toplevel` and restart `agora-shell-panel.service`. The
+canonical visible fallback remains:
 
 ```sh
 /usr/local/bin/compositorctl --pretty launch \

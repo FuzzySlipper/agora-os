@@ -7,6 +7,7 @@ IFS=$'\n\t'
 
 COMPOSITORCTL=${COMPOSITORCTL:-/usr/local/bin/compositorctl}
 WEBVIEW_LAUNCHER=${WEBVIEW_LAUNCHER:-/usr/local/bin/webview-launcher}
+SHELL_MODE=${AGORA_SHELL_MODE:-toplevel}
 SHELL_URL=${AGORA_SHELL_URL:-http://127.0.0.1:7780/shell/dist/desktop/}
 SHELL_ROLE=${AGORA_SHELL_ROLE:-toplevel}
 SHELL_TITLE=${AGORA_SHELL_TITLE:-AGORA-SHELL-TOPLEVEL}
@@ -22,10 +23,32 @@ EXPECTED_TITLE=${AGORA_SHELL_EXPECTED_TITLE:-Agora Desktop Shell}
 WAIT_TIMEOUT_MS=${AGORA_SHELL_WAIT_TIMEOUT_MS:-8000}
 POLL_INTERVAL_SECONDS=${AGORA_SHELL_POLL_INTERVAL_SECONDS:-1}
 
+BACKGROUND_ENABLED=${AGORA_SHELL_BACKGROUND_ENABLED:-true}
+BACKGROUND_ROLE=${AGORA_SHELL_BACKGROUND_ROLE:-background}
+BACKGROUND_TITLE=${AGORA_SHELL_BACKGROUND_TITLE:-AGORA-SHELL-BACKGROUND}
+BACKGROUND_APP_ID=${AGORA_SHELL_BACKGROUND_APP_ID:-io.agoraos.ShellBackground}
+BACKGROUND_WIDTH=${AGORA_SHELL_BACKGROUND_WIDTH:-2560}
+BACKGROUND_HEIGHT=${AGORA_SHELL_BACKGROUND_HEIGHT:-1440}
+BACKGROUND_WAIT_TIMEOUT_MS=${AGORA_SHELL_BACKGROUND_WAIT_TIMEOUT_MS:-$WAIT_TIMEOUT_MS}
+DOCK_ROLE=${AGORA_SHELL_DOCK_ROLE:-panel}
+DOCK_TITLE=${AGORA_SHELL_DOCK_TITLE:-AGORA-SHELL-DOCK}
+DOCK_APP_ID=${AGORA_SHELL_DOCK_APP_ID:-io.agoraos.ShellDock}
+DOCK_WIDTH=${AGORA_SHELL_DOCK_WIDTH:-2560}
+DOCK_HEIGHT=${AGORA_SHELL_DOCK_HEIGHT:-96}
+DOCK_WAIT_TIMEOUT_MS=${AGORA_SHELL_DOCK_WAIT_TIMEOUT_MS:-$WAIT_TIMEOUT_MS}
+OVERLAY_TITLE=${AGORA_SHELL_OVERLAY_TITLE:-AGORA-SHELL-OVERLAY}
+OVERLAY_APP_ID=${AGORA_SHELL_OVERLAY_APP_ID:-io.agoraos.ShellOverlay}
+
 launch_id=""
 surface_id=""
 launcher_pid=""
 client_pid=""
+
+split_launch_ids=()
+split_surface_ids=()
+split_launcher_pids=()
+split_client_pids=()
+split_names=()
 
 log() {
   printf '%s %s\n' "$(date --iso-8601=seconds)" "$*" >&2
@@ -53,6 +76,15 @@ if value is None:
 else:
     print(value)
 PY
+}
+
+surface_url() {
+  local mode=$1
+  if [[ "$SHELL_URL" == *\?* ]]; then
+    printf '%s&surface=%s' "$SHELL_URL" "$mode"
+  else
+    printf '%s?surface=%s' "$SHELL_URL" "$mode"
+  fi
 }
 
 surface_present() {
@@ -106,6 +138,12 @@ cleanup() {
     log "terminating shell panel launch_id=$launch_id"
     "$COMPOSITORCTL" terminate --launch-id "$launch_id" >/dev/null 2>&1 || true
   fi
+  for launch in "${split_launch_ids[@]}"; do
+    if [[ -n "$launch" ]]; then
+      log "terminating split shell launch_id=$launch"
+      "$COMPOSITORCTL" terminate --launch-id "$launch" >/dev/null 2>&1 || true
+    fi
+  done
   exit "$status"
 }
 
@@ -120,93 +158,220 @@ need "$COMPOSITORCTL"
 need "$WEBVIEW_LAUNCHER"
 need python3
 
-existing_json=$(mktemp -t agora-shell-panel-existing.XXXXXX.json)
-if find_existing_shell_surface >"$existing_json"; then
-  surface_id=$(json_get surface_id "$existing_json")
-  client_pid=$(json_get client_pid "$existing_json")
-  existing_title=$(json_get title "$existing_json")
-  rm -f "$existing_json"
-  if [[ -n "$surface_id" ]]; then
-    if [[ -n "$client_pid" ]] && ! process_present "$client_pid"; then
-      log "discarding stale Agora shell panel surface_id=$surface_id title=${existing_title:-unknown} dead_client_pid=$client_pid"
-      "$COMPOSITORCTL" --pretty surface close --surface "$surface_id" >/dev/null 2>&1 || true
-      sleep "$POLL_INTERVAL_SECONDS"
-      surface_id=""
-      client_pid=""
-    else
-      log "adopting existing Agora shell panel surface_id=$surface_id title=${existing_title:-unknown} client_pid=${client_pid:-unknown}"
-      while true; do
-        if ! surface_present "$surface_id"; then
-          log "adopted shell panel surface disappeared: $surface_id"
-          exit 1
+launch_surface() {
+  local name=$1 url=$2 role=$3 title=$4 app_id=$5 width=$6 height=$7 wait_timeout=$8 fullscreen=${9:-false}
+  local launch_json
+  launch_json=$(mktemp -t "agora-shell-${name}-launch.XXXXXX.json")
+  rm -f "$launch_json"
+  log "launching Agora shell $name: url=$url role=$role title=$title app_id=$app_id size=${width}x${height} fullscreen=$fullscreen"
+
+  local webview_args=(
+    "$WEBVIEW_LAUNCHER"
+    --url "$url"
+    --role "$role"
+    --width "$width"
+    --height "$height"
+    --title "$title"
+    --app-id "$app_id"
+  )
+  if [[ "$fullscreen" == "true" && "$role" == "toplevel" ]]; then
+    webview_args+=(--fullscreen)
+  fi
+
+  local launch_args=(
+    --pretty launch
+    --cmd "$(printf '%q ' "${webview_args[@]}")"
+    --expected-app-id "$app_id"
+    --expected-title "$title"
+    --wait-surface
+    --wait-timeout-ms "$wait_timeout"
+  )
+
+  "$COMPOSITORCTL" "${launch_args[@]}" >"$launch_json"
+
+  local mapped_launch mapped_surface mapped_launcher mapped_client
+  mapped_launch=$(json_get launch_id "$launch_json")
+  mapped_surface=$(json_get surface.surface.id "$launch_json")
+  mapped_launcher=$(json_get pid "$launch_json")
+  mapped_client=$(json_get surface.client.pid "$launch_json")
+  rm -f "$launch_json"
+
+  if [[ -z "$mapped_launch" || -z "$mapped_surface" ]]; then
+    log "$name launch did not return both launch_id and surface id"
+    return 1
+  fi
+
+  split_launch_ids+=("$mapped_launch")
+  split_surface_ids+=("$mapped_surface")
+  split_launcher_pids+=("$mapped_launcher")
+  split_client_pids+=("$mapped_client")
+  split_names+=("$name")
+  log "shell $name mapped launch_id=$mapped_launch surface_id=$mapped_surface launcher_pid=${mapped_launcher:-unknown} client_pid=${mapped_client:-unknown}"
+}
+
+monitor_split_surfaces() {
+  while true; do
+    local i name surface launcher client
+    for i in "${!split_names[@]}"; do
+      name=${split_names[$i]}
+      surface=${split_surface_ids[$i]}
+      launcher=${split_launcher_pids[$i]}
+      client=${split_client_pids[$i]}
+      if [[ -z "$surface" ]]; then
+        continue
+      fi
+      if ! surface_present "$surface"; then
+        if [[ "$name" == "background" ]]; then
+          log "split shell background surface disappeared: $surface; continuing because dock remains authoritative"
+          split_surface_ids[$i]=""
+          split_launcher_pids[$i]=""
+          split_client_pids[$i]=""
+          continue
         fi
-        if [[ -n "$client_pid" ]] && ! process_present "$client_pid"; then
-          log "adopted shell panel client process exited: $client_pid"
-          exit 1
+        log "split shell $name surface disappeared: $surface"
+        exit 1
+      fi
+      if [[ -n "$launcher" ]] && ! process_present "$launcher"; then
+        if [[ "$name" == "background" ]]; then
+          log "split shell background launcher process exited: $launcher; continuing because dock remains authoritative"
+          split_launcher_pids[$i]=""
+          split_client_pids[$i]=""
+          continue
         fi
-        sleep "$POLL_INTERVAL_SECONDS"
-      done
+        log "split shell $name launcher process exited: $launcher"
+        exit 1
+      fi
+      if [[ -n "$client" ]] && ! process_present "$client"; then
+        if [[ "$name" == "background" ]]; then
+          log "split shell background client process exited: $client; continuing because dock remains authoritative"
+          split_client_pids[$i]=""
+          continue
+        fi
+        log "split shell $name client process exited: $client"
+        exit 1
+      fi
+    done
+    sleep "$POLL_INTERVAL_SECONDS"
+  done
+}
+
+run_split_mode() {
+  log "starting opt-in split shell mode; toplevel fallback remains default when AGORA_SHELL_MODE is unset"
+  log "reserved overlay identity title=$OVERLAY_TITLE app_id=$OVERLAY_APP_ID; overlay launch is deferred/on-demand"
+  if [[ "$BACKGROUND_ENABLED" == "true" ]]; then
+    if ! launch_surface background "$(surface_url background)" "$BACKGROUND_ROLE" "$BACKGROUND_TITLE" "$BACKGROUND_APP_ID" "$BACKGROUND_WIDTH" "$BACKGROUND_HEIGHT" "$BACKGROUND_WAIT_TIMEOUT_MS" false; then
+      log "split shell background failed to launch; continuing without background"
     fi
+  else
+    log "split shell background disabled by AGORA_SHELL_BACKGROUND_ENABLED=$BACKGROUND_ENABLED"
   fi
-else
-  rm -f "$existing_json"
-fi
 
-launch_json=$(mktemp -t agora-shell-panel-launch.XXXXXX.json)
-rm -f "$launch_json"
-log "launching Agora shell panel: url=$SHELL_URL role=$SHELL_ROLE title=$SHELL_TITLE size=${SHELL_WIDTH}x${SHELL_HEIGHT} fullscreen=$SHELL_FULLSCREEN"
+  launch_surface dock "$(surface_url dock)" "$DOCK_ROLE" "$DOCK_TITLE" "$DOCK_APP_ID" "$DOCK_WIDTH" "$DOCK_HEIGHT" "$DOCK_WAIT_TIMEOUT_MS" false
+  monitor_split_surfaces
+}
 
-webview_args=(
-  "$WEBVIEW_LAUNCHER"
-  --url "$SHELL_URL"
-  --role "$SHELL_ROLE"
-  --width "$SHELL_WIDTH"
-  --height "$SHELL_HEIGHT"
-  --title "$SHELL_TITLE"
-  --app-id "$SHELL_APP_ID"
-)
-if [[ "$SHELL_FULLSCREEN" == "true" && "$SHELL_ROLE" == "toplevel" ]]; then
-  webview_args+=(--fullscreen)
-fi
+run_toplevel_mode() {
+  existing_json=$(mktemp -t agora-shell-panel-existing.XXXXXX.json)
+  if find_existing_shell_surface >"$existing_json"; then
+    surface_id=$(json_get surface_id "$existing_json")
+    client_pid=$(json_get client_pid "$existing_json")
+    existing_title=$(json_get title "$existing_json")
+    rm -f "$existing_json"
+    if [[ -n "$surface_id" ]]; then
+      if [[ -n "$client_pid" ]] && ! process_present "$client_pid"; then
+        log "discarding stale Agora shell panel surface_id=$surface_id title=${existing_title:-unknown} dead_client_pid=$client_pid"
+        "$COMPOSITORCTL" --pretty surface close --surface "$surface_id" >/dev/null 2>&1 || true
+        sleep "$POLL_INTERVAL_SECONDS"
+        surface_id=""
+        client_pid=""
+      else
+        log "adopting existing Agora shell panel surface_id=$surface_id title=${existing_title:-unknown} client_pid=${client_pid:-unknown}"
+        while true; do
+          if ! surface_present "$surface_id"; then
+            log "adopted shell panel surface disappeared: $surface_id"
+            exit 1
+          fi
+          if [[ -n "$client_pid" ]] && ! process_present "$client_pid"; then
+            log "adopted shell panel client process exited: $client_pid"
+            exit 1
+          fi
+          sleep "$POLL_INTERVAL_SECONDS"
+        done
+      fi
+    fi
+  else
+    rm -f "$existing_json"
+  fi
 
-launch_args=(
-  --pretty launch
-  --cmd "$(printf '%q ' "${webview_args[@]}")"
-  --expected-title "$EXPECTED_TITLE"
-  --wait-surface
-  --wait-timeout-ms "$WAIT_TIMEOUT_MS"
-)
-if [[ -n "$EXPECTED_APP_ID" ]]; then
-  launch_args+=(--expected-app-id "$EXPECTED_APP_ID")
-fi
+  launch_json=$(mktemp -t agora-shell-panel-launch.XXXXXX.json)
+  rm -f "$launch_json"
+  log "launching Agora shell panel: url=$SHELL_URL role=$SHELL_ROLE title=$SHELL_TITLE size=${SHELL_WIDTH}x${SHELL_HEIGHT} fullscreen=$SHELL_FULLSCREEN"
 
-"$COMPOSITORCTL" "${launch_args[@]}" >"$launch_json"
+  webview_args=(
+    "$WEBVIEW_LAUNCHER"
+    --url "$SHELL_URL"
+    --role "$SHELL_ROLE"
+    --width "$SHELL_WIDTH"
+    --height "$SHELL_HEIGHT"
+    --title "$SHELL_TITLE"
+    --app-id "$SHELL_APP_ID"
+  )
+  if [[ "$SHELL_FULLSCREEN" == "true" && "$SHELL_ROLE" == "toplevel" ]]; then
+    webview_args+=(--fullscreen)
+  fi
 
-launch_id=$(json_get launch_id "$launch_json")
-surface_id=$(json_get surface.surface.id "$launch_json")
-launcher_pid=$(json_get pid "$launch_json")
-client_pid=$(json_get surface.client.pid "$launch_json")
-rm -f "$launch_json"
+  launch_args=(
+    --pretty launch
+    --cmd "$(printf '%q ' "${webview_args[@]}")"
+    --expected-title "$EXPECTED_TITLE"
+    --wait-surface
+    --wait-timeout-ms "$WAIT_TIMEOUT_MS"
+  )
+  if [[ -n "$EXPECTED_APP_ID" ]]; then
+    launch_args+=(--expected-app-id "$EXPECTED_APP_ID")
+  fi
 
-if [[ -z "$launch_id" || -z "$surface_id" ]]; then
-  log "launch did not return both launch_id and surface id"
-  exit 1
-fi
+  "$COMPOSITORCTL" "${launch_args[@]}" >"$launch_json"
 
-log "shell panel mapped launch_id=$launch_id surface_id=$surface_id launcher_pid=${launcher_pid:-unknown} client_pid=${client_pid:-unknown}"
+  launch_id=$(json_get launch_id "$launch_json")
+  surface_id=$(json_get surface.surface.id "$launch_json")
+  launcher_pid=$(json_get pid "$launch_json")
+  client_pid=$(json_get surface.client.pid "$launch_json")
+  rm -f "$launch_json"
 
-while true; do
-  if ! surface_present "$surface_id"; then
-    log "shell panel surface disappeared: $surface_id"
+  if [[ -z "$launch_id" || -z "$surface_id" ]]; then
+    log "launch did not return both launch_id and surface id"
     exit 1
   fi
-  if [[ -n "$launcher_pid" ]] && ! process_present "$launcher_pid"; then
-    log "shell panel launcher process exited: $launcher_pid"
-    exit 1
-  fi
-  if [[ -n "$client_pid" ]] && ! process_present "$client_pid"; then
-    log "shell panel client process exited: $client_pid"
-    exit 1
-  fi
-  sleep "$POLL_INTERVAL_SECONDS"
-done
+
+  log "shell panel mapped launch_id=$launch_id surface_id=$surface_id launcher_pid=${launcher_pid:-unknown} client_pid=${client_pid:-unknown}"
+
+  while true; do
+    if ! surface_present "$surface_id"; then
+      log "shell panel surface disappeared: $surface_id"
+      exit 1
+    fi
+    if [[ -n "$launcher_pid" ]] && ! process_present "$launcher_pid"; then
+      log "shell panel launcher process exited: $launcher_pid"
+      exit 1
+    fi
+    if [[ -n "$client_pid" ]] && ! process_present "$client_pid"; then
+      log "shell panel client process exited: $client_pid"
+      exit 1
+    fi
+    sleep "$POLL_INTERVAL_SECONDS"
+  done
+}
+
+case "$SHELL_MODE" in
+  toplevel|fallback|toplevel-fallback|full)
+    run_toplevel_mode
+    ;;
+  split)
+    run_split_mode
+    ;;
+  *)
+    log "unsupported AGORA_SHELL_MODE=$SHELL_MODE (expected toplevel or split)"
+    exit 2
+    ;;
+esac
