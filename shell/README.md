@@ -102,6 +102,29 @@ debugging, but on the current den-k8plus Wayfire/WebKit stack they can map while
 presenting black/no frames. Treat compositor presentation/capture evidence as
 the visibility gate, not `mapped` alone.
 
+### WebKitGTK readiness evidence
+
+Do not treat `frame_count=0` as proof that a WebKitGTK surface has not rendered.
+On den-k8plus a visible/nonblank WebKitGTK toplevel capture can be produced while
+`list-surfaces` still reports `frame_count: 0` and no
+`last_present_timestamp`; the plugin does not always receive a compositor
+`frame_done` event for WebKitGTK in time for readiness checks. A fresh capture
+now records separate capture-readback evidence (`capture_count`,
+`last_capture_timestamp`, and `capture.captured_at`) so agents can distinguish
+"compositor presented-frame event observed" from "plugin readback captured
+visible pixels".
+
+For WebKitGTK readiness, use this evidence ladder:
+
+1. `mapped`/`visible` readback identifies the target surface, but is not enough.
+2. `frame_count > 0` plus `last_present_timestamp` is strong compositor-presented
+   evidence when available.
+3. If `frame_count` remains zero, require a fresh `compositorctl capture` result
+   for the same surface with `visual_inspection.status == "visible"`, a nonzero
+   `capture_count` / `last_capture_timestamp` on subsequent surface readback,
+   and a current `captured_at` timestamp in the capture response.
+4. Treat blank/black captures as failures even when the surface is mapped.
+
 ## Desktop theme packages
 
 The desktop shell loads the selected theme manifest from

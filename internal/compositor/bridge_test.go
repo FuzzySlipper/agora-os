@@ -528,6 +528,22 @@ func TestWaitHooksRequirePresentedFrameEvidence(t *testing.T) {
 		t.Fatalf("WaitForAppReady class = %q, want %q (%v)", class, schema.ErrorAppNotReady, err)
 	}
 
+	capturedAt := bridge.recordCaptureReadback("view-wait")
+	bridge.mu.RLock()
+	capturedOnly := bridge.surfaces["view-wait"]
+	bridge.mu.RUnlock()
+	if capturedOnly.FrameCount != 0 || capturedOnly.LastPresentTimestamp != nil {
+		t.Fatalf("capture readback must not manufacture compositor frame evidence: %+v", capturedOnly)
+	}
+	if capturedOnly.CaptureCount != 1 || capturedOnly.LastCaptureTimestamp == nil || !capturedOnly.LastCaptureTimestamp.Equal(capturedAt) {
+		t.Fatalf("capture readback evidence not recorded: capturedAt=%s surface=%+v", capturedAt, capturedOnly)
+	}
+	if _, err := bridge.WaitForFrame(schema.WaitForFrameRequest{SurfaceID: "view-wait", TimeoutMs: 20}); err == nil {
+		t.Fatal("expected WaitForFrame to still time out with capture-only evidence")
+	} else if class, _ := classifyError(err); class != schema.ErrorFrameTimeout {
+		t.Fatalf("WaitForFrame with capture-only evidence class = %q, want %q (%v)", class, schema.ErrorFrameTimeout, err)
+	}
+
 	bridge.recordFramePresented("view-wait")
 	if _, err := bridge.WaitForFrame(schema.WaitForFrameRequest{SurfaceID: "view-wait", TimeoutMs: 20}); err != nil {
 		t.Fatalf("WaitForFrame after presented frame: %v", err)

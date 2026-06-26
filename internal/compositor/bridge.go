@@ -984,7 +984,7 @@ func (b *Bridge) CaptureSurface(req schema.CaptureSurfaceRequest) (schema.Captur
 	}
 	sum := sha256.Sum256(captureBytes)
 	sha := hex.EncodeToString(sum[:])
-	b.recordFramePresented(pluginResp.SurfaceID)
+	capturedAt := b.recordCaptureReadback(pluginResp.SurfaceID)
 	resp := schema.CaptureSurfaceResponse{
 		SurfaceID:        pluginResp.SurfaceID,
 		RequestID:        requestID,
@@ -994,6 +994,7 @@ func (b *Bridge) CaptureSurface(req schema.CaptureSurfaceRequest) (schema.Captur
 		Height:           pluginResp.Height,
 		Format:           pluginResp.Format,
 		SHA256:           sha,
+		CapturedAt:       capturedAt,
 		VisualInspection: visualInspection,
 	}
 	if req.Export {
@@ -3075,6 +3076,19 @@ func (b *Bridge) recordFramePresented(surfaceID string) {
 	}
 }
 
+func (b *Bridge) recordCaptureReadback(surfaceID string) time.Time {
+	now := time.Now()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if surface, ok := b.surfaces[surfaceID]; ok {
+		surface.CaptureCount++
+		surface.LastCaptureTimestamp = &now
+		surface.UpdatedAt = now
+		b.surfaces[surfaceID] = surface
+	}
+	return now
+}
+
 func (b *Bridge) WaitForFrame(req schema.WaitForFrameRequest) (schema.WaitForFrameResponse, error) {
 	deadline := timeoutDeadline(req.TimeoutMs, 5*time.Second)
 	for time.Now().Before(deadline) {
@@ -4003,6 +4017,8 @@ func (b *Bridge) handleSurfaceEvent(msg schema.CompositorPluginEvent) {
 		if previous, ok := b.surfaces[msg.Surface.ID]; ok {
 			tracked.FrameCount = previous.FrameCount
 			tracked.LastPresentTimestamp = previous.LastPresentTimestamp
+			tracked.CaptureCount = previous.CaptureCount
+			tracked.LastCaptureTimestamp = previous.LastCaptureTimestamp
 			tracked.Focused = previous.Focused
 		}
 		b.surfaces[msg.Surface.ID] = tracked
@@ -4051,6 +4067,8 @@ func (b *Bridge) handleSurfaceEvent(msg schema.CompositorPluginEvent) {
 			}
 			tracked.FrameCount = previous.FrameCount
 			tracked.LastPresentTimestamp = previous.LastPresentTimestamp
+			tracked.CaptureCount = previous.CaptureCount
+			tracked.LastCaptureTimestamp = previous.LastCaptureTimestamp
 			if msg.Event == schema.SurfaceEventFrameDone {
 				tracked.FrameCount++
 				tracked.LastPresentTimestamp = &now

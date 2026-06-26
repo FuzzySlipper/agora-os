@@ -424,6 +424,8 @@ type CompositorTrackedSurface struct {
 	InputInjectable      bool                       `json:"input_injectable"`
 	FrameCount           uint64                     `json:"frame_count"`
 	LastPresentTimestamp *time.Time                 `json:"last_present_timestamp,omitempty"`
+	CaptureCount         uint64                     `json:"capture_count,omitempty"`
+	LastCaptureTimestamp *time.Time                 `json:"last_capture_timestamp,omitempty"`
 	Visible              bool                       `json:"visible"`
 	SessionID            string                     `json:"session_id,omitempty"`
 	OutputID             string                     `json:"output_id,omitempty"`
@@ -467,6 +469,7 @@ type CaptureSurfaceResponse struct {
 	Height           uint32                    `json:"height"`
 	Format           string                    `json:"format"`
 	SHA256           string                    `json:"sha256"`
+	CapturedAt       time.Time                 `json:"captured_at,omitempty"`
 	VisualInspection *ArtifactVisualInspection `json:"visual_inspection,omitempty"`
 	Artifact         *ArtifactRecord           `json:"artifact,omitempty"`
 }
