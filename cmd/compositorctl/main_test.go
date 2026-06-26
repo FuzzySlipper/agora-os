@@ -119,6 +119,54 @@ func TestBuildLaunchRequestAcceptsURL(t *testing.T) {
 	}
 }
 
+func TestBuildLaunchRequestURLIdentityFlagsAreShellQuoted(t *testing.T) {
+	t.Parallel()
+
+	req, err := buildLaunchRequest([]string{
+		"--url", "http://127.0.0.1:7780/probe?name=one two",
+		"--webview-title", "AGORA 3430 Probe's Page",
+		"--app-id", "io.agoraos.probe.3430",
+		"--expected-app-id", "io.agoraos.probe.3430",
+		"--wait-surface",
+	})
+	if err != nil {
+		t.Fatalf("buildLaunchRequest returned error: %v", err)
+	}
+	want := "webview-launcher --url 'http://127.0.0.1:7780/probe?name=one two' --title 'AGORA 3430 Probe'\\''s Page' --app-id 'io.agoraos.probe.3430'"
+	if req.Command != want {
+		t.Fatalf("command = %q, want %q", req.Command, want)
+	}
+	if req.ExpectedAppID != "io.agoraos.probe.3430" || !req.WaitSurface {
+		t.Fatalf("unexpected identity/wait fields: %+v", req)
+	}
+}
+
+func TestBuildLaunchRequestPathIdentityFlagsAreShellQuoted(t *testing.T) {
+	t.Parallel()
+
+	req, err := buildLaunchRequest([]string{
+		"--path", "/tmp/agora 3430.html",
+		"--webview-title", "AGORA-3430-PATH",
+		"--app-id", "io.agoraos.probe.3430.path",
+	})
+	if err != nil {
+		t.Fatalf("buildLaunchRequest returned error: %v", err)
+	}
+	want := "webview-launcher --path '/tmp/agora 3430.html' --title 'AGORA-3430-PATH' --app-id 'io.agoraos.probe.3430.path'"
+	if req.Command != want {
+		t.Fatalf("command = %q, want %q", req.Command, want)
+	}
+}
+
+func TestBuildLaunchRequestRejectsURLIdentityFlagsWithCmd(t *testing.T) {
+	t.Parallel()
+
+	_, err := buildLaunchRequest([]string{"--cmd", "webview-launcher --url http://example.test", "--app-id", "io.example"})
+	if err == nil || !strings.Contains(err.Error(), "only supported with --url/--path") {
+		t.Fatalf("expected --url identity flag error, got %v", err)
+	}
+}
+
 func TestBuildLaunchRequestRejectsCmdAndURL(t *testing.T) {
 	t.Parallel()
 

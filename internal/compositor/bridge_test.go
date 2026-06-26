@@ -445,6 +445,43 @@ func TestSessionLifecycleAndLaunchTracking(t *testing.T) {
 	}
 }
 
+func TestSessionLifecycleRequiresTokenForResetDestroyDispatch(t *testing.T) {
+	bridge, err := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	session := bridge.CreateSession(schema.CreateSessionRequest{Label: "token-required"})
+	if session.SessionToken == "" {
+		t.Fatal("expected session token")
+	}
+
+	body, err := json.Marshal(schema.SessionRequest{SessionID: session.SessionID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bridge.dispatch(60002, schema.Request{Method: schema.MethodResetSession, Body: body}); err == nil {
+		t.Fatal("expected reset without session token to fail")
+	} else if class, _ := classifyError(err); class != schema.ErrorSessionTokenRequired || !strings.Contains(err.Error(), "--session-token") {
+		t.Fatalf("unexpected reset error class=%q err=%v", class, err)
+	}
+	if _, err := bridge.dispatch(60002, schema.Request{Method: schema.MethodDestroySession, Body: body}); err == nil {
+		t.Fatal("expected destroy without session token to fail")
+	} else if class, _ := classifyError(err); class != schema.ErrorSessionTokenRequired || !strings.Contains(err.Error(), "AGORA_COMPOSITOR_SESSION_TOKEN") {
+		t.Fatalf("unexpected destroy error class=%q err=%v", class, err)
+	}
+
+	body, err = json.Marshal(schema.SessionRequest{SessionID: session.SessionID, SessionToken: session.SessionToken})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bridge.dispatch(60002, schema.Request{Method: schema.MethodResetSession, Body: body}); err != nil {
+		t.Fatalf("reset with session token: %v", err)
+	}
+	if _, err := bridge.dispatch(60002, schema.Request{Method: schema.MethodDestroySession, Body: body}); err != nil {
+		t.Fatalf("destroy with session token: %v", err)
+	}
+}
+
 func TestTerminateLaunchEscalatesIgnoredSIGTERM(t *testing.T) {
 	bridge, err := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
 	if err != nil {

@@ -32,7 +32,7 @@ func (b *Bridge) requireSessionToken(sessionID, token string) error {
 		return compositorError(schema.ErrorSessionNotFound, "session %s not found", sessionID)
 	}
 	if session.SessionToken == "" || token == "" || token != session.SessionToken {
-		return compositorError(schema.ErrorSessionTokenRequired, "valid session_token is required for session %s", sessionID)
+		return compositorError(schema.ErrorSessionTokenRequired, "valid session_token is required for session %s; pass --session-token from session create/get/list or AGORA_COMPOSITOR_SESSION_TOKEN to retry cleanup", sessionID)
 	}
 	return nil
 }

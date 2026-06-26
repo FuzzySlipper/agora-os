@@ -3390,6 +3390,9 @@ func (b *Bridge) dispatch(peerUID uint32, req schema.Request) (schema.Response, 
 		if body.SessionID == "" {
 			return schema.Response{}, fmt.Errorf("session_id is required")
 		}
+		if err := b.requireSessionToken(body.SessionID, body.SessionToken); err != nil {
+			return schema.Response{}, err
+		}
 		if err := b.DestroySession(body.SessionID); err != nil {
 			return schema.Response{}, err
 		}
@@ -3401,6 +3404,9 @@ func (b *Bridge) dispatch(peerUID uint32, req schema.Request) (schema.Response, 
 		}
 		if body.SessionID == "" {
 			return schema.Response{}, fmt.Errorf("session_id is required")
+		}
+		if err := b.requireSessionToken(body.SessionID, body.SessionToken); err != nil {
+			return schema.Response{}, err
 		}
 		if err := b.ResetSession(body.SessionID); err != nil {
 			return schema.Response{}, err

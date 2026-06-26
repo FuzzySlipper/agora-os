@@ -125,6 +125,53 @@ For WebKitGTK readiness, use this evidence ladder:
    and a current `captured_at` timestamp in the capture response.
 4. Treat blank/black captures as failures even when the surface is mapped.
 
+### Webview launch identity and session cleanup
+
+For agent test webviews, prefer app-id/session/launch handles over page titles.
+A WebKitGTK surface title used by `list-surfaces`/launch matching is the
+launcher `webview-launcher --title` value observed at launch; it is not a stable
+HTML page `<title>` identity. The page title can still appear in WebKit/GTK
+window chrome or page content after load, so prove page identity by
+capture/a11y/app-command evidence, not by expecting compositor readback to mirror
+the HTML title. The `compositorctl launch --expected-title` matcher is therefore
+a launcher-title substring matcher.
+
+The safest CLI shape for URL-launched webviews avoids hand-quoting a large
+single `--cmd` string and matches by app id:
+
+```sh
+SESSION=$(compositorctl --pretty session create \
+  --label task-3430-smoke --project-id agora-os --task-id 3430)
+SESSION_ID=$(jq -r .session_id <<<'$SESSION')
+SESSION_TOKEN=$(jq -r .session_token <<<'$SESSION')
+export AGORA_COMPOSITOR_SESSION_TOKEN="$SESSION_TOKEN"
+
+compositorctl --pretty launch \
+  --session "$SESSION_ID" \
+  --path "/tmp/agora-3430.html" \
+  --webview-title AGORA-3430-PROBE \
+  --app-id io.agoraos.probe.3430 \
+  --expected-app-id io.agoraos.probe.3430 \
+  --wait-surface \
+  --wait-timeout-ms 8000
+```
+
+Keep the returned `launch_id`, `session_id`, and `surface.surface.id`. If a
+launch uses `--session`, cleanup commands also need the session token. Pass
+`--session-token` explicitly or keep `AGORA_COMPOSITOR_SESSION_TOKEN` exported:
+
+```sh
+compositorctl --pretty terminate --launch-id "$LAUNCH_ID" --session-token "$SESSION_TOKEN"
+compositorctl --pretty session destroy --session "$SESSION_ID" --session-token "$SESSION_TOKEN"
+```
+
+If a launch intermittently returns `app_not_ready`, use bounded retry/backoff:
+create one session for the smoke, attempt the launch up to a small cap, preserve
+every returned `launch_id`/process handle, run `list-processes --session` after
+failures, terminate any running attempts with the token, and finally destroy the
+session with the token. Do not retry in an unbounded loop or drop failed launch
+handles.
+
 ## Desktop theme packages
 
 The desktop shell loads the selected theme manifest from

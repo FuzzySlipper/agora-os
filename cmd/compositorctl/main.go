@@ -262,12 +262,13 @@ func cmdSession(args []string, pretty bool) error {
 	case "get", "reset", "destroy":
 		fs := flag.NewFlagSet("session "+args[0], flag.ExitOnError)
 		sessionID := fs.String("session", "", "session id (required)")
+		sessionToken := fs.String("session-token", os.Getenv("AGORA_COMPOSITOR_SESSION_TOKEN"), "session token for reset/destroy (defaults to AGORA_COMPOSITOR_SESSION_TOKEN)")
 		fs.Parse(args[1:])
 		if *sessionID == "" {
 			return fmt.Errorf("--session is required")
 		}
 		method := map[string]string{"get": schema.MethodGetSession, "reset": schema.MethodResetSession, "destroy": schema.MethodDestroySession}[args[0]]
-		return callAndPrint(method, schema.SessionRequest{SessionID: *sessionID}, pretty)
+		return callAndPrint(method, schema.SessionRequest{SessionID: *sessionID, SessionToken: *sessionToken}, pretty)
 	default:
 		return fmt.Errorf("unknown session subcommand: %s", args[0])
 	}
@@ -606,18 +607,45 @@ func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
-func launchCommandFromFlags(command, rawURL string) (string, error) {
+func launchCommandFromFlags(command, rawURL, rawPath, webviewTitle, appID string) (string, error) {
 	command = strings.TrimSpace(command)
 	rawURL = strings.TrimSpace(rawURL)
+	rawPath = strings.TrimSpace(rawPath)
+	webviewTitle = strings.TrimSpace(webviewTitle)
+	appID = strings.TrimSpace(appID)
+	webviewTargetCount := 0
+	if rawURL != "" {
+		webviewTargetCount++
+	}
+	if rawPath != "" {
+		webviewTargetCount++
+	}
 	switch {
-	case command != "" && rawURL != "":
-		return "", fmt.Errorf("--cmd and --url are mutually exclusive")
+	case command != "" && webviewTargetCount > 0:
+		return "", fmt.Errorf("--cmd is mutually exclusive with --url/--path")
+	case webviewTargetCount > 1:
+		return "", fmt.Errorf("--url and --path are mutually exclusive")
 	case command != "":
+		if webviewTitle != "" || appID != "" {
+			return "", fmt.Errorf("--webview-title and --app-id are only supported with --url/--path; include launcher flags inside --cmd for custom commands")
+		}
 		return command, nil
-	case rawURL != "":
-		return "webview-launcher --url " + shellQuote(rawURL), nil
+	case webviewTargetCount == 1:
+		parts := []string{"webview-launcher"}
+		if rawURL != "" {
+			parts = append(parts, "--url", shellQuote(rawURL))
+		} else {
+			parts = append(parts, "--path", shellQuote(rawPath))
+		}
+		if webviewTitle != "" {
+			parts = append(parts, "--title", shellQuote(webviewTitle))
+		}
+		if appID != "" {
+			parts = append(parts, "--app-id", shellQuote(appID))
+		}
+		return strings.Join(parts, " "), nil
 	default:
-		return "", fmt.Errorf("either --cmd or --url is required")
+		return "", fmt.Errorf("one of --cmd, --url, or --path is required")
 	}
 }
 
@@ -625,6 +653,9 @@ func buildLaunchRequest(args []string) (schema.LaunchAppRequest, error) {
 	fs := flag.NewFlagSet("launch", flag.ExitOnError)
 	cmd := fs.String("cmd", "", "command to launch")
 	url := fs.String("url", "", "remote URL to open with webview-launcher")
+	path := fs.String("path", "", "local HTML file to open with webview-launcher")
+	webviewTitle := fs.String("webview-title", "", "webview-launcher --title for --url/--path launches; prefer simple deterministic launcher titles over page <title>")
+	webviewAppID := fs.String("app-id", "", "webview-launcher --app-id for --url/--path launches; combine with --expected-app-id for robust identity")
 	sessionID := fs.String("session", "", "session id")
 	sessionToken := fs.String("session-token", os.Getenv("AGORA_COMPOSITOR_SESSION_TOKEN"), "session token (defaults to AGORA_COMPOSITOR_SESSION_TOKEN)")
 	auditID := fs.String("audit-correlation-id", "", "audit correlation id")
@@ -644,7 +675,7 @@ func buildLaunchRequest(args []string) (schema.LaunchAppRequest, error) {
 	if err != nil {
 		return schema.LaunchAppRequest{}, err
 	}
-	command, err := launchCommandFromFlags(*cmd, *url)
+	command, err := launchCommandFromFlags(*cmd, *url, *path, *webviewTitle, *webviewAppID)
 	if err != nil {
 		return schema.LaunchAppRequest{}, err
 	}

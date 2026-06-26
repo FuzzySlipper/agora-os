@@ -685,7 +685,8 @@ type CreateSessionRequest struct {
 }
 
 type SessionRequest struct {
-	SessionID string `json:"session_id"`
+	SessionID    string `json:"session_id"`
+	SessionToken string `json:"session_token,omitempty"`
 }
 
 type ListSessionsResponse struct {

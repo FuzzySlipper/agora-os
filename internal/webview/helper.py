@@ -92,6 +92,8 @@ READINESS_POLL_SCRIPT = r"""
 
 class Launcher(Gtk.Application):
     def __init__(self, uri, title, width, height, app_id, role, fullscreen, app_command_port):
+        GLib.set_prgname(app_id)
+        GLib.set_application_name(title or app_id)
         super().__init__(application_id=app_id, flags=Gio.ApplicationFlags.FLAGS_NONE)
         self.uri = uri
         self.initial_title = title
