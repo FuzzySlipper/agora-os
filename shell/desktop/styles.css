@@ -190,6 +190,84 @@ body {
     background: var(--agora-component-background-wallpaper);
 }
 
+.desktop-shell--background,
+.desktop-shell--dock,
+.desktop-shell--overlay {
+    width: 100%;
+    height: 100%;
+    min-width: 100%;
+    min-height: 100%;
+}
+
+.desktop-shell--background {
+    pointer-events: none;
+}
+
+.shell-background--surface-mode {
+    display: block;
+}
+
+.shell-dock {
+    position: fixed;
+    inset: 0;
+    display: grid;
+    grid-template-columns: auto minmax(16rem, 1fr) minmax(24rem, 3fr) auto;
+    grid-template-areas: "agent work-surfaces taskbar clock";
+    gap: var(--agora-global-space-4);
+    align-items: center;
+    width: 100%;
+    min-height: var(--taskbar-height);
+    padding: var(--agora-global-space-3) var(--agora-global-space-5);
+    border: 1px solid var(--shell-border);
+    border-radius: var(--agora-component-taskbar-radius);
+    background: var(--taskbar-bg);
+    box-shadow: var(--agora-component-taskbar-shadow);
+    backdrop-filter: var(--agora-semantic-backdrop-overlay);
+    overflow: hidden;
+}
+
+.shell-dock__agent { grid-area: agent; }
+.shell-dock__work-surfaces { grid-area: work-surfaces; }
+.shell-dock__taskbar { grid-area: taskbar; }
+.shell-dock__clock { grid-area: clock; justify-self: end; }
+
+.shell-dock agora-window-chrome {
+    width: 100%;
+    max-height: calc(var(--taskbar-height) * 2.6);
+    overflow: auto;
+}
+
+.shell-dock .window-chrome-widget__frame {
+    box-shadow: none;
+}
+
+.shell-overlay-surface {
+    position: fixed;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: var(--agora-density-panel-padding);
+    background: var(--agora-component-command-center-scrim-background);
+    backdrop-filter: var(--agora-semantic-backdrop-scrim);
+}
+
+.shell-surface-marker {
+    position: fixed;
+    right: var(--agora-global-space-4);
+    bottom: var(--agora-global-space-4);
+    z-index: 1000;
+    padding: 0.18rem 0.45rem;
+    border: 1px solid var(--agora-semantic-color-border-subtle);
+    border-radius: var(--agora-global-radius-pill);
+    background: rgba(6, 17, 18, 0.72);
+    color: var(--shell-muted);
+    font-size: var(--agora-global-font-size-xs);
+    font-weight: var(--agora-global-font-weight-label);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    pointer-events: none;
+}
+
 .shell-grid {
     position: relative;
     z-index: 1;

@@ -6,7 +6,7 @@
     "build": "npm run build-console && npm run build-desktop",
     "build-console": "mkdir -p dist && cp src/index.html src/styles.css dist/ && rm -rf dist/build && tsc --project tsconfig.json && cp dist/build/src/app.js dist/app.js && rm -rf dist/build",
     "build-desktop": "mkdir -p dist/desktop && cp desktop/index.html desktop/styles.css dist/desktop/ && rm -rf dist/desktop/themes && cp -R desktop/themes dist/desktop/themes && tsc --project tsconfig.desktop.json",
-    "test": "npm run build && node desktop/theme.test.mjs && node desktop/visual-theme.test.mjs && node desktop/layout.test.mjs && node desktop/widgets.test.mjs && node desktop/taskbar.test.mjs && node desktop/command-center.test.mjs && node desktop/surface-action-state.test.mjs && node desktop/window-chrome.test.mjs && node desktop/visual-markers.test.mjs"
+    "test": "npm run build && node desktop/theme.test.mjs && node desktop/visual-theme.test.mjs && node desktop/layout.test.mjs && node desktop/widgets.test.mjs && node desktop/surface-modes.test.mjs && node desktop/taskbar.test.mjs && node desktop/command-center.test.mjs && node desktop/surface-action-state.test.mjs && node desktop/window-chrome.test.mjs && node desktop/visual-markers.test.mjs"
   },
   "devDependencies": {
     "typescript": "^5.8.3"

@@ -125,6 +125,41 @@ For WebKitGTK readiness, use this evidence ladder:
    and a current `captured_at` timestamp in the capture response.
 4. Treat blank/black captures as failures even when the surface is mapped.
 
+### Desktop shell surface modes
+
+The desktop shell can render separate opt-in surface modes without changing the
+production default fullscreen fallback. Mode selection is URL-driven so the same
+`ShellApp`, bus controllers, and widget implementations can be reused by layer
+specific webviews:
+
+```text
+/shell/dist/desktop/?surface=background
+/shell/dist/desktop/?surface=dock
+/shell/dist/desktop/?surface=overlay
+/shell/dist/desktop/?surface=full
+```
+
+`surface=toplevel` and `surface=fallback` alias to `full`. Unknown modes are
+ignored and also fall back to `full`.
+
+Mode composition:
+
+- `background`: wallpaper/backdrop and a visual mode marker only; no taskbar,
+  Command Center, notifications, or critical controls.
+- `dock`: taskbar/launcher, clock, agent health, and Work Surface controls.
+  This is the intended persistent control surface for split-shell canaries. Its
+  Command Center button publishes `shell.overlay.requested` for the future
+  split-shell supervisor instead of rendering a modal inside the dock surface.
+- `overlay`: Command Center/modal surface only. It opens Command Center by
+  default so an overlay webview is visibly useful when launched.
+- `full`: current all-in-one fallback with all default widgets. This remains the
+  production default until split-shell supervisor/live canary work switches it
+  explicitly.
+
+Every non-full mode adds `data-surface-mode` and a stable
+`surface_mode_<mode>_marker` visual marker so screenshots and smoke artifacts can
+identify which shell surface was loaded.
+
 ### Webview launch identity and session cleanup
 
 For agent test webviews, prefer app-id/session/launch handles over page titles.

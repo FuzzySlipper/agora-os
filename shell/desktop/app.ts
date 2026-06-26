@@ -25,7 +25,15 @@ const DEFAULT_SUBSCRIPTIONS = [
     "shell.widget.remove",
 ];
 
-const emptyState = (): DesktopShellState => ({
+export type ShellSurfaceMode = "background" | "dock" | "overlay" | "full";
+
+const SURFACE_MODES = new Set<ShellSurfaceMode>(["background", "dock", "overlay", "full"]);
+
+export interface ShellAppOptions {
+    mode?: ShellSurfaceMode;
+}
+
+const emptyState = (mode: ShellSurfaceMode = "full"): DesktopShellState => ({
     surfaces: [],
     agents: [],
     notifications: [],
@@ -36,7 +44,7 @@ const emptyState = (): DesktopShellState => ({
         },
     },
     commandCenter: {
-        open: false,
+        open: mode === "overlay",
         transcript: [],
     },
 });
@@ -50,7 +58,8 @@ export interface ShellStateSnapshot {
 export class ShellApp {
     private readonly bus: BusConnection;
     private readonly widgets = new Map<string, ShellWidget>();
-    private state: DesktopShellState = emptyState();
+    readonly mode: ShellSurfaceMode;
+    private state: DesktopShellState;
     private root: HTMLElement | null = null;
     private mounted = false;
     private subscribed = false;
@@ -59,8 +68,10 @@ export class ShellApp {
     private readonly layout: LayoutController;
     private readonly injectedWidgets: WidgetController;
 
-    constructor(bus: BusConnection = createBusConnection({ protocols: tokenProtocolsFromStorage() })) {
+    constructor(bus: BusConnection = createBusConnection({ protocols: tokenProtocolsFromStorage() }), options: ShellAppOptions = {}) {
         this.bus = bus;
+        this.mode = options.mode ?? resolveShellSurfaceMode();
+        this.state = emptyState(this.mode);
         this.theme = createThemeController(this.bus);
         this.layout = createLayoutController({ bus: this.bus, onTheme: (theme) => this.theme.applyTheme(theme) });
         this.injectedWidgets = createWidgetController({ bus: this.bus });
@@ -74,13 +85,15 @@ export class ShellApp {
         this.root = container;
         this.mounted = true;
         this.root.classList.add("desktop-shell");
+        this.root.classList.add(`desktop-shell--${this.mode}`);
+        this.root.dataset.surfaceMode = this.mode;
         this.root.dataset.visualId = "agora_desktop_shell";
         this.root.dataset.visualRole = "desktop_shell_root";
         this.root.setAttribute("data-visual-id", "agora_desktop_shell");
         this.root.setAttribute("data-visual-role", "desktop_shell_root");
         this.root.dataset.testid = "agora_desktop_shell";
         this.root.setAttribute("data-testid", "agora_desktop_shell");
-        this.root.innerHTML = shellLayout();
+        this.root.innerHTML = shellLayout(this.mode);
         for (const widget of this.widgets.values()) {
             this.mountWidget(widget);
         }
@@ -90,7 +103,9 @@ export class ShellApp {
         this.stateRefreshTimer = setInterval(() => { void this.refreshShellStateSnapshot(); }, 15_000);
         void this.theme.loadFromServer();
         void this.layout.loadFromServer();
-        void this.injectedWidgets.loadFromServerLayout();
+        if (this.mode === "full" || this.mode === "dock") {
+            void this.injectedWidgets.loadFromServerLayout();
+        }
     }
 
     unmount(): void {
@@ -104,7 +119,7 @@ export class ShellApp {
         }
         if (this.root) {
             this.root.innerHTML = "";
-            this.root.classList.remove("desktop-shell");
+            this.root.classList.remove("desktop-shell", `desktop-shell--${this.mode}`);
         }
         this.root = null;
         this.mounted = false;
@@ -127,9 +142,9 @@ export class ShellApp {
     }
 
     private registerDefaultWidgets(): void {
-        this.registerWidget(new AgentHealthWidget());
-        this.registerWidget(new ClockWidget());
-        this.registerWidget(new NotificationCenter());
+        if (this.mode === "background") {
+            return;
+        }
         const applyLocalActionResult = (result: SurfaceActionResponse): void => {
             const next = cloneState(this.state);
             applySurfaceActionEvent(next, {
@@ -155,19 +170,30 @@ export class ShellApp {
             this.update(next);
             void this.refreshShellStateSnapshot();
         };
-        this.registerWidget(new WindowChromeWidget({ onActionResult: applyLocalActionResult }));
-        this.registerWidget(new CommandCenterWidget({
-            publish: (topic, body) => this.bus.publish(topic, body),
-            onFocusResult: applyLocalActionResult,
-            onAppLaunchResult: applyAppLaunchResult,
-            onClose: () => this.setCommandCenterOpen(false),
-            onPromptSubmit: (request) => this.submitCommandCenterPrompt(request),
-        }));
-        this.registerWidget(new TaskbarWidget({
-            publish: (topic, body) => this.bus.publish(topic, body),
-            onFocusResult: applyLocalActionResult,
-            onOpenCommandCenter: () => this.setCommandCenterOpen(!this.state.commandCenter.open),
-        }));
+
+        if (this.mode === "full" || this.mode === "dock") {
+            this.registerWidget(new AgentHealthWidget());
+            this.registerWidget(new ClockWidget());
+            if (this.mode === "full") {
+                this.registerWidget(new NotificationCenter());
+            }
+            this.registerWidget(new WindowChromeWidget({ onActionResult: applyLocalActionResult }));
+            this.registerWidget(new TaskbarWidget({
+                publish: (topic, body) => this.bus.publish(topic, body),
+                onFocusResult: applyLocalActionResult,
+                onOpenCommandCenter: () => this.requestCommandCenter(),
+            }));
+        }
+
+        if (this.mode === "full" || this.mode === "overlay") {
+            this.registerWidget(new CommandCenterWidget({
+                publish: (topic, body) => this.bus.publish(topic, body),
+                onFocusResult: applyLocalActionResult,
+                onAppLaunchResult: applyAppLaunchResult,
+                onClose: () => this.setCommandCenterOpen(false),
+                onPromptSubmit: (request) => this.submitCommandCenterPrompt(request),
+            }));
+        }
     }
 
     update(state: DesktopShellState): void {
@@ -180,6 +206,24 @@ export class ShellApp {
 
     private setCommandCenterOpen(open: boolean): void {
         this.update({ ...cloneState(this.state), commandCenter: { ...this.state.commandCenter, open, error: undefined } });
+    }
+
+    private requestCommandCenter(): void {
+        if (this.mode === "dock") {
+            const next = cloneState(this.state);
+            next.notifications = [{
+                id: `overlay-request:${Date.now()}`,
+                title: "Command Center overlay requested",
+                message: "Dock requested the split-shell Command Center overlay.",
+                level: "info",
+                timestamp: new Date().toISOString(),
+                topic: "shell.overlay.requested",
+            }, ...next.notifications].slice(0, 8);
+            this.update(next);
+            this.bus.publish("shell.overlay.requested", { surface: "overlay", source: "dock", requested_at: new Date().toISOString() });
+            return;
+        }
+        this.setCommandCenterOpen(!this.state.commandCenter.open);
     }
 
     private submitCommandCenterPrompt(request: ConversationTurnRequest): void {
@@ -272,7 +316,30 @@ export class ShellApp {
     }
 }
 
-function shellLayout(): string {
+function shellLayout(mode: ShellSurfaceMode): string {
+    if (mode === "background") {
+        return `
+        <section class="shell-background shell-background--surface-mode" aria-label="Agora desktop background surface" data-visual-id="shell_surface_background" data-testid="shell_surface_background" data-visual-role="surface_background">
+            <div class="shell-surface-marker shell-surface-marker--background" data-visual-id="surface_mode_background_marker" data-testid="surface_mode_background_marker" data-visual-role="surface_mode_marker">background</div>
+        </section>`;
+    }
+    if (mode === "dock") {
+        return `
+        <section class="shell-dock" aria-label="Agora dock shell" data-visual-id="shell_surface_dock" data-testid="shell_surface_dock" data-visual-role="surface_dock">
+            <div class="shell-widget-container shell-zone shell-dock__agent" data-widget-slot="agent-health" data-visual-id="dock_agent_health" data-testid="dock_agent_health" data-visual-role="layout_zone"></div>
+            <div class="shell-widget-container shell-zone shell-dock__work-surfaces" data-widget-slot="window-chrome" data-visual-id="dock_work_surfaces" data-testid="dock_work_surfaces" data-visual-role="layout_zone"></div>
+            <nav class="shell-widget-container shell-taskbar shell-dock__taskbar" data-widget-slot="taskbar" aria-label="Desktop taskbar" data-visual-id="dock_taskbar" data-testid="dock_taskbar" data-visual-role="layout_zone"></nav>
+            <div class="shell-widget-container shell-zone shell-dock__clock" data-widget-slot="clock" data-visual-id="dock_clock" data-testid="dock_clock" data-visual-role="layout_zone"></div>
+            <div class="shell-surface-marker shell-surface-marker--dock" data-visual-id="surface_mode_dock_marker" data-testid="surface_mode_dock_marker" data-visual-role="surface_mode_marker">dock</div>
+        </section>`;
+    }
+    if (mode === "overlay") {
+        return `
+        <section class="shell-overlay-surface" aria-label="Agora overlay shell" data-visual-id="shell_surface_overlay" data-testid="shell_surface_overlay" data-visual-role="surface_overlay">
+            <div data-widget-slot="command-center" data-visual-id="overlay_command_center" data-testid="overlay_command_center" data-visual-role="layout_zone"></div>
+            <div class="shell-surface-marker shell-surface-marker--overlay" data-visual-id="surface_mode_overlay_marker" data-testid="surface_mode_overlay_marker" data-visual-role="surface_mode_marker">overlay</div>
+        </section>`;
+    }
     return `
         <section class="shell-background" aria-hidden="true" data-visual-id="shell_background" data-testid="shell_background" data-visual-role="background"></section>
         <section class="shell-grid" aria-label="Agora desktop shell" data-visual-id="shell_grid" data-testid="shell_grid" data-visual-role="layout_grid">
@@ -285,6 +352,26 @@ function shellLayout(): string {
             <div class="shell-widget-container shell-zone pos-bottom-right" data-widget-slot="notifications" data-visual-id="zone_bottom_right" data-testid="zone_bottom_right" data-visual-role="layout_zone"></div>
             <nav class="shell-widget-container shell-taskbar pos-bottom" data-widget-slot="taskbar" aria-label="Desktop taskbar" data-visual-id="zone_bottom" data-testid="zone_bottom" data-visual-role="layout_zone"></nav>
         </section>`;
+}
+
+export function resolveShellSurfaceMode(urlLike: Pick<Location, "search" | "hash"> = window.location): ShellSurfaceMode {
+    const candidates = [modeFromParams(urlLike.search), modeFromParams(urlLike.hash.replace(/^#/, ""))];
+    for (const candidate of candidates) {
+        if (candidate) {
+            return candidate;
+        }
+    }
+    return "full";
+}
+
+function modeFromParams(paramsText: string): ShellSurfaceMode | undefined {
+    const params = new URLSearchParams(paramsText.replace(/^\?/, ""));
+    const raw = params.get("surface") ?? params.get("shellSurface") ?? params.get("shell_surface");
+    if (!raw) {
+        return undefined;
+    }
+    const normalized = raw === "fallback" || raw === "toplevel" ? "full" : raw;
+    return SURFACE_MODES.has(normalized as ShellSurfaceMode) ? normalized as ShellSurfaceMode : undefined;
 }
 
 function cloneState(state: DesktopShellState): DesktopShellState {
@@ -508,7 +595,7 @@ async function tokenProtocolsForBootstrap(): Promise<string[] | undefined> {
 }
 
 async function mountDefaultShell(widgetRoot: HTMLElement): Promise<void> {
-    const app = new ShellApp(createBusConnection({ protocols: await tokenProtocolsForBootstrap() }));
+    const app = new ShellApp(createBusConnection({ protocols: await tokenProtocolsForBootstrap() }), { mode: resolveShellSurfaceMode() });
     app.mount(widgetRoot);
     Object.assign(window, { agoraDesktopShell: app });
 }
