@@ -1,0 +1,251 @@
+#!/usr/bin/python3
+"""Native GTK/GtkLayerShell dock chrome for Agora OS.
+
+This is intentionally shell chrome, not a WebKit surface.  It presents a small
+bottom layer-shell dock, polls compositor state, and routes simple human actions
+through trusted local compositorctl commands.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+from dataclasses import dataclass
+from typing import Any
+
+import gi
+
+gi.require_version("Gtk", "3.0")
+gi.require_version("GtkLayerShell", "0.1")
+from gi.repository import Gio, GLib, Gtk, GtkLayerShell  # noqa: E402
+
+SHELL_APP_IDS = {
+    "io.agoraos.ShellPanel",
+    "io.agoraos.ShellBackground",
+    "io.agoraos.ShellDock",
+    "io.agoraos.ShellOverlay",
+}
+
+
+@dataclass(frozen=True)
+class SurfaceRow:
+    surface_id: str
+    title: str
+    app_id: str
+    role: str
+    surface_kind: str
+    visible: bool
+    minimized: bool
+
+    @property
+    def label(self) -> str:
+        title = self.title or self.app_id or self.surface_id
+        if len(title) > 34:
+            title = f"{title[:31]}…"
+        return title
+
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Agora native GTK layer-shell dock")
+    parser.add_argument("--app-id", default="io.agoraos.ShellDock")
+    parser.add_argument("--title", default="AGORA-NATIVE-SHELL-DOCK")
+    parser.add_argument("--namespace", default="io.agoraos.ShellDock")
+    parser.add_argument("--width", type=int, default=2560)
+    parser.add_argument("--height", type=int, default=96)
+    parser.add_argument("--compositorctl", default="/usr/local/bin/compositorctl")
+    parser.add_argument("--poll-ms", type=int, default=1000)
+    parser.add_argument("--layer", choices=("top", "overlay"), default="top")
+    parser.add_argument("--no-exclusive-zone", action="store_true")
+    return parser.parse_args(argv)
+
+
+class NativeDock(Gtk.Application):
+    def __init__(self, args: argparse.Namespace) -> None:
+        GLib.set_prgname(args.app_id)
+        GLib.set_application_name(args.title)
+        super().__init__(application_id=args.app_id, flags=Gio.ApplicationFlags.FLAGS_NONE)
+        self.args = args
+        self.window: Gtk.ApplicationWindow | None = None
+        self.taskbar: Gtk.Box | None = None
+        self.status_label: Gtk.Label | None = None
+        self.surfaces: list[SurfaceRow] = []
+
+    def do_activate(self) -> None:
+        if self.window is not None:
+            self.window.present()
+            return
+
+        self.window = Gtk.ApplicationWindow(application=self)
+        self.window.set_title(self.args.title)
+        self.window.set_default_size(self.args.width, self.args.height)
+        self.window.set_resizable(False)
+        self.window.set_decorated(False)
+        self.window.connect("destroy", lambda *_args: self.quit())
+        self.configure_layer_shell(self.window)
+
+        root = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        root.set_name("agora-native-dock")
+        root.set_margin_start(12)
+        root.set_margin_end(12)
+        root.set_margin_top(8)
+        root.set_margin_bottom(8)
+
+        brand = Gtk.Label(label="Agora")
+        brand.set_name("brand")
+        brand.set_tooltip_text("Native GTK/GtkLayerShell dock chrome")
+        root.pack_start(brand, False, False, 0)
+
+        self.taskbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.taskbar.set_hexpand(True)
+        root.pack_start(self.taskbar, True, True, 0)
+
+        self.status_label = Gtk.Label(label="surfaces: …")
+        self.status_label.set_name("status")
+        root.pack_end(self.status_label, False, False, 0)
+
+        self.apply_css()
+        self.window.add(root)
+        self.window.show_all()
+        self.refresh()
+        GLib.timeout_add(max(250, self.args.poll_ms), self.refresh)
+
+    def configure_layer_shell(self, window: Gtk.ApplicationWindow) -> None:
+        if not GtkLayerShell.is_supported():
+            raise RuntimeError("GtkLayerShell is not supported on the current Wayland display")
+        GtkLayerShell.init_for_window(window)
+        GtkLayerShell.set_namespace(window, self.args.namespace)
+        layer = GtkLayerShell.Layer.TOP if self.args.layer == "top" else GtkLayerShell.Layer.OVERLAY
+        GtkLayerShell.set_layer(window, layer)
+        GtkLayerShell.set_anchor(window, GtkLayerShell.Edge.BOTTOM, True)
+        GtkLayerShell.set_anchor(window, GtkLayerShell.Edge.LEFT, True)
+        GtkLayerShell.set_anchor(window, GtkLayerShell.Edge.RIGHT, True)
+        if not self.args.no_exclusive_zone:
+            GtkLayerShell.auto_exclusive_zone_enable(window)
+
+    def apply_css(self) -> None:
+        css = b"""
+        #agora-native-dock {
+          background: rgba(10, 16, 28, 0.94);
+          border-top: 1px solid rgba(125, 211, 252, 0.55);
+          color: #e5eefb;
+          font: 12px sans-serif;
+        }
+        #brand {
+          color: #7dd3fc;
+          font-weight: 700;
+          font-size: 17px;
+          padding: 0 10px;
+        }
+        #status { color: #cbd5e1; padding: 0 10px; }
+        button.surface-button {
+          background: rgba(30, 41, 59, 0.95);
+          border: 1px solid rgba(148, 163, 184, 0.45);
+          border-radius: 10px;
+          color: #f8fafc;
+          padding: 8px 12px;
+        }
+        button.surface-button:hover { background: rgba(14, 165, 233, 0.35); }
+        button.surface-button.minimized { color: #94a3b8; font-style: italic; }
+        """
+        provider = Gtk.CssProvider()
+        provider.load_from_data(css)
+        Gtk.StyleContext.add_provider_for_screen(
+            self.window.get_screen() if self.window else None,
+            provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+        )
+
+    def refresh(self) -> bool:
+        self.surfaces = self.read_surfaces()
+        self.render_taskbar()
+        return True
+
+    def read_surfaces(self) -> list[SurfaceRow]:
+        try:
+            proc = subprocess.run(
+                [self.args.compositorctl, "--pretty", "list-surfaces"],
+                check=True,
+                text=True,
+                capture_output=True,
+                timeout=4,
+            )
+            payload = json.loads(proc.stdout)
+        except Exception as exc:
+            if self.status_label is not None:
+                self.status_label.set_text(f"surface read failed: {exc}")
+            return []
+
+        rows: list[SurfaceRow] = []
+        for item in payload.get("surfaces", []):
+            surface = item.get("surface") or {}
+            app_id = str(surface.get("app_id") or "")
+            role = str(surface.get("role") or "")
+            kind = str(surface.get("surface_kind") or "")
+            if app_id in SHELL_APP_IDS or role in {"background", "dock", "panel", "overlay"} or kind == "layer_shell":
+                continue
+            surface_id = str(surface.get("id") or "")
+            if not surface_id:
+                continue
+            rows.append(SurfaceRow(
+                surface_id=surface_id,
+                title=str(surface.get("title") or ""),
+                app_id=app_id,
+                role=role,
+                surface_kind=kind,
+                visible=bool(surface.get("visible")),
+                minimized=bool(surface.get("minimized")),
+            ))
+        rows.sort(key=lambda row: (row.minimized, row.label.lower(), row.surface_id))
+        return rows
+
+    def render_taskbar(self) -> None:
+        if self.taskbar is None:
+            return
+        for child in list(self.taskbar.get_children()):
+            self.taskbar.remove(child)
+
+        if not self.surfaces:
+            empty = Gtk.Label(label="No ordinary work surfaces")
+            empty.set_name("empty")
+            self.taskbar.pack_start(empty, False, False, 0)
+        for row in self.surfaces[:12]:
+            button = Gtk.Button(label=row.label)
+            button.set_name("surface-button")
+            button.get_style_context().add_class("surface-button")
+            if row.minimized:
+                button.get_style_context().add_class("minimized")
+            button.set_tooltip_text(f"{row.surface_id}\n{row.app_id}")
+            button.connect("clicked", self.on_surface_clicked, row)
+            self.taskbar.pack_start(button, False, False, 0)
+
+        if self.status_label is not None:
+            self.status_label.set_text(f"{len(self.surfaces)} work surface(s)")
+        self.taskbar.show_all()
+
+    def on_surface_clicked(self, _button: Gtk.Button, row: SurfaceRow) -> None:
+        commands: list[list[str]] = []
+        if row.minimized:
+            commands.append([self.args.compositorctl, "--pretty", "surface", "minimize", "--surface", row.surface_id, "--state", "false", "--timeout-ms", "3000"])
+        commands.extend([
+            [self.args.compositorctl, "--pretty", "surface", "focus", "--surface", row.surface_id, "--timeout-ms", "3000"],
+            [self.args.compositorctl, "--pretty", "surface", "raise", "--surface", row.surface_id, "--timeout-ms", "3000"],
+        ])
+        for command in commands:
+            subprocess.run(command, text=True, capture_output=True, timeout=5, check=False)
+        self.refresh()
+
+
+def main(argv: list[str]) -> int:
+    args = parse_args(argv)
+    app = NativeDock(args)
+    try:
+        return app.run([])
+    except Exception as exc:
+        print(f"native-shell-dock failed: {exc}", file=sys.stderr, flush=True)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

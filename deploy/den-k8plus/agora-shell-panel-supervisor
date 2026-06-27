@@ -7,6 +7,7 @@ IFS=$'\n\t'
 
 COMPOSITORCTL=${COMPOSITORCTL:-/usr/local/bin/compositorctl}
 WEBVIEW_LAUNCHER=${WEBVIEW_LAUNCHER:-/usr/local/bin/webview-launcher}
+NATIVE_DOCK_LAUNCHER=${AGORA_NATIVE_DOCK_LAUNCHER:-/usr/local/bin/native-shell-dock}
 SHELL_MODE=${AGORA_SHELL_MODE:-split-toplevel-dock}
 SHELL_URL=${AGORA_SHELL_URL:-http://127.0.0.1:7780/shell/dist/desktop/}
 SHELL_ROLE=${AGORA_SHELL_ROLE:-toplevel}
@@ -296,6 +297,57 @@ run_split_toplevel_dock_mode() {
   monitor_split_surfaces
 }
 
+run_native_dock_mode() {
+  log "starting native-dock shell mode; background stays WebKit layer-shell while dock chrome is native GTK/GtkLayerShell"
+  need "$NATIVE_DOCK_LAUNCHER"
+  if [[ "$BACKGROUND_ENABLED" == "true" ]]; then
+    if ! launch_surface background "$(surface_url background)" "$BACKGROUND_ROLE" "$BACKGROUND_TITLE" "$BACKGROUND_APP_ID" "$BACKGROUND_WIDTH" "$BACKGROUND_HEIGHT" "$BACKGROUND_WAIT_TIMEOUT_MS" false false; then
+      log "native-dock background failed to launch; continuing without background"
+    fi
+  else
+    log "native-dock background disabled by AGORA_SHELL_BACKGROUND_ENABLED=$BACKGROUND_ENABLED"
+  fi
+
+  local dock_json
+  dock_json=$(mktemp -t "agora-native-dock-launch.XXXXXX.json")
+  rm -f "$dock_json"
+  local dock_args=(
+    "$NATIVE_DOCK_LAUNCHER"
+    --app-id "$DOCK_APP_ID"
+    --namespace "$DOCK_APP_ID"
+    --title "$DOCK_TITLE"
+    --width "$DOCK_WIDTH"
+    --height "$DOCK_HEIGHT"
+    --compositorctl "$COMPOSITORCTL"
+  )
+  log "launching native GTK shell dock: app_id=$DOCK_APP_ID title=$DOCK_TITLE size=${DOCK_WIDTH}x${DOCK_HEIGHT}"
+  "$COMPOSITORCTL" --pretty launch \
+    --cmd "$(printf '%q ' "${dock_args[@]}")" \
+    --expected-app-id "$DOCK_APP_ID" \
+    --expected-title "$DOCK_TITLE" \
+    --wait-surface \
+    --wait-timeout-ms "$DOCK_WAIT_TIMEOUT_MS" >"$dock_json"
+
+  local mapped_launch mapped_surface mapped_launcher mapped_client
+  mapped_launch=$(json_get launch_id "$dock_json")
+  mapped_surface=$(json_get surface.surface.id "$dock_json")
+  mapped_launcher=$(json_get pid "$dock_json")
+  mapped_client=$(json_get surface.client.pid "$dock_json")
+  rm -f "$dock_json"
+
+  if [[ -z "$mapped_launch" || -z "$mapped_surface" ]]; then
+    log "native dock launch did not return both launch_id and surface id"
+    return 1
+  fi
+  split_launch_ids+=("$mapped_launch")
+  split_surface_ids+=("$mapped_surface")
+  split_launcher_pids+=("$mapped_launcher")
+  split_client_pids+=("$mapped_client")
+  split_names+=("native-dock")
+  log "native shell dock mapped launch_id=$mapped_launch surface_id=$mapped_surface launcher_pid=${mapped_launcher:-unknown} client_pid=${mapped_client:-unknown}"
+  monitor_split_surfaces
+}
+
 run_toplevel_mode() {
   existing_json=$(mktemp -t agora-shell-panel-existing.XXXXXX.json)
   if find_existing_shell_surface >"$existing_json"; then
@@ -399,8 +451,11 @@ case "$SHELL_MODE" in
   split-toplevel-dock|hybrid|split-hybrid)
     run_split_toplevel_dock_mode
     ;;
+  native-dock|native-gtk-dock|split-native-dock)
+    run_native_dock_mode
+    ;;
   *)
-    log "unsupported AGORA_SHELL_MODE=$SHELL_MODE (expected toplevel, split, or split-toplevel-dock)"
+    log "unsupported AGORA_SHELL_MODE=$SHELL_MODE (expected toplevel, split, split-toplevel-dock, or native-dock)"
     exit 2
     ;;
 esac

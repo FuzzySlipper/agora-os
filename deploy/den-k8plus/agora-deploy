@@ -27,8 +27,8 @@ readonly -a USER_SERVICES=(compositor-bridge event-bus)
 readonly -a SYSTEM_SERVICES=(event-bus.service event-bus-web.service compositor-bridge.service)
 readonly SHELL_PANEL_SERVICE=agora-shell-panel.service
 readonly -a HOST_UNIT_FILES=(event-bus.service event-bus-web.service compositor-bridge.service agora-wayfire.service agora-shell-panel.service)
-readonly -a HOST_EXEC_FILES=(agora-shell-panel-supervisor)
-readonly -a HOST_ASSET_FILES=(event-bus.service event-bus-web.service compositor-bridge.service agora-wayfire.service agora-shell-panel.service wayfire.ini agora-shell-panel-supervisor)
+readonly -a HOST_EXEC_FILES=(agora-shell-panel-supervisor native-shell-dock)
+readonly -a HOST_ASSET_FILES=(event-bus.service event-bus-web.service compositor-bridge.service agora-wayfire.service agora-shell-panel.service wayfire.ini agora-shell-panel-supervisor native-shell-dock)
 
 usage() {
   cat <<'USAGE'
@@ -305,6 +305,7 @@ validate_shell_panel_supervisor() {
   [[ -x "$script" ]] || die "agora-shell-panel-supervisor must be executable in git source"
   grep -Fq 'SHELL_URL=${AGORA_SHELL_URL:-http://127.0.0.1:7780/shell/dist/desktop/}' "$script" || die "shell panel supervisor URL guard failed"
   grep -Fq 'WEBVIEW_LAUNCHER=${WEBVIEW_LAUNCHER:-/usr/local/bin/webview-launcher}' "$script" || die "shell panel supervisor launcher guard failed"
+  grep -Fq 'NATIVE_DOCK_LAUNCHER=${AGORA_NATIVE_DOCK_LAUNCHER:-/usr/local/bin/native-shell-dock}' "$script" || die "shell panel supervisor native dock launcher guard failed"
   grep -Fq 'SHELL_MODE=${AGORA_SHELL_MODE:-split-toplevel-dock}' "$script" || die "shell panel supervisor mode default guard failed"
   grep -Fq 'SHELL_ROLE=${AGORA_SHELL_ROLE:-toplevel}' "$script" || die "shell panel supervisor visible fallback role guard failed"
   grep -Fq 'SHELL_FULLSCREEN=${AGORA_SHELL_FULLSCREEN:-true}' "$script" || die "shell panel supervisor fullscreen guard failed"
@@ -314,12 +315,33 @@ validate_shell_panel_supervisor() {
   grep -Fq 'OVERLAY_TITLE=${AGORA_SHELL_OVERLAY_TITLE:-AGORA-SHELL-OVERLAY}' "$script" || die "shell panel supervisor overlay identity guard failed"
   grep -Fq 'surface_url()' "$script" || die "shell panel supervisor split surface URL guard failed"
   grep -Fq 'run_split_mode()' "$script" || die "shell panel supervisor split mode guard failed"
+  grep -Fq 'run_native_dock_mode()' "$script" || die "shell panel supervisor native dock mode guard failed"
   grep -Fq 'monitor_split_surfaces()' "$script" || die "shell panel supervisor split monitor guard failed"
   grep -Fq 'webview_args=(' "$script" || die "shell panel supervisor webview command guard failed"
   grep -Fq -- '--fullscreen)' "$script" || die "shell panel supervisor fullscreen arg guard failed"
   grep -Fq 'wait-timeout-ms "$WAIT_TIMEOUT_MS"' "$script" || die "shell panel supervisor wait-surface guard failed"
   grep -Fq '"$COMPOSITORCTL" terminate --launch-id "$launch_id"' "$script" || die "shell panel supervisor fallback cleanup guard failed"
   grep -Fq '"$COMPOSITORCTL" terminate --launch-id "$launch"' "$script" || die "shell panel supervisor split cleanup guard failed"
+}
+
+validate_native_shell_dock() {
+  local script=$1
+  [[ -x "$script" ]] || die "native-shell-dock must be executable in git source"
+  head -n 1 "$script" | grep -Fxq '#!/usr/bin/python3' || die "native-shell-dock shebang must use /usr/bin/python3 for distro GI imports"
+  /usr/bin/python3 -m py_compile "$script" || die "native-shell-dock Python syntax check failed"
+  grep -Fq 'gi.require_version("Gtk", "3.0")' "$script" || die "native-shell-dock GTK version guard failed"
+  grep -Fq 'gi.require_version("GtkLayerShell", "0.1")' "$script" || die "native-shell-dock GtkLayerShell version guard failed"
+  grep -Fq 'parser.add_argument("--app-id", default="io.agoraos.ShellDock")' "$script" || die "native-shell-dock deterministic app id default guard failed"
+  grep -Fq 'parser.add_argument("--namespace", default="io.agoraos.ShellDock")' "$script" || die "native-shell-dock deterministic namespace default guard failed"
+  grep -Fq 'parser.add_argument("--title", default="AGORA-NATIVE-SHELL-DOCK")' "$script" || die "native-shell-dock deterministic title default guard failed"
+  grep -Fq 'GtkLayerShell.set_anchor(window, GtkLayerShell.Edge.BOTTOM, True)' "$script" || die "native-shell-dock bottom anchor guard failed"
+  grep -Fq 'GtkLayerShell.set_anchor(window, GtkLayerShell.Edge.LEFT, True)' "$script" || die "native-shell-dock left anchor guard failed"
+  grep -Fq 'GtkLayerShell.set_anchor(window, GtkLayerShell.Edge.RIGHT, True)' "$script" || die "native-shell-dock right anchor guard failed"
+  grep -Fq 'GtkLayerShell.set_layer(window, layer)' "$script" || die "native-shell-dock layer setup guard failed"
+  grep -Fq 'GtkLayerShell.auto_exclusive_zone_enable(window)' "$script" || die "native-shell-dock exclusive-zone guard failed"
+  grep -Fq '[self.args.compositorctl, "--pretty", "list-surfaces"]' "$script" || die "native-shell-dock compositorctl list-surfaces guard failed"
+  grep -Fq '"focus"' "$script" || die "native-shell-dock surface focus action guard failed"
+  grep -Fq '"raise"' "$script" || die "native-shell-dock surface raise action guard failed"
 }
 
 validate_host_asset_sources() {
@@ -357,6 +379,7 @@ stage_host_assets() {
   validate_agora_shell_panel_unit "$stage/agora-shell-panel.service"
   validate_wayfire_config "$stage/wayfire.ini"
   validate_shell_panel_supervisor "$stage/agora-shell-panel-supervisor"
+  validate_native_shell_dock "$stage/native-shell-dock"
 
   systemd-analyze verify "$stage/event-bus.service" "$stage/event-bus-web.service" "$stage/compositor-bridge.service" "$stage/agora-wayfire.service" "$stage/agora-shell-panel.service"
 }
@@ -382,9 +405,14 @@ backup_existing_host_assets() {
   else
     printf 'missing before install: %s\n' "$INSTALL_BIN_DIR/agora-shell-panel-supervisor" >"$backup_dir/agora-shell-panel-supervisor.missing"
   fi
+  if [[ -e "$INSTALL_BIN_DIR/native-shell-dock" ]]; then
+    cp -a "$INSTALL_BIN_DIR/native-shell-dock" "$backup_dir/native-shell-dock.bak"
+  else
+    printf 'missing before install: %s\n' "$INSTALL_BIN_DIR/native-shell-dock" >"$backup_dir/native-shell-dock.missing"
+  fi
   systemctl is-active agora-wayfire.service event-bus.service event-bus-web.service compositor-bridge.service agora-shell-panel.service sddm.service display-manager.service >"$backup_dir/pre-is-active.txt" 2>&1 || true
   systemctl is-enabled agora-wayfire.service event-bus.service event-bus-web.service compositor-bridge.service agora-shell-panel.service sddm.service display-manager.service >"$backup_dir/pre-is-enabled.txt" 2>&1 || true
-  sha256sum /etc/systemd/system/agora-wayfire.service /etc/systemd/system/event-bus.service /etc/systemd/system/event-bus-web.service /etc/systemd/system/compositor-bridge.service /etc/systemd/system/agora-shell-panel.service "$WAYFIRE_CONFIG_TARGET" "$INSTALL_BIN_DIR/agora-shell-panel-supervisor" >"$backup_dir/pre-sha256.txt" 2>/dev/null || true
+  sha256sum /etc/systemd/system/agora-wayfire.service /etc/systemd/system/event-bus.service /etc/systemd/system/event-bus-web.service /etc/systemd/system/compositor-bridge.service /etc/systemd/system/agora-shell-panel.service "$WAYFIRE_CONFIG_TARGET" "$INSTALL_BIN_DIR/agora-shell-panel-supervisor" "$INSTALL_BIN_DIR/native-shell-dock" >"$backup_dir/pre-sha256.txt" 2>/dev/null || true
 }
 
 install_host_assets() {
@@ -409,13 +437,14 @@ install_host_assets() {
   install -o root -g root -m 0644 "$stage/agora-wayfire.service" /etc/systemd/system/agora-wayfire.service
   install -o root -g root -m 0644 "$stage/agora-shell-panel.service" /etc/systemd/system/agora-shell-panel.service
   install -o root -g root -m 0755 "$stage/agora-shell-panel-supervisor" "$INSTALL_BIN_DIR/agora-shell-panel-supervisor"
+  install -o root -g root -m 0755 "$stage/native-shell-dock" "$INSTALL_BIN_DIR/native-shell-dock"
   install -d -o "$BUILD_USER" -g "$BUILD_GROUP" -m 0755 /home/agent/.config
   install -o "$BUILD_USER" -g "$BUILD_GROUP" -m 0644 "$stage/wayfire.ini" "$WAYFIRE_CONFIG_TARGET"
 
   info "daemon reload and post-install verify"
   systemctl daemon-reload
   systemd-analyze verify /etc/systemd/system/event-bus.service /etc/systemd/system/event-bus-web.service /etc/systemd/system/compositor-bridge.service /etc/systemd/system/agora-wayfire.service /etc/systemd/system/agora-shell-panel.service
-  sha256sum /etc/systemd/system/agora-wayfire.service /etc/systemd/system/event-bus.service /etc/systemd/system/event-bus-web.service /etc/systemd/system/compositor-bridge.service /etc/systemd/system/agora-shell-panel.service "$WAYFIRE_CONFIG_TARGET" "$INSTALL_BIN_DIR/agora-shell-panel-supervisor" >"$backup_dir/post-sha256.txt"
+  sha256sum /etc/systemd/system/agora-wayfire.service /etc/systemd/system/event-bus.service /etc/systemd/system/event-bus-web.service /etc/systemd/system/compositor-bridge.service /etc/systemd/system/agora-shell-panel.service "$WAYFIRE_CONFIG_TARGET" "$INSTALL_BIN_DIR/agora-shell-panel-supervisor" "$INSTALL_BIN_DIR/native-shell-dock" >"$backup_dir/post-sha256.txt"
 
   info "enable support services and shell panel autostart"
   systemctl enable "${SYSTEM_SERVICES[@]}" "$SHELL_PANEL_SERVICE"

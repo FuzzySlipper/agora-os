@@ -97,17 +97,22 @@ AGORA_SHELL_MODE=toplevel /usr/local/bin/agora-shell-panel-supervisor
 # bottom xdg-toplevel so WebKit content is capturable and physically visible while
 # pure WebKit+GtkLayerShell dock presentation is unresolved.
 AGORA_SHELL_MODE=split-toplevel-dock /usr/local/bin/agora-shell-panel-supervisor
+
+# Native dock backend canary: background remains WebKit layer-shell, but the dock
+# chrome is native GTK/GtkLayerShell rather than WebKit layer-shell.
+AGORA_SHELL_MODE=native-dock /usr/local/bin/agora-shell-panel-supervisor
 ```
 
-In pure split mode the supervisor launches and monitors independent webviews for:
+The supervisor launches split surfaces with deterministic identities:
 
-| Surface | URL query | Role | Title | App id | Failure policy |
+| Surface | URL query / backend | Role | Title | App id | Failure policy |
 |---|---|---|---|---|---|
-| Background | `?surface=background` | `background` | `AGORA-SHELL-BACKGROUND` | `io.agoraos.ShellBackground` | log/continue if dock is healthy |
-| Dock | `?surface=dock` | `panel` | `AGORA-SHELL-DOCK` | `io.agoraos.ShellDock` | fail the service so systemd restarts it |
+| Background | `?surface=background` WebKit | `background` | `AGORA-SHELL-BACKGROUND` | `io.agoraos.ShellBackground` | log/continue if dock is healthy |
+| WebKit dock | `?surface=dock` WebKit | `panel` | `AGORA-SHELL-DOCK` | `io.agoraos.ShellDock` | fail the service so systemd restarts it |
+| Native dock | `/usr/local/bin/native-shell-dock` GTK/GtkLayerShell | layer-shell top, bottom/left/right anchored | `AGORA-SHELL-DOCK` | `io.agoraos.ShellDock` | fail the service so systemd restarts it |
 | Overlay | deferred/on-demand | `overlay` | `AGORA-SHELL-OVERLAY` | `io.agoraos.ShellOverlay` | reserved identity only in this slice |
 
-The split supervisor uses launch id + expected app id + returned surface id as
+Split mode uses `expected-app-id` for background/dock launch matching as
 the primary identity evidence; title matching is only advisory. On supervisor
 stop it terminates every launch it created. The background can also be disabled
 for a canary with `AGORA_SHELL_BACKGROUND_ENABLED=false` while keeping the dock
@@ -118,6 +123,14 @@ running.
 (default `SHELL_HEIGHT - DOCK_HEIGHT`), and sets `always-on-top`. This is a
 workaround for the current pure WebKit+GtkLayerShell presentation gap; do not
 use it as proof that the pure layer-shell dock is fixed.
+
+`native-dock` keeps the same background/overlay/fallback role split but excludes
+WebKit from the dock chrome path. The native GTK dock polls `compositorctl
+list-surfaces`, filters shell surfaces out of its taskbar, and restores/focuses/
+raises ordinary work surfaces through trusted `compositorctl surface ...` actions.
+Use this mode to iterate toward durable layer-shell shell chrome while preserving
+explicit rollback via `AGORA_SHELL_MODE=split-toplevel-dock` or
+`AGORA_SHELL_MODE=toplevel`.
 
 Split canary testing is one environment/config change: set `AGORA_SHELL_MODE=split` and
 restart `agora-shell-panel.service`. The canonical visible fallback remains:
