@@ -82,13 +82,10 @@ terminates the launch on SIGTERM, and exits non-zero if the surface or process
 disappears. systemd then satisfies the crash-restart requirement with
 `Restart=on-failure` and `RestartSec=3s`.
 
-The default launch is the split shell (`AGORA_SHELL_MODE=split`): a layer-shell
-background plus dock that leaves ordinary app windows visible above the
-background instead of covering them with a fullscreen xdg shell. The fullscreen
-toplevel WebKit shell remains the rollback path:
+The default launch is the fullscreen toplevel WebKit shell (`AGORA_SHELL_MODE=toplevel`) because split layer-shell dock presentation is still being validated on the physical monitor. The split shell remains available for canaries and investigation:
 
 ```sh
-AGORA_SHELL_MODE=toplevel /usr/local/bin/agora-shell-panel-supervisor
+AGORA_SHELL_MODE=split /usr/local/bin/agora-shell-panel-supervisor
 ```
 
 In split mode the supervisor launches and monitors independent webviews for:
@@ -105,7 +102,7 @@ stop it terminates every launch it created. The background can also be disabled
 for a canary with `AGORA_SHELL_BACKGROUND_ENABLED=false` while keeping the dock
 running.
 
-Rollback is one environment/config change: set `AGORA_SHELL_MODE=toplevel` and
+Split canary testing is one environment/config change: set `AGORA_SHELL_MODE=split` and
 restart `agora-shell-panel.service`. The canonical visible fallback remains:
 
 ```sh
