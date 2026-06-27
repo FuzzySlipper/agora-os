@@ -362,14 +362,23 @@ validate_host_asset_sources() {
   done
 }
 
+is_host_exec_file() {
+  local candidate=$1 file
+  for file in "${HOST_EXEC_FILES[@]}"; do
+    [[ "$file" == "$candidate" ]] && return 0
+  done
+  return 1
+}
+
 stage_host_assets() {
   local stage=$1 file
   install -d -o root -g root -m 0700 "$stage"
   for file in "${HOST_ASSET_FILES[@]}"; do
-    case " ${HOST_EXEC_FILES[*]} " in
-      *" $file "*) install -o root -g root -m 0755 "$HOST_ASSETS_DIR/$file" "$stage/$file" ;;
-      *) install -o root -g root -m 0644 "$HOST_ASSETS_DIR/$file" "$stage/$file" ;;
-    esac
+    if is_host_exec_file "$file"; then
+      install -o root -g root -m 0755 "$HOST_ASSETS_DIR/$file" "$stage/$file"
+    else
+      install -o root -g root -m 0644 "$HOST_ASSETS_DIR/$file" "$stage/$file"
+    fi
   done
 
   validate_event_bus_unit "$stage/event-bus.service"
