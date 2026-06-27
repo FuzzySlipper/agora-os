@@ -26,6 +26,26 @@ ready” and catches visible-but-wrong captures. It does not define ASHA camera
 semantics; it only launches, drives, captures, and classifies the public ASHA
 demo surface.
 
+## split_shell_live_canary.py — split-shell live evidence gate
+
+Collects the #3298/#3458 opt-in split-shell canary on den-k8plus. It leaves the
+production default unchanged, hides/stops the fullscreen fallback for the canary
+window when possible, launches two ordinary `foot` xdg app windows, starts
+`AGORA_SHELL_MODE=split`, verifies background+dock readback without relying on
+`frame_count > 0`, exercises `surface.focus`/`surface.raise`, captures app
+surfaces, writes a generated composite visual artifact, and cleans up all canary
+launches.
+
+```sh
+python3 scripts/split_shell_live_canary.py
+python3 scripts/split_shell_live_canary.py --output-dir /tmp/agora-split-shell-canary/manual
+```
+
+The evidence packet is written to `evidence-packet.json` under the output
+directory. If physical screenshot tooling such as Spectacle is unavailable, the
+packet records that failure and still emits `split-shell-generated-composite.png`
+from compositor readback plus surface captures.
+
 ## asha_voxel_interaction_proof.py — ASHA voxel interaction compositor proof
 
 Drives the cross-project ASHA basic voxel interaction scene through the deployed
