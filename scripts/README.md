@@ -28,23 +28,29 @@ demo surface.
 
 ## split_shell_live_canary.py — split-shell live evidence gate
 
-Collects the #3298/#3458 opt-in split-shell canary on den-k8plus. It leaves the
-production default unchanged, hides/stops the fullscreen fallback for the canary
+Collects the #3495 split-shell canary on den-k8plus. It leaves the production
+visible fallback unchanged, hides/stops the fullscreen fallback for the canary
 window when possible, launches two ordinary `foot` xdg app windows, starts
-`AGORA_SHELL_MODE=split`, verifies background+dock readback without relying on
-`frame_count > 0`, exercises `surface.focus`/`surface.raise`, captures app
-surfaces, writes a generated composite visual artifact, and cleans up all canary
-launches.
+`AGORA_SHELL_MODE=split`, verifies background+dock readback, exercises
+`surface.focus`/`surface.raise`, captures app surfaces, writes a generated
+composite visual artifact, and cleans up all canary launches. The canary now
+fails by default unless the dock has presentation evidence beyond mapped
+readback: a compositor frame/present signal, a successful direct dock capture,
+or an explicit physical observation receipt for the current output.
 
 ```sh
 python3 scripts/split_shell_live_canary.py
 python3 scripts/split_shell_live_canary.py --output-dir /tmp/agora-split-shell-canary/manual
+printf '{"dock_visible":true,"output":"HDMI-A-1","observed_by":"Patch","observed_at":"2026-06-27T03:00:00Z"}\n' > /tmp/dock-visible.json
+python3 scripts/split_shell_live_canary.py --physical-observation-file /tmp/dock-visible.json
 ```
 
 The evidence packet is written to `evidence-packet.json` under the output
 directory. If physical screenshot tooling such as Spectacle is unavailable, the
 packet records that failure and still emits `split-shell-generated-composite.png`
-from compositor readback plus surface captures.
+from compositor readback plus surface captures when it reaches that stage. A
+`mapped_without_presentation_evidence` verdict is a fail-closed signal: do not
+promote split shell to the default human-facing shell from mapped readback alone.
 
 ## asha_voxel_interaction_proof.py — ASHA voxel interaction compositor proof
 

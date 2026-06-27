@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Run the Agora split-shell live visibility canary.
 
-This smoke intentionally treats WebKit frame_count as advisory only. Evidence is
-based on launch/readback state, compositor action results, a physical/composite
-screenshot, and cleanup readback.
+The canary launches split background/dock surfaces and ordinary app windows, but
+it no longer treats mapped dock readback as human-facing success.  By default it
+requires dock presentation evidence (frame/present readback, successful dock
+capture, or an explicit physical observation receipt) before passing.
 """
 
 from __future__ import annotations
@@ -64,6 +65,7 @@ class Canary:
         self.panel_stopped = False
         self.minimized_fallback_shells: list[str] = []
         self.failures: list[str] = []
+        self.physical_observation = self.load_physical_observation()
 
     def run(self, command: list[str], *, check: bool = True, env: dict[str, str] | None = None, timeout: int = 60) -> CommandResult:
         proc = subprocess.run(command, text=True, capture_output=True, env=env, timeout=timeout)
@@ -288,6 +290,114 @@ class Canary:
         data = json.loads(result.stdout)
         self.surface_captures[label] = {"ok": True, "response": data}
 
+    def load_physical_observation(self) -> dict[str, Any]:
+        if not self.args.physical_observation_file:
+            return {}
+        path = pathlib.Path(self.args.physical_observation_file)
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise CanaryError(f"failed to read physical observation file {path}: {exc}") from exc
+
+    @staticmethod
+    def is_split_dock_surface(surface: dict[str, Any]) -> bool:
+        geom = surface.get("geometry") or {}
+        layer = surface.get("layer_shell") or {}
+        return (
+            surface.get("surface_kind") == "layer_shell"
+            and surface.get("visible") is True
+            and 0 < geom.get("height", 9999) <= 160
+            and layer.get("exclusive_zone") is True
+        )
+
+    def evaluate_dock_presentation(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Evaluate whether the split dock has presentation evidence.
+
+        Layer-shell map/readback alone is not enough for human-facing default
+        deployment: Patch has observed mapped dock readback while the physical
+        monitor shows only the background marker. This gate therefore requires
+        either compositor presentation counters/timestamps, successful direct
+        dock capture, or an explicit human physical observation receipt.
+        """
+        docks = [s for s in self.surfaces(data) if self.is_split_dock_surface(s)]
+        evidence: dict[str, Any] = {
+            "required": self.args.require_dock_presentation_evidence,
+            "dock_count": len(docks),
+            "signals": [],
+            "manual_observation": self.physical_observation,
+            "manual_observation_errors": [],
+        }
+        if not docks:
+            evidence["verdict"] = "missing_dock_surface"
+            return evidence
+        dock = docks[0]
+        evidence["dock_surface"] = {
+            "id": dock.get("id"),
+            "app_id": dock.get("app_id"),
+            "title": dock.get("title"),
+            "output_id": dock.get("output_id"),
+            "role": dock.get("role"),
+            "surface_kind": dock.get("surface_kind"),
+            "geometry": dock.get("geometry"),
+            "layer_shell": dock.get("layer_shell"),
+            "frame_count": dock.get("frame_count"),
+            "last_present_timestamp": dock.get("last_present_timestamp"),
+            "capture_count": dock.get("capture_count"),
+            "last_capture_timestamp": dock.get("last_capture_timestamp"),
+            "capturable": dock.get("capturable"),
+        }
+        frame_count = dock.get("frame_count")
+        if isinstance(frame_count, (int, float)) and frame_count > 0:
+            evidence["signals"].append("frame_count")
+        if dock.get("last_present_timestamp"):
+            evidence["signals"].append("last_present_timestamp")
+        dock_capture = self.surface_captures.get("dock") or {}
+        evidence["dock_capture"] = dock_capture
+        if dock_capture.get("ok"):
+            visual = ((dock_capture.get("response") or {}).get("visual_inspection") or {}).get("status")
+            if visual == "visible":
+                evidence["signals"].append("dock_capture_visible")
+        manual_errors = self.validate_physical_observation(dock)
+        evidence["manual_observation_errors"] = manual_errors
+        if self.physical_observation.get("dock_visible") is True and not manual_errors:
+            evidence["signals"].append("manual_physical_observation")
+        evidence["verdict"] = "presented" if evidence["signals"] else "mapped_without_presentation_evidence"
+        return evidence
+
+    def validate_physical_observation(self, dock: dict[str, Any]) -> list[str]:
+        if not self.physical_observation:
+            return []
+        errors: list[str] = []
+        if self.physical_observation.get("dock_visible") is not True:
+            errors.append("dock_visible must be true")
+        output = self.physical_observation.get("output") or self.physical_observation.get("output_id")
+        dock_output = dock.get("output_id") or "HDMI-A-1"
+        if output != dock_output:
+            errors.append(f"output must match dock output {dock_output!r}")
+        for field in ("observed_by", "observed_at"):
+            value = self.physical_observation.get(field)
+            if not isinstance(value, str) or not value.strip():
+                errors.append(f"{field} is required")
+        observed_at = self.physical_observation.get("observed_at")
+        if isinstance(observed_at, str) and observed_at.strip():
+            try:
+                dt.datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
+            except ValueError:
+                errors.append("observed_at must be ISO-8601 parseable")
+        receipt_surface_id = self.physical_observation.get("dock_surface_id")
+        if receipt_surface_id is not None and receipt_surface_id != dock.get("id"):
+            errors.append(f"dock_surface_id must match current dock surface {dock.get('id')!r}")
+        artifact = self.physical_observation.get("artifact")
+        if artifact is not None:
+            if not isinstance(artifact, dict):
+                errors.append("artifact must be an object when provided")
+            else:
+                for field in ("path", "sha256"):
+                    value = artifact.get(field)
+                    if not isinstance(value, str) or not value.strip():
+                        errors.append(f"artifact.{field} is required when artifact is provided")
+        return errors
+
     def take_screenshot(self, label: str) -> None:
         path = self.out_dir / f"{label}.png"
         env = os.environ.copy()
@@ -324,8 +434,10 @@ class Canary:
                 draw.text((28, 54), f"split background {s.get('id')} layer={layer.get('layer')} frame_count={s.get('frame_count')}", fill="#dbeafe")
             if s.get("surface_kind") == "layer_shell" and 0 < geom.get("height", 9999) <= 160 and layer.get("exclusive_zone") is True:
                 h = int(geom.get("height", 96))
-                draw.rectangle([0, 0, 2559, h], fill="#111827", outline="#38bdf8", width=3)
-                draw.text((28, 16), f"split dock {s.get('id')} layer={layer.get('layer')} exclusive_zone={layer.get('exclusive_zone')}", fill="#e0f2fe")
+                anchors = set(layer.get("anchors") or [])
+                top = 1440 - h if "bottom" in anchors else 0
+                draw.rectangle([0, top, 2559, top + h], fill="#111827", outline="#38bdf8", width=3)
+                draw.text((28, top + 16), f"split dock {s.get('id')} layer={layer.get('layer')} anchors={sorted(anchors)} exclusive_zone={layer.get('exclusive_zone')}", fill="#e0f2fe")
 
         for label_name, capture in self.surface_captures.items():
             if not label_name.startswith("app_") or not capture.get("ok"):
@@ -461,7 +573,7 @@ class Canary:
 
     def final_packet(self, status: str, extra: dict[str, Any] | None = None) -> dict[str, Any]:
         packet = {
-            "task_id": 3458,
+            "task_id": self.args.task_id,
             "status": status,
             "started_at": self.started_at,
             "finished_at": dt.datetime.now(dt.timezone.utc).isoformat(),
@@ -519,6 +631,14 @@ class Canary:
                     self.capture_surface("background", surface_id, required=False)
                 if s.get("surface_kind") == "layer_shell" and 0 < geom.get("height", 9999) <= 160 and layer.get("exclusive_zone") is True:
                     self.capture_surface("dock", surface_id, required=False)
+            validation["dock_presentation"] = self.evaluate_dock_presentation(after_action)
+            if self.args.require_dock_presentation_evidence and validation["dock_presentation"].get("verdict") != "presented":
+                if validation["dock_presentation"].get("verdict") == "missing_dock_surface":
+                    raise CanaryError("split dock presentation gate failed: no dock layer-shell surface found")
+                raise CanaryError(
+                    "split dock presentation gate failed: dock is mapped, but has no frame_count, "
+                    "last_present_timestamp, successful dock capture, or explicit physical observation"
+                )
 
             try:
                 self.take_screenshot("split-shell-physical-spectacle")
@@ -576,10 +696,13 @@ class Canary:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the split-shell live evidence canary.")
     parser.add_argument("--output-dir", default="", help="Evidence output directory (default: /tmp/agora-split-shell-canary/<timestamp>)")
+    parser.add_argument("--task-id", type=int, default=3495, help="Task id to record in the evidence packet")
     parser.add_argument("--compositorctl", default="compositorctl")
     parser.add_argument("--supervisor", default="", help="Supervisor path (default: /usr/local/bin/agora-shell-panel-supervisor)")
     parser.add_argument("--wait-timeout-ms", type=int, default=12000)
     parser.add_argument("--wayland-display", default="wayland-1")
+    parser.add_argument("--require-dock-presentation-evidence", action=argparse.BooleanOptionalAction, default=True, help="Fail unless the dock has compositor/capture/manual physical presentation evidence, not only mapped readback")
+    parser.add_argument("--physical-observation-file", default="", help="Optional JSON receipt with dock_visible=true, output/output_id, observed_by, observed_at, and optional dock_surface_id/artifact")
     parser.add_argument("--manage-panel-service", action=argparse.BooleanOptionalAction, default=True, help="Stop/restore agora-shell-panel.service around the canary")
     parser.add_argument("--restore-panel-service", action=argparse.BooleanOptionalAction, default=True)
     return parser.parse_args()
