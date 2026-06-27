@@ -7,7 +7,7 @@ IFS=$'\n\t'
 
 COMPOSITORCTL=${COMPOSITORCTL:-/usr/local/bin/compositorctl}
 WEBVIEW_LAUNCHER=${WEBVIEW_LAUNCHER:-/usr/local/bin/webview-launcher}
-SHELL_MODE=${AGORA_SHELL_MODE:-toplevel}
+SHELL_MODE=${AGORA_SHELL_MODE:-split}
 SHELL_URL=${AGORA_SHELL_URL:-http://127.0.0.1:7780/shell/dist/desktop/}
 SHELL_ROLE=${AGORA_SHELL_ROLE:-toplevel}
 SHELL_TITLE=${AGORA_SHELL_TITLE:-AGORA-SHELL-TOPLEVEL}
@@ -256,7 +256,7 @@ monitor_split_surfaces() {
 }
 
 run_split_mode() {
-  log "starting opt-in split shell mode; toplevel fallback remains default when AGORA_SHELL_MODE is unset"
+  log "starting default split shell mode; set AGORA_SHELL_MODE=toplevel to use the rollback fallback"
   log "reserved overlay identity title=$OVERLAY_TITLE app_id=$OVERLAY_APP_ID; overlay launch is deferred/on-demand"
   if [[ "$BACKGROUND_ENABLED" == "true" ]]; then
     if ! launch_surface background "$(surface_url background)" "$BACKGROUND_ROLE" "$BACKGROUND_TITLE" "$BACKGROUND_APP_ID" "$BACKGROUND_WIDTH" "$BACKGROUND_HEIGHT" "$BACKGROUND_WAIT_TIMEOUT_MS" false; then

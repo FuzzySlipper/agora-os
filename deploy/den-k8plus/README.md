@@ -82,13 +82,13 @@ terminates the launch on SIGTERM, and exits non-zero if the surface or process
 disappears. systemd then satisfies the crash-restart requirement with
 `Restart=on-failure` and `RestartSec=3s`.
 
-The default launch is still the fullscreen toplevel WebKit fallback
-(`AGORA_SHELL_MODE=toplevel`, `AGORA_SHELL_ROLE=toplevel`) because it is the
-known-safe production rollback path. Split shell is now available as an explicit
-opt-in supervisor mode, but it is not the default:
+The default launch is the split shell (`AGORA_SHELL_MODE=split`): a layer-shell
+background plus dock that leaves ordinary app windows visible above the
+background instead of covering them with a fullscreen xdg shell. The fullscreen
+toplevel WebKit shell remains the rollback path:
 
 ```sh
-AGORA_SHELL_MODE=split /usr/local/bin/agora-shell-panel-supervisor
+AGORA_SHELL_MODE=toplevel /usr/local/bin/agora-shell-panel-supervisor
 ```
 
 In split mode the supervisor launches and monitors independent webviews for:
@@ -105,9 +105,8 @@ stop it terminates every launch it created. The background can also be disabled
 for a canary with `AGORA_SHELL_BACKGROUND_ENABLED=false` while keeping the dock
 running.
 
-Rollback is one environment/config change: unset `AGORA_SHELL_MODE` or set
-`AGORA_SHELL_MODE=toplevel` and restart `agora-shell-panel.service`. The
-canonical visible fallback remains:
+Rollback is one environment/config change: set `AGORA_SHELL_MODE=toplevel` and
+restart `agora-shell-panel.service`. The canonical visible fallback remains:
 
 ```sh
 /usr/local/bin/compositorctl --pretty launch \

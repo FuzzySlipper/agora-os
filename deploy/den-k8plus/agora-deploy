@@ -305,7 +305,7 @@ validate_shell_panel_supervisor() {
   [[ -x "$script" ]] || die "agora-shell-panel-supervisor must be executable in git source"
   grep -Fq 'SHELL_URL=${AGORA_SHELL_URL:-http://127.0.0.1:7780/shell/dist/desktop/}' "$script" || die "shell panel supervisor URL guard failed"
   grep -Fq 'WEBVIEW_LAUNCHER=${WEBVIEW_LAUNCHER:-/usr/local/bin/webview-launcher}' "$script" || die "shell panel supervisor launcher guard failed"
-  grep -Fq 'SHELL_MODE=${AGORA_SHELL_MODE:-toplevel}' "$script" || die "shell panel supervisor mode default guard failed"
+  grep -Fq 'SHELL_MODE=${AGORA_SHELL_MODE:-split}' "$script" || die "shell panel supervisor mode default guard failed"
   grep -Fq 'SHELL_ROLE=${AGORA_SHELL_ROLE:-toplevel}' "$script" || die "shell panel supervisor visible fallback role guard failed"
   grep -Fq 'SHELL_FULLSCREEN=${AGORA_SHELL_FULLSCREEN:-true}' "$script" || die "shell panel supervisor fullscreen guard failed"
   grep -Fq 'EXPECTED_TITLE=${AGORA_SHELL_EXPECTED_TITLE:-Agora Desktop Shell}' "$script" || die "shell panel supervisor title guard failed"
