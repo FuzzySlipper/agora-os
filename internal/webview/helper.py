@@ -22,8 +22,8 @@ except (ImportError, ValueError):
 from gi.repository import Gio, GLib, Gtk, WebKit2
 
 LAYER_ROLE_CONFIGS = {
-    "panel": ("TOP", ("TOP",), True),
-    "dock": ("TOP", ("LEFT",), True),
+    "panel": ("TOP", ("BOTTOM",), True),
+    "dock": ("TOP", ("BOTTOM",), True),
     "background": ("BOTTOM", ("TOP", "BOTTOM", "LEFT", "RIGHT"), False),
     "overlay": ("OVERLAY", ("BOTTOM", "RIGHT"), False),
 }
