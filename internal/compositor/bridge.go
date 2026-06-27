@@ -99,6 +99,7 @@ type launchRecord struct {
 	done           chan struct{}
 	expectedAppID  string
 	expectedTitle  string
+	expectedRole   string
 	expectedOutput string
 }
 
@@ -485,7 +486,7 @@ func (b *Bridge) launchAppAsPeer(peerUID uint32, req schema.LaunchAppRequest) (s
 		Status:    "running",
 		StartedAt: now,
 	}
-	b.launches[launchID] = &launchRecord{process: process, cmd: cmd, done: make(chan struct{}), expectedAppID: req.ExpectedAppID, expectedTitle: req.ExpectedTitle, expectedOutput: req.Output}
+	b.launches[launchID] = &launchRecord{process: process, cmd: cmd, done: make(chan struct{}), expectedAppID: req.ExpectedAppID, expectedTitle: req.ExpectedTitle, expectedRole: req.Role, expectedOutput: req.Output}
 	if req.SessionID != "" {
 		if session, ok := b.sessions[req.SessionID]; ok {
 			session.LastUsedAt = now
@@ -665,6 +666,7 @@ func (b *Bridge) waitLaunch(launchID string, cmd *exec.Cmd) {
 		launch.process.Status = "exited"
 		launch.process.ExitCode = &exitCode
 		launch.process.ExitedAt = &now
+		b.removeLayerShellSurfacesForLaunchLocked(launchID)
 		if launch.done != nil {
 			close(launch.done)
 			launch.done = nil
@@ -719,6 +721,19 @@ func launchSurfaceSettled(surface schema.CompositorTrackedSurface) bool {
 		settledSince = *surface.LastPresentTimestamp
 	}
 	return time.Since(settledSince) >= launchSurfaceSettleDelay
+}
+
+func (b *Bridge) removeLayerShellSurfacesForLaunchLocked(launchID string) {
+	for surfaceID, boundLaunchID := range b.surfaceLaunch {
+		if boundLaunchID != launchID {
+			continue
+		}
+		if surface, ok := b.surfaces[surfaceID]; ok && surface.Surface.SurfaceKind == schema.SurfaceKindLayerShell {
+			delete(b.surfaces, surfaceID)
+			delete(b.surfaceLaunch, surfaceID)
+			delete(b.surfaceOutput, surfaceID)
+		}
+	}
 }
 
 func (b *Bridge) hydrateSessionLocked(session schema.CompositorSession) schema.CompositorSession {
@@ -910,9 +925,14 @@ func (b *Bridge) CaptureSurface(req schema.CaptureSurfaceRequest) (schema.Captur
 	}
 	req.AuditCorrelationID = b.sessionAuditCorrelation(req.SessionID, req.AuditCorrelationID)
 	b.mu.Lock()
-	if _, ok := b.surfaces[req.SurfaceID]; !ok {
+	tracked, ok := b.surfaces[req.SurfaceID]
+	if !ok {
 		b.mu.Unlock()
 		return schema.CaptureSurfaceResponse{}, compositorError(schema.ErrorSurfaceNotFound, "surface %s not found", req.SurfaceID)
+	}
+	if tracked.Surface.SurfaceKind == schema.SurfaceKindLayerShell {
+		b.mu.Unlock()
+		return schema.CaptureSurfaceResponse{}, compositorError(schema.ErrorCaptureDenied, "surface %s is a tracked layer-shell surface; per-layer-shell capture is not supported, use output/composite capture", req.SurfaceID)
 	}
 	if b.plugin == nil {
 		b.mu.Unlock()
@@ -3001,6 +3021,63 @@ func (b *Bridge) GetSurface(surfaceID string) (schema.CompositorTrackedSurface, 
 	return b.decorateSurfaceLocked(surface), nil
 }
 
+func isGenericLayerShellIdentity(value string) bool {
+	value = strings.TrimSpace(strings.ToLower(value))
+	return value == "" || value == "agora-webview" || value == "layer-shell"
+}
+
+func launchExpectedRole(launch *launchRecord) string {
+	if launch == nil {
+		return ""
+	}
+	if launch.expectedRole != "" && launch.expectedRole != "toplevel" {
+		return launch.expectedRole
+	}
+	fields := strings.Fields(launch.process.Command)
+	for i, field := range fields {
+		if field == "--role" && i+1 < len(fields) {
+			return strings.Trim(fields[i+1], `"'`)
+		}
+		if strings.HasPrefix(field, "--role=") {
+			return strings.Trim(strings.TrimPrefix(field, "--role="), `"'`)
+		}
+	}
+	return launch.expectedRole
+}
+
+func inferLayerShellEffectiveRole(surface schema.CompositorSurface) string {
+	if surface.SurfaceKind != schema.SurfaceKindLayerShell || surface.LayerShell == nil {
+		return ""
+	}
+	metadata := surface.LayerShell
+	anchors := make(map[string]struct{}, len(metadata.Anchors))
+	for _, anchor := range metadata.Anchors {
+		anchors[strings.ToLower(anchor)] = struct{}{}
+	}
+	_, top := anchors["top"]
+	_, bottom := anchors["bottom"]
+	_, left := anchors["left"]
+	_, right := anchors["right"]
+	exclusive := metadata.ExclusiveZone != nil && *metadata.ExclusiveZone
+	layer := strings.ToLower(metadata.Layer)
+	if layer == "overlay" {
+		return "overlay"
+	}
+	if !exclusive && top && bottom && left && right {
+		return "background"
+	}
+	if layer == "background" {
+		return "background"
+	}
+	if left || right {
+		return "dock"
+	}
+	if surface.Role != "" && surface.Role != "layer-shell" {
+		return surface.Role
+	}
+	return "panel"
+}
+
 func (b *Bridge) WaitForSurface(req schema.WaitForSurfaceRequest) (schema.WaitForSurfaceResponse, error) {
 	deadline := timeoutDeadline(req.TimeoutMs, 5*time.Second)
 	for time.Now().Before(deadline) {
@@ -3252,6 +3329,28 @@ func (b *Bridge) decorateSurfaceLocked(surface schema.CompositorTrackedSurface) 
 	if launchID := b.surfaceLaunch[surface.Surface.ID]; launchID != "" {
 		if launch := b.launches[launchID]; launch != nil {
 			surface.SessionID = launch.process.SessionID
+			surface.LaunchID = launchID
+			if surface.Surface.SurfaceKind == schema.SurfaceKindLayerShell {
+				if launch.expectedAppID != "" && isGenericLayerShellIdentity(surface.Surface.AppID) {
+					surface.Surface.AppID = launch.expectedAppID
+				}
+				if launch.expectedTitle != "" && isGenericLayerShellIdentity(surface.Surface.Title) {
+					surface.Surface.Title = launch.expectedTitle
+				}
+				if surface.Surface.LayerShell != nil {
+					metadata := *surface.Surface.LayerShell
+					if metadata.HelperRole == "" {
+						metadata.HelperRole = launchExpectedRole(launch)
+					}
+					if effective := inferLayerShellEffectiveRole(surface.Surface); effective != "" {
+						metadata.EffectiveRole = effective
+						surface.Surface.Role = effective
+					} else if metadata.EffectiveRole == "" {
+						metadata.EffectiveRole = surface.Surface.Role
+					}
+					surface.Surface.LayerShell = &metadata
+				}
+			}
 		}
 	}
 	if surface.Geometry == nil {

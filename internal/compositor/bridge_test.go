@@ -3068,15 +3068,17 @@ func TestPluginLayerShellEventTracksPanelLaunch(t *testing.T) {
 			LaunchID:  launchID,
 			SessionID: "session-panel",
 			PID:       os.Getpid(),
-			Command:   "webview-launcher --url http://127.0.0.1:7780/shell/dist/desktop/ --role panel",
+			Command:   "webview-launcher --url http://127.0.0.1:7780/shell/dist/desktop/ --role background --app-id io.agoraos.ShellBackground --title AGORA-SHELL-BACKGROUND",
 			Status:    "running",
 			StartedAt: time.Now().Add(-time.Second),
 		},
-		expectedTitle: "Agora Desktop Shell",
+		expectedAppID: "io.agoraos.ShellBackground",
+		expectedTitle: "AGORA-SHELL-BACKGROUND",
+		expectedRole:  "background",
 	}
 	bridge.mu.Unlock()
 
-	exclusive := true
+	exclusive := false
 	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{
 		Type:  schema.PluginMessageSurfaceEvent,
 		Event: schema.SurfaceEventMapped,
@@ -3085,13 +3087,13 @@ func TestPluginLayerShellEventTracksPanelLaunch(t *testing.T) {
 			SurfaceKind: schema.SurfaceKindLayerShell,
 			AppID:       "agora-webview",
 			Title:       "agora-webview",
-			Role:        "panel",
-			Geometry:    &schema.SurfaceGeometry{Width: 1280, Height: 48},
-			PixelSize:   &schema.SurfaceGeometry{Width: 1280, Height: 48},
+			Role:        "dock",
+			Geometry:    &schema.SurfaceGeometry{Width: 2560, Height: 1440},
+			PixelSize:   &schema.SurfaceGeometry{Width: 2560, Height: 1440},
 			LayerShell: &schema.LayerShellSurfaceMetadata{
 				Namespace:     "agora-webview",
-				Layer:         "top",
-				Anchors:       []string{"top"},
+				Layer:         "bottom",
+				Anchors:       []string{"top", "bottom", "left", "right"},
 				ExclusiveZone: &exclusive,
 			},
 		},
@@ -3122,8 +3124,17 @@ func TestPluginLayerShellEventTracksPanelLaunch(t *testing.T) {
 	if surface.SessionID != "session-panel" {
 		t.Fatalf("got session %q, want session-panel", surface.SessionID)
 	}
-	if surface.Surface.LayerShell == nil || surface.Surface.LayerShell.Namespace != "agora-webview" || surface.Surface.LayerShell.Layer != "top" {
+	if surface.LaunchID != launchID {
+		t.Fatalf("got launch %q, want %q", surface.LaunchID, launchID)
+	}
+	if surface.Surface.AppID != "io.agoraos.ShellBackground" || surface.Surface.Title != "AGORA-SHELL-BACKGROUND" || surface.Surface.Role != "background" {
+		t.Fatalf("layer-shell launch identity/effective role not decorated: %+v", surface.Surface)
+	}
+	if surface.Surface.LayerShell == nil || surface.Surface.LayerShell.Namespace != "agora-webview" || surface.Surface.LayerShell.Layer != "bottom" {
 		t.Fatalf("missing layer-shell metadata: %+v", surface.Surface.LayerShell)
+	}
+	if surface.Surface.LayerShell.EffectiveRole != "background" || surface.Surface.LayerShell.HelperRole != "background" {
+		t.Fatalf("missing effective/helper role metadata: %+v", surface.Surface.LayerShell)
 	}
 
 	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{
@@ -3137,6 +3148,56 @@ func TestPluginLayerShellEventTracksPanelLaunch(t *testing.T) {
 	bridge.mu.RUnlock()
 	if exists {
 		t.Fatal("plugin layer-shell surface was not removed on unmap")
+	}
+}
+
+func TestCaptureLayerShellReturnsPreciseCaptureDenied(t *testing.T) {
+	bridge, err := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	bridge.handleSurfaceEvent(schema.CompositorPluginEvent{
+		Type:  schema.PluginMessageSurfaceEvent,
+		Event: schema.SurfaceEventMapped,
+		Surface: schema.CompositorSurface{
+			ID:          "layer-shell-capture",
+			SurfaceKind: schema.SurfaceKindLayerShell,
+			Visible:     boolPtr(true),
+			Geometry:    &schema.SurfaceGeometry{Width: 1280, Height: 48},
+		},
+		Client: schema.CompositorClientIdentity{PID: int32(os.Getpid()), UID: 60001, GID: 60001},
+	})
+
+	_, err = bridge.CaptureSurface(schema.CaptureSurfaceRequest{SurfaceID: "layer-shell-capture"})
+	if err == nil {
+		t.Fatal("expected layer-shell capture to fail precisely")
+	}
+	class, message := classifyError(err)
+	if class != schema.ErrorCaptureDenied || strings.Contains(message, schema.ErrorSurfaceNotFound) || !strings.Contains(message, "tracked layer-shell surface") {
+		t.Fatalf("got class=%q message=%q, want precise capture_denied", class, message)
+	}
+}
+
+func TestLaunchExitPrunesBoundLayerShellRecords(t *testing.T) {
+	bridge, err := New(&fakePublisher{}, Config{AllowedPluginUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	bridge.mu.Lock()
+	bridge.surfaces["layer-shell-stale"] = schema.CompositorTrackedSurface{Surface: schema.CompositorSurface{ID: "layer-shell-stale", SurfaceKind: schema.SurfaceKindLayerShell}}
+	bridge.surfaces["view-survives"] = schema.CompositorTrackedSurface{Surface: schema.CompositorSurface{ID: "view-survives", SurfaceKind: schema.SurfaceKindXDGView}}
+	bridge.surfaceLaunch["layer-shell-stale"] = "launch-stale"
+	bridge.surfaceLaunch["view-survives"] = "launch-stale"
+	bridge.removeLayerShellSurfacesForLaunchLocked("launch-stale")
+	_, layerExists := bridge.surfaces["layer-shell-stale"]
+	_, xdgExists := bridge.surfaces["view-survives"]
+	_, bindingExists := bridge.surfaceLaunch["layer-shell-stale"]
+	bridge.mu.Unlock()
+	if layerExists || bindingExists {
+		t.Fatalf("layer-shell launch cleanup left stale surface/binding: surface=%v binding=%v", layerExists, bindingExists)
+	}
+	if !xdgExists {
+		t.Fatal("xdg surfaces should not be pruned by layer-shell cleanup helper")
 	}
 }
 

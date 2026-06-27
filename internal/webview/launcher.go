@@ -62,6 +62,7 @@ type resolvedConfig struct {
 
 type helperEvent struct {
 	Event         string   `json:"event"`
+	AppID         string   `json:"app_id,omitempty"`
 	Title         string   `json:"title,omitempty"`
 	PID           int      `json:"pid,omitempty"`
 	Role          string   `json:"role,omitempty"`
@@ -388,7 +389,7 @@ func publishLifecycle(client *bus.Client, cfg resolvedConfig, ev helperEvent, ui
 		Surface: schema.CompositorSurface{
 			ID:          surfaceIDForEvent(pid, lifecycleRole(cfg, ev)),
 			SurfaceKind: lifecycleSurfaceKind(cfg, ev),
-			AppID:       cfg.AppID,
+			AppID:       lifecycleAppID(cfg, ev),
 			Title:       title,
 			Role:        lifecycleRole(cfg, ev),
 			Geometry:    &schema.SurfaceGeometry{Width: cfg.Width, Height: cfg.Height},
@@ -446,7 +447,16 @@ func layerShellMetadata(cfg resolvedConfig, ev helperEvent) *schema.LayerShellSu
 		Layer:         ev.Layer,
 		Anchors:       append([]string(nil), ev.Anchors...),
 		ExclusiveZone: ev.ExclusiveZone,
+		EffectiveRole: lifecycleRole(cfg, ev),
+		HelperRole:    cfg.Role,
 	}
+}
+
+func lifecycleAppID(cfg resolvedConfig, ev helperEvent) string {
+	if ev.AppID != "" {
+		return ev.AppID
+	}
+	return cfg.AppID
 }
 
 func lifecycleRole(cfg resolvedConfig, ev helperEvent) string {

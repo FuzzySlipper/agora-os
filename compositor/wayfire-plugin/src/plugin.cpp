@@ -103,6 +103,11 @@ bool verify_bridge_peer_identity(int fd)
     return true;
 }
 
+bool is_layer_shell_desktop_proxy(wayfire_view view)
+{
+    return view && view->role == wf::VIEW_ROLE_DESKTOP_ENVIRONMENT && view->get_title() == "layer-shell";
+}
+
 agora::protocol::surface_snapshot_t snapshot_view(wayfire_view view)
 {
     agora::protocol::surface_snapshot_t snapshot;
@@ -116,16 +121,6 @@ agora::protocol::surface_snapshot_t snapshot_view(wayfire_view view)
     snapshot.app_id = view->get_app_id();
     snapshot.title = view->get_title();
     snapshot.role = role_to_string(view->role);
-    if (view->role == wf::VIEW_ROLE_DESKTOP_ENVIRONMENT && snapshot.title == "layer-shell")
-    {
-        snapshot.surface_kind = "layer_shell";
-        snapshot.id = "layer-shell-view-" + std::to_string(view->get_id());
-        snapshot.role = "panel";
-        snapshot.layer_namespace = "agora-webview";
-        snapshot.layer_name = "top";
-        snapshot.anchors = {"top"};
-        snapshot.exclusive_zone = true;
-    }
     if (auto *output = view->get_output())
     {
         if (output->handle && output->handle->name)
@@ -188,11 +183,13 @@ std::string role_from_layer_surface(const wlr_layer_surface_v1 *surface)
     }
     const auto layer = static_cast<uint32_t>(surface->current.layer);
     const auto anchor = surface->current.anchor;
+    const bool all_edges = (anchor & 1u) && (anchor & 2u) && (anchor & 4u) && (anchor & 8u);
+    const bool exclusive = surface->current.exclusive_zone != 0;
     if (layer == 3)
     {
         return "overlay";
     }
-    if (layer == 0)
+    if ((layer == 0) || (all_edges && !exclusive))
     {
         return "background";
     }
@@ -238,6 +235,13 @@ agora::protocol::surface_snapshot_t snapshot_layer_surface(wlr_layer_surface_v1 
     if (surface->output && surface->output->name)
     {
         snapshot.output_id = surface->output->name;
+        const bool spans_output = (surface->current.anchor & 1u) && (surface->current.anchor & 2u) &&
+            (surface->current.anchor & 4u) && (surface->current.anchor & 8u);
+        if (spans_output)
+        {
+            snapshot.width = snapshot.width > 0 ? snapshot.width : surface->output->width;
+            snapshot.height = snapshot.height > 0 ? snapshot.height : surface->output->height;
+        }
     }
     return snapshot;
 }
@@ -1878,7 +1882,7 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
     {
         for (auto view : wf::get_core().get_all_views())
         {
-            if (!view)
+            if (!view || is_layer_shell_desktop_proxy(view))
             {
                 continue;
             }
@@ -1928,6 +1932,11 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
     void track_view(wayfire_view view)
     {
         if (!view)
+        {
+            return;
+        }
+
+        if (is_layer_shell_desktop_proxy(view))
         {
             return;
         }
@@ -2008,6 +2017,11 @@ class agora_bridge_plugin_t : public wf::plugin_interface_t
     void emit_surface_event(std::string_view event_name, wayfire_view view, std::string_view device = "")
     {
         if (!bridge_ || !view)
+        {
+            return;
+        }
+
+        if (is_layer_shell_desktop_proxy(view))
         {
             return;
         }

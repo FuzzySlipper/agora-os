@@ -173,6 +173,12 @@ type LayerShellSurfaceMetadata struct {
 	Layer         string   `json:"layer,omitempty"`
 	Anchors       []string `json:"anchors,omitempty"`
 	ExclusiveZone *bool    `json:"exclusive_zone,omitempty"`
+	// EffectiveRole is the compositor-derived semantic role for this layer surface
+	// (for example background/dock/overlay). HelperRole records the requested
+	// webview helper role when a trusted launch is associated, so generic
+	// layer-shell namespace readback can still be audited against the launch.
+	EffectiveRole string `json:"effective_role,omitempty"`
+	HelperRole    string `json:"helper_role,omitempty"`
 }
 
 type SurfaceWorkspace struct {
@@ -428,6 +434,7 @@ type CompositorTrackedSurface struct {
 	LastCaptureTimestamp *time.Time                 `json:"last_capture_timestamp,omitempty"`
 	Visible              bool                       `json:"visible"`
 	SessionID            string                     `json:"session_id,omitempty"`
+	LaunchID             string                     `json:"launch_id,omitempty"`
 	OutputID             string                     `json:"output_id,omitempty"`
 	GrantState           *SurfaceGrantState         `json:"grant_state,omitempty"`
 }

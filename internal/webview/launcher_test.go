@@ -158,6 +158,35 @@ func TestLifecycleRoleUsesHelperEffectiveRole(t *testing.T) {
 	}
 }
 
+func TestLayerShellMetadataSeparatesEffectiveAndHelperRoles(t *testing.T) {
+	t.Parallel()
+
+	exclusive := false
+	metadata := layerShellMetadata(resolvedConfig{Role: "background"}, helperEvent{
+		Role:          "background",
+		SurfaceKind:   schema.SurfaceKindLayerShell,
+		Namespace:     "io.agoraos.ShellBackground",
+		Layer:         "bottom",
+		Anchors:       []string{"top", "bottom", "left", "right"},
+		ExclusiveZone: &exclusive,
+	})
+	if metadata == nil {
+		t.Fatal("expected layer-shell metadata")
+	}
+	if metadata.Namespace != "io.agoraos.ShellBackground" || metadata.EffectiveRole != "background" || metadata.HelperRole != "background" {
+		t.Fatalf("unexpected layer-shell metadata: %+v", metadata)
+	}
+}
+
+func TestLifecycleAppIDUsesHelperReportedAppID(t *testing.T) {
+	t.Parallel()
+
+	got := lifecycleAppID(resolvedConfig{AppID: "io.agoraos.Configured"}, helperEvent{AppID: "io.agoraos.Helper"})
+	if got != "io.agoraos.Helper" {
+		t.Fatalf("got app id %q, want helper-reported app id", got)
+	}
+}
+
 func TestLifecycleMapping(t *testing.T) {
 	t.Parallel()
 
