@@ -82,11 +82,16 @@ terminates the launch on SIGTERM, and exits non-zero if the surface or process
 disappears. systemd then satisfies the crash-restart requirement with
 `Restart=on-failure` and `RestartSec=3s`.
 
-The default launch is the fullscreen toplevel WebKit shell (`AGORA_SHELL_MODE=toplevel`) because pure split layer-shell dock presentation is still being validated on the physical monitor. Two opt-in split paths are available for canaries and investigation:
+The default launch is the `split-toplevel-dock` workaround: layer-shell background plus an undecorated bottom xdg-toplevel dock. Pure WebKit+GtkLayerShell dock presentation is still being validated on the physical monitor, so pure `split` remains an opt-in canary path and explicit `AGORA_SHELL_MODE=toplevel` remains the rollback fallback.
+
+Available shell modes:
 
 ```sh
 # Pure layer-shell split: background + dock are both layer-shell surfaces.
 AGORA_SHELL_MODE=split /usr/local/bin/agora-shell-panel-supervisor
+
+# Fullscreen rollback fallback.
+AGORA_SHELL_MODE=toplevel /usr/local/bin/agora-shell-panel-supervisor
 
 # Presentation workaround: background remains layer-shell, dock is an undecorated
 # bottom xdg-toplevel so WebKit content is capturable and physically visible while

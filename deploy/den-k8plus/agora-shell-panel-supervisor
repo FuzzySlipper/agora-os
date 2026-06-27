@@ -7,7 +7,7 @@ IFS=$'\n\t'
 
 COMPOSITORCTL=${COMPOSITORCTL:-/usr/local/bin/compositorctl}
 WEBVIEW_LAUNCHER=${WEBVIEW_LAUNCHER:-/usr/local/bin/webview-launcher}
-SHELL_MODE=${AGORA_SHELL_MODE:-toplevel}
+SHELL_MODE=${AGORA_SHELL_MODE:-split-toplevel-dock}
 SHELL_URL=${AGORA_SHELL_URL:-http://127.0.0.1:7780/shell/dist/desktop/}
 SHELL_ROLE=${AGORA_SHELL_ROLE:-toplevel}
 SHELL_TITLE=${AGORA_SHELL_TITLE:-AGORA-SHELL-TOPLEVEL}
