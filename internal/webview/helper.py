@@ -92,7 +92,7 @@ READINESS_POLL_SCRIPT = r"""
 
 
 class Launcher(Gtk.Application):
-    def __init__(self, uri, title, width, height, app_id, role, fullscreen, app_command_port):
+    def __init__(self, uri, title, width, height, app_id, role, fullscreen, undecorated, app_command_port):
         GLib.set_prgname(app_id)
         GLib.set_application_name(title or app_id)
         super().__init__(application_id=app_id, flags=Gio.ApplicationFlags.FLAGS_NONE)
@@ -102,6 +102,7 @@ class Launcher(Gtk.Application):
         self.height = height
         self.role = role
         self.fullscreen = fullscreen
+        self.undecorated = undecorated
         self.app_command_port = app_command_port
         self.effective_role = role
         self.window = None
@@ -120,6 +121,8 @@ class Launcher(Gtk.Application):
         self.window = Gtk.ApplicationWindow(application=self)
         self.window.set_default_size(self.width, self.height)
         self.window.set_title(self.initial_title or self.uri)
+        if self.undecorated and self.role == "toplevel":
+            self.window.set_decorated(False)
         self.window.connect("destroy", self.on_destroy)
         self.window.connect("notify::is-active", self.on_is_active)
         self.setup_layer_shell()
@@ -258,14 +261,15 @@ def parse_args(argv):
     parser.add_argument("--width", type=int, default=1280)
     parser.add_argument("--height", type=int, default=800)
     parser.add_argument("--role", choices=("toplevel", "panel", "dock", "background", "overlay"), default="toplevel")
-    parser.add_argument("--fullscreen", action="store_true", help="fullscreen the toplevel window after creation")
+    parser.add_argument("--fullscreen", action="store_true")
+    parser.add_argument("--undecorated", action="store_true")
     parser.add_argument("--app-command-port", type=int, default=0)
     return parser.parse_args(argv)
 
 
 def main(argv):
     args = parse_args(argv)
-    app = Launcher(args.uri, args.title, args.width, args.height, args.app_id, args.role, args.fullscreen, args.app_command_port)
+    app = Launcher(args.uri, args.title, args.width, args.height, args.app_id, args.role, args.fullscreen, args.undecorated, args.app_command_port)
     return app.run([])
 
 

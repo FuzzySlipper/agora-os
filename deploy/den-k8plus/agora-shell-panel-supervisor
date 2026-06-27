@@ -35,6 +35,8 @@ DOCK_TITLE=${AGORA_SHELL_DOCK_TITLE:-AGORA-SHELL-DOCK}
 DOCK_APP_ID=${AGORA_SHELL_DOCK_APP_ID:-io.agoraos.ShellDock}
 DOCK_WIDTH=${AGORA_SHELL_DOCK_WIDTH:-2560}
 DOCK_HEIGHT=${AGORA_SHELL_DOCK_HEIGHT:-96}
+DOCK_TOPLEVEL_Y=${AGORA_SHELL_DOCK_TOPLEVEL_Y:-$((SHELL_HEIGHT - DOCK_HEIGHT))}
+DOCK_UNDECORATED=${AGORA_SHELL_DOCK_UNDECORATED:-true}
 DOCK_WAIT_TIMEOUT_MS=${AGORA_SHELL_DOCK_WAIT_TIMEOUT_MS:-$WAIT_TIMEOUT_MS}
 OVERLAY_TITLE=${AGORA_SHELL_OVERLAY_TITLE:-AGORA-SHELL-OVERLAY}
 OVERLAY_APP_ID=${AGORA_SHELL_OVERLAY_APP_ID:-io.agoraos.ShellOverlay}
@@ -159,7 +161,7 @@ need "$WEBVIEW_LAUNCHER"
 need python3
 
 launch_surface() {
-  local name=$1 url=$2 role=$3 title=$4 app_id=$5 width=$6 height=$7 wait_timeout=$8 fullscreen=${9:-false}
+  local name=$1 url=$2 role=$3 title=$4 app_id=$5 width=$6 height=$7 wait_timeout=$8 fullscreen=${9:-false} undecorated=${10:-false}
   local launch_json
   launch_json=$(mktemp -t "agora-shell-${name}-launch.XXXXXX.json")
   rm -f "$launch_json"
@@ -176,6 +178,9 @@ launch_surface() {
   )
   if [[ "$fullscreen" == "true" && "$role" == "toplevel" ]]; then
     webview_args+=(--fullscreen)
+  fi
+  if [[ "$undecorated" == "true" && "$role" == "toplevel" ]]; then
+    webview_args+=(--undecorated)
   fi
 
   local launch_args=(
@@ -267,6 +272,27 @@ run_split_mode() {
   fi
 
   launch_surface dock "$(surface_url dock)" "$DOCK_ROLE" "$DOCK_TITLE" "$DOCK_APP_ID" "$DOCK_WIDTH" "$DOCK_HEIGHT" "$DOCK_WAIT_TIMEOUT_MS" false
+  monitor_split_surfaces
+}
+
+run_split_toplevel_dock_mode() {
+  log "starting split-toplevel-dock shell mode; background stays layer-shell while dock uses an undecorated bottom xdg-toplevel workaround"
+  if [[ "$BACKGROUND_ENABLED" == "true" ]]; then
+    if ! launch_surface background "$(surface_url background)" "$BACKGROUND_ROLE" "$BACKGROUND_TITLE" "$BACKGROUND_APP_ID" "$BACKGROUND_WIDTH" "$BACKGROUND_HEIGHT" "$BACKGROUND_WAIT_TIMEOUT_MS" false false; then
+      log "split-toplevel-dock background failed to launch; continuing without background"
+    fi
+  else
+    log "split-toplevel-dock background disabled by AGORA_SHELL_BACKGROUND_ENABLED=$BACKGROUND_ENABLED"
+  fi
+
+  launch_surface dock "$(surface_url dock)" toplevel "$DOCK_TITLE" "$DOCK_APP_ID" "$DOCK_WIDTH" "$DOCK_HEIGHT" "$DOCK_WAIT_TIMEOUT_MS" false "$DOCK_UNDECORATED"
+  local dock_surface=${split_surface_ids[-1]}
+  if [[ -n "$dock_surface" ]]; then
+    log "placing split-toplevel-dock surface=$dock_surface at x=0 y=$DOCK_TOPLEVEL_Y size=${DOCK_WIDTH}x${DOCK_HEIGHT}"
+    "$COMPOSITORCTL" --pretty surface move --surface "$dock_surface" --x 0 --y "$DOCK_TOPLEVEL_Y" --width "$DOCK_WIDTH" --height "$DOCK_HEIGHT" --timeout-ms 4000 >/dev/null || log "split-toplevel-dock move readback did not confirm; continuing with mapped surface"
+    "$COMPOSITORCTL" --pretty surface always-on-top --surface "$dock_surface" --state true --timeout-ms 4000 >/dev/null || log "split-toplevel-dock always-on-top readback did not confirm; continuing with mapped surface"
+    "$COMPOSITORCTL" --pretty surface raise --surface "$dock_surface" --timeout-ms 4000 >/dev/null || log "split-toplevel-dock raise readback did not confirm; continuing with mapped surface"
+  fi
   monitor_split_surfaces
 }
 
@@ -370,8 +396,11 @@ case "$SHELL_MODE" in
   split)
     run_split_mode
     ;;
+  split-toplevel-dock|hybrid|split-hybrid)
+    run_split_toplevel_dock_mode
+    ;;
   *)
-    log "unsupported AGORA_SHELL_MODE=$SHELL_MODE (expected toplevel or split)"
+    log "unsupported AGORA_SHELL_MODE=$SHELL_MODE (expected toplevel, split, or split-toplevel-dock)"
     exit 2
     ;;
 esac

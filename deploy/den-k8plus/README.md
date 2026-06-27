@@ -82,13 +82,19 @@ terminates the launch on SIGTERM, and exits non-zero if the surface or process
 disappears. systemd then satisfies the crash-restart requirement with
 `Restart=on-failure` and `RestartSec=3s`.
 
-The default launch is the fullscreen toplevel WebKit shell (`AGORA_SHELL_MODE=toplevel`) because split layer-shell dock presentation is still being validated on the physical monitor. The split shell remains available for canaries and investigation:
+The default launch is the fullscreen toplevel WebKit shell (`AGORA_SHELL_MODE=toplevel`) because pure split layer-shell dock presentation is still being validated on the physical monitor. Two opt-in split paths are available for canaries and investigation:
 
 ```sh
+# Pure layer-shell split: background + dock are both layer-shell surfaces.
 AGORA_SHELL_MODE=split /usr/local/bin/agora-shell-panel-supervisor
+
+# Presentation workaround: background remains layer-shell, dock is an undecorated
+# bottom xdg-toplevel so WebKit content is capturable and physically visible while
+# pure WebKit+GtkLayerShell dock presentation is unresolved.
+AGORA_SHELL_MODE=split-toplevel-dock /usr/local/bin/agora-shell-panel-supervisor
 ```
 
-In split mode the supervisor launches and monitors independent webviews for:
+In pure split mode the supervisor launches and monitors independent webviews for:
 
 | Surface | URL query | Role | Title | App id | Failure policy |
 |---|---|---|---|---|---|
@@ -101,6 +107,12 @@ the primary identity evidence; title matching is only advisory. On supervisor
 stop it terminates every launch it created. The background can also be disabled
 for a canary with `AGORA_SHELL_BACKGROUND_ENABLED=false` while keeping the dock
 running.
+
+`split-toplevel-dock` uses the same background launch, but forces the dock URL to
+`role=toplevel`, passes `--undecorated`, places it at `AGORA_SHELL_DOCK_TOPLEVEL_Y`
+(default `SHELL_HEIGHT - DOCK_HEIGHT`), and sets `always-on-top`. This is a
+workaround for the current pure WebKit+GtkLayerShell presentation gap; do not
+use it as proof that the pure layer-shell dock is fixed.
 
 Split canary testing is one environment/config change: set `AGORA_SHELL_MODE=split` and
 restart `agora-shell-panel.service`. The canonical visible fallback remains:

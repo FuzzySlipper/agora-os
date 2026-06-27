@@ -43,6 +43,7 @@ type Config struct {
 	Height         int    `json:"height,omitempty"`
 	Role           string `json:"role,omitempty"`
 	Fullscreen     bool   `json:"fullscreen,omitempty"`
+	Undecorated    bool   `json:"undecorated,omitempty"`
 	AppCommandPort int    `json:"app_command_port,omitempty"`
 
 	BusSocket string `json:"bus_socket,omitempty"`
@@ -56,6 +57,7 @@ type resolvedConfig struct {
 	Height         int
 	Role           string
 	Fullscreen     bool
+	Undecorated    bool
 	AppCommandPort int
 	BusSocket      string
 }
@@ -220,6 +222,7 @@ func normalizeConfig(cfg Config) (resolvedConfig, error) {
 		Height:         height,
 		Role:           role,
 		Fullscreen:     cfg.Fullscreen,
+		Undecorated:    cfg.Undecorated,
 		AppCommandPort: cfg.AppCommandPort,
 		BusSocket:      busSocket,
 	}, nil
@@ -315,6 +318,9 @@ func helperArgs(scriptPath string, cfg resolvedConfig) []string {
 	}
 	if cfg.Fullscreen {
 		args = append(args, "--fullscreen")
+	}
+	if cfg.Undecorated {
+		args = append(args, "--undecorated")
 	}
 	if cfg.AppCommandPort > 0 {
 		args = append(args, "--app-command-port", strconv.Itoa(cfg.AppCommandPort))

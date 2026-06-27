@@ -54,10 +54,10 @@ func TestResolveTargetPath(t *testing.T) {
 	}
 }
 
-func TestConfigJSONIncludesRoleAndFullscreen(t *testing.T) {
+func TestConfigJSONIncludesRoleFullscreenAndUndecorated(t *testing.T) {
 	t.Parallel()
 
-	encoded, err := json.Marshal(Config{URL: "https://example.com", Role: "panel", Fullscreen: true})
+	encoded, err := json.Marshal(Config{URL: "https://example.com", Role: "panel", Fullscreen: true, Undecorated: true})
 	if err != nil {
 		t.Fatalf("marshal config: %v", err)
 	}
@@ -66,6 +66,9 @@ func TestConfigJSONIncludesRoleAndFullscreen(t *testing.T) {
 	}
 	if !strings.Contains(string(encoded), `"fullscreen":true`) {
 		t.Fatalf("encoded config missing fullscreen tag: %s", encoded)
+	}
+	if !strings.Contains(string(encoded), `"undecorated":true`) {
+		t.Fatalf("encoded config missing undecorated tag: %s", encoded)
 	}
 }
 
@@ -94,16 +97,18 @@ func TestHelperArgsPassesRole(t *testing.T) {
 	t.Parallel()
 
 	args := helperArgs("/tmp/helper.py", resolvedConfig{
-		TargetURI:  "https://example.com",
-		AppID:      "io.agoraos.Test",
-		Width:      640,
-		Height:     480,
-		Title:      "Test",
-		Role:       "panel",
-		Fullscreen: true,
+		TargetURI:   "https://example.com",
+		AppID:       "io.agoraos.Test",
+		Width:       640,
+		Height:      480,
+		Title:       "Test",
+		Role:        "panel",
+		Fullscreen:  true,
+		Undecorated: true,
 	})
 	foundRole := false
 	foundFullscreen := false
+	foundUndecorated := false
 	for i := 0; i < len(args)-1; i++ {
 		if args[i] == "--role" && args[i+1] == "panel" {
 			foundRole = true
@@ -113,9 +118,12 @@ func TestHelperArgsPassesRole(t *testing.T) {
 		if arg == "--fullscreen" {
 			foundFullscreen = true
 		}
+		if arg == "--undecorated" {
+			foundUndecorated = true
+		}
 	}
-	if !foundRole || !foundFullscreen {
-		t.Fatalf("helper args missing role/fullscreen: %#v", args)
+	if !foundRole || !foundFullscreen || !foundUndecorated {
+		t.Fatalf("helper args missing role/fullscreen/undecorated: %#v", args)
 	}
 }
 

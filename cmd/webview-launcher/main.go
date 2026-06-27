@@ -22,6 +22,7 @@ func main() {
 	flag.IntVar(&cfg.Height, "height", 800, "initial window height in pixels")
 	flag.StringVar(&cfg.Role, "role", "toplevel", "webview shell role: toplevel, panel, dock, background, overlay")
 	flag.BoolVar(&cfg.Fullscreen, "fullscreen", false, "fullscreen the toplevel webview window")
+	flag.BoolVar(&cfg.Undecorated, "undecorated", false, "disable toplevel window decorations")
 	flag.IntVar(&cfg.AppCommandPort, "app-command-port", 0, "loopback port for typed app-command readiness endpoint (0 disables)")
 	flag.Parse()
 
